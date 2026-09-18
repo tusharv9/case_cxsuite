@@ -1,0 +1,449 @@
+// ===== CUSTOMER DIRECTORY PAGE — OmniConnect Reference System =====
+
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { PlusCircle, ChevronRight, Users, Search, Filter, RotateCcw, Sparkles, X, ChevronDown, UserCheck } from 'lucide-react';
+import { Button } from '../../components/common/Button/Button.jsx';
+import { Avatar } from '../../components/common/Avatar/Avatar.jsx';
+import { Loader } from '../../components/common/Loader/Loader.jsx';
+import { customerService } from '../../services/customerService.js';
+import { configurableSettingsService } from '../../services/configurableSettingsService.js';
+import { formatDate } from '../../utils/dateUtils.js';
+import { createFieldMasker } from '../../utils/maskUtils.js';
+import { CreateCustomerDrawer } from '../../components/drawer/CreateCustomerDrawer/CreateCustomerDrawer.jsx';
+import { ExistingCustomerDrawer } from '../../components/drawer/ExistingCustomerDrawer/ExistingCustomerDrawer.jsx';
+import './CustomerDirectoryPage.css';
+
+function CustomerCard({ customer, onClick, mask }) {
+  const rawNric = customer.nric || customer.idValue || '';
+  const maskedNric = mask ? (mask('idValue', rawNric) || mask('nric', rawNric) || rawNric) : (rawNric || '—');
+  const maskedName = mask ? (mask('fullName', customer.fullName) || customer.fullName) : customer.fullName;
+  const maskedPhone = mask ? (mask('phoneNumber', customer.phoneNumber) || customer.phoneNumber) : customer.phoneNumber;
+  const maskedDob = customer.dateOfBirth
+    ? (mask ? mask('dateOfBirth', formatDate(customer.dateOfBirth)) : formatDate(customer.dateOfBirth))
+    : null;
+  const maskedBranch = mask ? (mask('branch', customer.branch) || customer.branch) : customer.branch;
+  const maskedLanguage = mask ? (mask('preferredLanguage', customer.preferredLanguage) || customer.preferredLanguage) : customer.preferredLanguage;
+
+  return (
+    <div
+      className="customer-card"
+      onClick={() => onClick(customer)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => e.key === 'Enter' && onClick(customer)}
+    >
+      <div className="customer-card__top">
+        <Avatar name={customer.fullName} size="md" />
+        <div className="customer-card__name-block">
+          <p className="customer-card__name">{maskedName}</p>
+          <p className="customer-card__nric">{maskedNric}</p>
+        </div>
+        <span className="customer-card__badge">Active</span>
+      </div>
+
+      <div className="customer-card__divider" />
+
+      <div className="customer-card__details">
+        {customer.dateOfBirth && (
+          <div className="customer-card__detail-row">
+            <span className="customer-card__detail-label">DOB</span>
+            <span>{maskedDob}</span>
+          </div>
+        )}
+        {customer.phoneNumber && (
+          <div className="customer-card__detail-row">
+            <span className="customer-card__detail-label">Phone</span>
+            <span>{maskedPhone}</span>
+          </div>
+        )}
+        {customer.branch && (
+          <div className="customer-card__detail-row">
+            <span className="customer-card__detail-label">Branch</span>
+            <span>{maskedBranch}</span>
+          </div>
+        )}
+        {customer.preferredLanguage && (
+          <div className="customer-card__detail-row">
+            <span className="customer-card__detail-label">Language</span>
+            <span>{maskedLanguage}</span>
+          </div>
+        )}
+        {!customer.phoneNumber && !customer.branch && !customer.preferredLanguage && (
+          <div className="customer-card__detail-row" style={{ color: 'var(--color-text-tertiary)' }}>
+            No additional details available
+          </div>
+        )}
+      </div>
+
+      <div className="customer-card__arrow">
+        <ChevronRight size={16} />
+      </div>
+    </div>
+  );
+}
+
+export function CustomerDirectoryPage() {
+  const navigate = useNavigate();
+  const [customers, setCustomers] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isExistingOpen, setIsExistingOpen] = useState(false);
+
+  // Search & Filter States
+  const [search, setSearch] = useState('');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [languageFilter, setLanguageFilter] = useState('all');
+  const [branchFilter, setBranchFilter] = useState('all');
+  const [tenureFilter, setTenureFilter] = useState('all');
+  const filterRef = useRef(null);
+
+  const loadCustomers = useCallback(async (forceRefresh = false) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await customerService.getAllCustomers(forceRefresh);
+      setCustomers(data || []);
+    } catch (err) {
+      setError(err.message || 'Failed to load customers.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCustomers(true);
+  }, [loadCustomers]);
+
+  // Click outside listener for filter popover
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (filterRef.current && !filterRef.current.contains(event.target)) {
+        setIsFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const [dbLanguages, setDbLanguages] = useState([]);
+  const [dbBranches, setDbBranches] = useState([]);
+  // Sensitive/masking configuration for the values rendered on each customer card
+  const [maskFn, setMaskFn] = useState(() => null);
+
+  useEffect(() => {
+    async function fetchLookups() {
+      try {
+        const [langs, brs] = await Promise.all([
+          configurableSettingsService.getLookupValues('PREFERRED_LANGUAGE', true),
+          configurableSettingsService.getLookupValues('HOME_BRANCH', true),
+        ]);
+        if (langs) setDbLanguages(langs.map((l) => l.value));
+        if (brs) setDbBranches(brs.map((b) => b.value));
+      } catch (e) {
+        console.error('Failed to load database filter lookups:', e);
+      }
+
+      try {
+        const fields = await configurableSettingsService.getFields('Customer360', null, true);
+        const fn = createFieldMasker(fields || []);
+        setMaskFn(() => fn);
+      } catch (e) {
+        console.error('Failed to load masking configuration:', e);
+      }
+    }
+    fetchLookups();
+  }, []);
+
+  // Dynamically extract unique available languages and branches
+  const availableLanguages = useMemo(() => {
+    const langs = new Set(dbLanguages);
+    customers.forEach((c) => {
+      if (c.preferredLanguage) langs.add(c.preferredLanguage);
+    });
+    return Array.from(langs).sort();
+  }, [customers, dbLanguages]);
+
+  const availableBranches = useMemo(() => {
+    const branches = new Set(dbBranches);
+    customers.forEach((c) => {
+      if (c.branch) branches.add(c.branch);
+    });
+    return Array.from(branches).sort();
+  }, [customers, dbBranches]);
+
+  const handleCustomerClick = (customer) => {
+    localStorage.setItem('csm_selected_customer_id', customer.id);
+    navigate(`/customer360/${customer.id}`);
+  };
+
+  const handleCustomerCreated = () => {
+    loadCustomers(true);
+  };
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setLanguageFilter('all');
+    setBranchFilter('all');
+    setTenureFilter('all');
+    setIsFilterOpen(false);
+  };
+
+  const hasActiveFilters = search.trim() !== '' || languageFilter !== 'all' || branchFilter !== 'all' || tenureFilter !== 'all';
+
+  // Combinable Search + Filter Logic
+  const filtered = useMemo(() => {
+    return customers.filter((c) => {
+      // 1. Search Query
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        const matchesName = c.fullName?.toLowerCase().includes(q);
+        const matchesNric = c.nric?.toLowerCase().includes(q);
+        const matchesPhone = c.phoneNumber?.toLowerCase().includes(q);
+        const matchesBranch = c.branch?.toLowerCase().includes(q);
+        if (!matchesName && !matchesNric && !matchesPhone && !matchesBranch) return false;
+      }
+
+      // 2. Language Filter
+      if (languageFilter !== 'all' && c.preferredLanguage !== languageFilter) {
+        return false;
+      }
+
+      // 3. Branch Filter
+      if (branchFilter !== 'all' && c.branch !== branchFilter) {
+        return false;
+      }
+
+      // 4. Tenure Filter (evaluated against c.tenureMonths or fallback calculation)
+      if (tenureFilter !== 'all') {
+        const tenureMonths = c.tenureMonths !== undefined ? c.tenureMonths : 36;
+        if (tenureFilter === 'under_1' && tenureMonths >= 12) return false;
+        if (tenureFilter === '1_3' && (tenureMonths < 12 || tenureMonths > 36)) return false;
+        if (tenureFilter === '3_5' && (tenureMonths < 36 || tenureMonths > 60)) return false;
+        if (tenureFilter === '5_plus' && tenureMonths <= 60) return false;
+      }
+
+      return true;
+    });
+  }, [customers, search, languageFilter, branchFilter, tenureFilter]);
+
+  return (
+    <div className="customer-dir-page">
+      {/* 1. BLUE GRADIENT HEADER BANNER (Matching Lead Directory Reference) */}
+      <div className="customer-dir-page__header">
+        <div className="customer-dir-banner">
+          <div className="customer-dir-banner__left">
+            <div className="customer-dir-banner__icon-box">
+              <Users size={22} color="#ffffff" />
+            </div>
+            <div className="customer-dir-banner__content">
+              <div className="customer-dir-banner__badge">
+                <Sparkles size={11} /> Module &middot; Customer 360
+              </div>
+              <h1 className="customer-dir-banner__title">Customer Directory</h1>
+              <p className="customer-dir-banner__subtitle">
+                {isLoading
+                  ? 'Loading customer base…'
+                  : `${filtered.length} customer${filtered.length !== 1 ? 's' : ''} · Omni Customer Base`}
+              </p>
+            </div>
+          </div>
+
+          <div className="customer-dir-banner__actions">
+            <button
+              className="btn-create-customer-banner"
+              onClick={() => setIsCreateOpen(true)}
+              id="btn-create-customer"
+            >
+              <PlusCircle size={15} />
+              <span>Create Customer</span>
+            </button>
+
+            <button
+              className="btn-existing-customer-banner"
+              onClick={() => setIsExistingOpen(true)}
+              id="btn-existing-customer"
+            >
+              <UserCheck size={15} />
+              <span>Existing Customer</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 2. DEDICATED SEARCH & FILTER TOOLBAR */}
+        <div className="customer-dir-toolbar">
+          <div className="customer-dir-search-wrapper">
+            <Search size={15} className="customer-dir-search-icon" />
+            <input
+              type="search"
+              className="customer-dir-search-input"
+              placeholder="Search name, IC, phone, branch..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button className="customer-dir-search-clear" onClick={() => setSearch('')} title="Clear search">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="customer-dir-toolbar-actions" ref={filterRef}>
+            <button
+              className={`customer-dir-filter-btn ${isFilterOpen || (hasActiveFilters && search === '') ? 'customer-dir-filter-btn--active' : ''}`}
+              onClick={() => setIsFilterOpen(!isFilterOpen)}
+            >
+              <Filter size={15} />
+              <span>Filter</span>
+              {(languageFilter !== 'all' || branchFilter !== 'all' || tenureFilter !== 'all') && (
+                <span className="filter-badge-dot" />
+              )}
+              <ChevronDown size={14} />
+            </button>
+
+            {hasActiveFilters && (
+              <button
+                className="customer-dir-reset-btn"
+                onClick={handleResetFilters}
+                title="Reset all search and filters"
+              >
+                <RotateCcw size={14} />
+                <span>Reset</span>
+              </button>
+            )}
+
+            {/* Filter Popover Panel */}
+            {isFilterOpen && (
+              <div className="customer-dir-filter-popover">
+                <div className="filter-popover-header">
+                  <span className="filter-popover-title">FILTERS</span>
+                  <button className="filter-popover-close" onClick={() => setIsFilterOpen(false)}>
+                    <X size={14} />
+                  </button>
+                </div>
+
+                <div className="filter-popover-body">
+                  {/* Preferred Language Filter */}
+                  <div className="filter-popover-field">
+                    <label className="filter-popover-label">Preferred Language</label>
+                    <select
+                      className="filter-popover-select"
+                      value={languageFilter}
+                      onChange={(e) => setLanguageFilter(e.target.value)}
+                    >
+                      <option value="all">All Languages</option>
+                      {availableLanguages.map((lang) => (
+                        <option key={lang} value={lang}>
+                          {lang}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Home Branch Filter */}
+                  <div className="filter-popover-field">
+                    <label className="filter-popover-label">Home Branch</label>
+                    <select
+                      className="filter-popover-select"
+                      value={branchFilter}
+                      onChange={(e) => setBranchFilter(e.target.value)}
+                    >
+                      <option value="all">All Branches</option>
+                      {availableBranches.map((br) => (
+                        <option key={br} value={br}>
+                          {br}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Tenure Filter */}
+                  <div className="filter-popover-field">
+                    <label className="filter-popover-label">Tenure</label>
+                    <select
+                      className="filter-popover-select"
+                      value={tenureFilter}
+                      onChange={(e) => setTenureFilter(e.target.value)}
+                    >
+                      <option value="all">All Tenure</option>
+                      <option value="under_1">&lt; 1 year</option>
+                      <option value="1_3">1–3 years</option>
+                      <option value="3_5">3–5 years</option>
+                      <option value="5_plus">5+ years</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="filter-popover-footer">
+                  <button className="filter-popover-btn-reset" onClick={handleResetFilters}>
+                    Reset
+                  </button>
+                  <button className="filter-popover-btn-apply" onClick={() => setIsFilterOpen(false)}>
+                    Apply Filters
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 3. CUSTOMER CARDS GRID */}
+      <div className="customer-dir-page__body scrollbar-thin">
+        {isLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
+            <Loader text="Loading customer directory…" />
+          </div>
+        ) : error ? (
+          <div className="customer-dir-empty">
+            <Users size={40} style={{ opacity: 0.3 }} />
+            <p className="customer-dir-empty__title">Failed to load customers</p>
+            <p className="customer-dir-empty__desc">{error}</p>
+            <Button variant="outline" onClick={() => loadCustomers(true)} style={{ marginTop: 8 }}>
+              Retry
+            </Button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="customer-dir-empty">
+            <Users size={40} style={{ opacity: 0.3 }} />
+            <p className="customer-dir-empty__title">No customers found</p>
+            <p className="customer-dir-empty__desc">
+              {hasActiveFilters
+                ? 'No customer records match your search or filter criteria. Try resetting your filters.'
+                : 'Create your first customer to get started.'}
+            </p>
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleResetFilters} style={{ marginTop: 8 }}>
+                Reset Filters
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="customer-dir-grid">
+            {filtered.map((c) => (
+              <CustomerCard key={c.id} customer={c} onClick={handleCustomerClick} mask={maskFn} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Create Customer Drawer */}
+      {isCreateOpen && (
+        <CreateCustomerDrawer
+          isOpen={isCreateOpen}
+          onClose={() => setIsCreateOpen(false)}
+          onSuccess={handleCustomerCreated}
+        />
+      )}
+
+      {/* Existing Customer Drawer */}
+      {isExistingOpen && (
+        <ExistingCustomerDrawer
+          isOpen={isExistingOpen}
+          onClose={() => setIsExistingOpen(false)}
+        />
+      )}
+    </div>
+  );
+}

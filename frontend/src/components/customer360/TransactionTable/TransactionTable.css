@@ -1,0 +1,193 @@
+/* ===== TRANSACTION TABLE STYLES — OmniConnect Reference System ===== */
+
+.transaction-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+.transaction-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.transaction-section__header-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d4ed8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.transaction-section__select {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  font-size: 12px;
+  background-color: #ffffff;
+  color: #374151;
+  outline: none;
+}
+
+/* Cashflow Month Cards Grid */
+.cashflow-months-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+}
+
+.cashflow-month-card {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.cashflow-month-card--active {
+  background-color: #eff6ff;
+  border-color: #1d4ed8;
+  box-shadow: 0 2px 6px rgba(29, 78, 216, 0.12);
+}
+
+.cashflow-month-card__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.cashflow-month-card__value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1d4ed8;
+}
+
+.cashflow-month-card__bar-bg {
+  width: 100%;
+  height: 4px;
+  background-color: #dbeafe;
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.cashflow-month-card__bar-fill {
+  background-color: #1d4ed8;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.cashflow-summary-subtext {
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.5;
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+
+/* Table Wrapper */
+.transaction-table-wrapper {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.transaction-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.transaction-table th {
+  background-color: #f9fafb;
+  color: #4b5563;
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.transaction-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f3f4f6;
+  color: #111827;
+}
+
+.transaction-table tr:last-child td {
+  border-bottom: none;
+}
+
+.transaction-table tr:hover {
+  background-color: #f8fafc;
+}
+
+.tx-date {
+  font-weight: 600;
+  color: #4b5563;
+  white-space: nowrap;
+}
+
+.tx-desc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.tx-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: #f3f4f6;
+  flex-shrink: 0;
+}
+
+.tx-icon-credit { color: #16a34a; }
+.tx-icon-debit  { color: #dc2626; }
+
+.tx-debit, .tx-credit {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.tx-amount-debit  { color: #dc2626; }
+.tx-amount-credit { color: #16a34a; }
+
+.tx-balance {
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #15803d;
+  background-color: #dcfce7;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+@media (max-width: 768px) {
+  .cashflow-months-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

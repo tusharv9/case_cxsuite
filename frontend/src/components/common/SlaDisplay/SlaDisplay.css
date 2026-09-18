@@ -1,0 +1,76 @@
+/* ===== SLA DISPLAY COMPONENT ===== */
+
+.sla-display {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.sla-badge {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-gray-50);
+}
+
+.sla-badge--internal {
+  background-color: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.sla-badge--external {
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.sla-badge--breached {
+  background-color: #fef2f2 !important;
+  border-color: #fecaca !important;
+  color: #dc2626 !important;
+}
+
+.sla-badge__title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.sla-badge__value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sla-badge__alert {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #b91c1c;
+  margin-top: 2px;
+}
+
+.sla-display--sm .sla-badge {
+  padding: 2px 6px;
+}
+
+.sla-display--sm .sla-badge__title {
+  font-size: 8px;
+}
+
+.sla-display--sm .sla-badge__value {
+  font-size: 11px;
+}

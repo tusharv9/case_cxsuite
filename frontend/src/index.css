@@ -1,0 +1,20 @@
+/* ===== MAIN INDEX CSS — Import all design-system layers ===== */
+
+/* 1. Variables (design tokens) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import './styles/variables.css';
+
+/* 2. Reset */
+@import './styles/reset.css';
+
+/* 3. Typography */
+@import './styles/typography.css';
+
+/* 4. Animations */
+@import './styles/animations.css';
+
+/* 5. Utilities */
+@import './styles/utilities.css';
+
+/* 6. Global */
+@import './styles/global.css';

@@ -1,0 +1,148 @@
+/* ===== BADGE COMPONENT ===== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.6;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  letter-spacing: 0.02em;
+}
+
+/* Size */
+.badge--sm {
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+.badge--lg {
+  padding: 4px 10px;
+  font-size: var(--font-size-sm);
+}
+
+/* Status variants */
+.badge--status-open {
+  color: var(--color-status-open);
+  background-color: var(--color-status-open-bg);
+  border-color: var(--color-status-open-border);
+}
+
+.badge--status-inprogress {
+  color: var(--color-status-inprogress);
+  background-color: var(--color-status-inprogress-bg);
+  border-color: var(--color-status-inprogress-border);
+}
+
+.badge--status-escalated {
+  color: var(--color-white);
+  background-color: var(--color-status-escalated);
+  border-color: var(--color-status-escalated);
+}
+
+.badge--status-resolved {
+  color: var(--color-status-resolved);
+  background-color: var(--color-status-resolved-bg);
+  border-color: var(--color-status-resolved-border);
+}
+
+/* Severity variants (Low, Medium, High, Critical) */
+.badge--severity-low,
+.badge--severity-ok {
+  color: #15803d;
+  background-color: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.badge--severity-medium,
+.badge--severity-info {
+  color: #1d4ed8;
+  background-color: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.badge--severity-high,
+.badge--severity-warn {
+  color: #b45309;
+  background-color: #fffbeb;
+  border-color: #fde68a;
+}
+
+.badge--severity-critical,
+.badge--severity-bad {
+  color: #ffffff;
+  background-color: #dc2626;
+  border-color: #dc2626;
+}
+
+/* Department badges (inline with cycling colors) */
+.badge--dept {
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background-color: var(--color-gray-150);
+  color: var(--color-gray-700);
+}
+
+.badge--dept-micro-fin,
+.badge--dept-micro-finance,
+.badge--dept-shariah {
+  background-color: #f0fdf4;
+  color: #16a34a;
+}
+
+.badge--dept-cards,
+.badge--dept-card {
+  background-color: #eff6ff;
+  color: #2563eb;
+}
+
+.badge--dept-fraud,
+.badge--dept-ciu {
+  background-color: #fef2f2;
+  color: #dc2626;
+}
+
+.badge--dept-cyber,
+.badge--dept-agency_banking,
+.badge--dept-agency-banking {
+  background-color: #fffbeb;
+  color: #d97706;
+}
+
+.badge--dept-branch_ops,
+.badge--dept-branch-ops,
+.badge--dept-govt_schemes,
+.badge--dept-govt-schemes {
+  background-color: #faf5ff;
+  color: #9333ea;
+}
+
+/* Owner badge */
+.badge--owner {
+  color: var(--color-white);
+  background-color: var(--color-brand-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+}
+
+/* Generic solid badge */
+.badge--solid {
+  color: var(--color-white);
+}
+
+.badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+  flex-shrink: 0;
+}

@@ -1,0 +1,163 @@
+/* ===== CASE MANAGEMENT PAGE STYLING — OmniConnect Reference System ===== */
+
+.case-management-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--color-background);
+}
+
+.case-management-page__header {
+  padding: var(--space-5) var(--space-6) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex-shrink: 0;
+  background-color: var(--color-background);
+}
+
+/* Blue Gradient Banner matching Lead Reference Design */
+.case-management-banner {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 45%, #2563eb 100%);
+  color: #ffffff;
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-6);
+  box-shadow: 0 4px 16px rgba(30, 58, 138, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  overflow: visible;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.case-management-banner__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  z-index: 1;
+}
+
+.case-management-banner__icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.case-management-banner__content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.case-management-banner__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(4px);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ffffff;
+  width: fit-content;
+}
+
+.case-management-banner__title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.case-management-banner__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  z-index: 2;
+  position: relative;
+}
+
+/* Filter Button inside Blue Banner */
+.btn-filter-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: #1d4ed8;
+  background-color: #ffffff;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: all var(--transition-fast);
+  font-family: inherit;
+  position: relative;
+}
+
+.btn-filter-banner:hover {
+  background-color: #f8fafc;
+  color: #1e40af;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.btn-filter-banner--active {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+}
+
+.banner-filter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #1d4ed8;
+  display: inline-block;
+}
+
+/* Create Case Button inside Blue Banner */
+.btn-create-case-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: #ffffff;
+  color: #1d4ed8;
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: all var(--transition-fast);
+  font-family: inherit;
+}
+
+.btn-create-case-banner:hover {
+  background-color: #f8fafc;
+  color: #1e40af;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.case-management-page__board {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}

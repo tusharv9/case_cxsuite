@@ -1,0 +1,53 @@
+/* ===== REFRESH STATUS BUTTON STYLES ===== */
+
+.refresh-status-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.refresh-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 20px;
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.refresh-status-btn:hover {
+  background-color: #dcfce7;
+  border-color: #86efac;
+}
+
+.refresh-status-btn--loading {
+  opacity: 0.8;
+  cursor: wait;
+}
+
+.spin-icon {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.refresh-status-timestamp {
+  font-size: 12px;
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.check-icon {
+  color: #16a34a;
+}

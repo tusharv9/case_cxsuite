@@ -1,0 +1,146 @@
+/* ===== SLIDING PANEL / CHILD DRAWERS (OmniConnect Reference System) ===== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  z-index: var(--z-modal);
+  animation: fadeIn 0.2s ease;
+}
+
+.modal {
+  background-color: var(--color-surface);
+  box-shadow: -8px 0 32px rgba(15, 23, 42, 0.15);
+  width: 100%;
+  max-width: var(--drawer-width);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  animation: slideInRight 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  border-left: 1px solid var(--color-border);
+}
+
+/* Responsiveness sizes */
+.modal--sm { max-width: var(--drawer-width); }
+.modal--md { max-width: var(--drawer-width); }
+.modal--lg { max-width: var(--drawer-width); }
+.modal--xl { max-width: var(--drawer-width); }
+
+/* Blue Gradient Header matching Parent Case Drawer & Screenshot 3 */
+.modal__header {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 45%, #2563eb 100%);
+  color: var(--color-white);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(30, 58, 138, 0.2);
+}
+
+/* Red / Destructive Header variant for Delete Confirmation Drawers */
+.modal__header--destructive {
+  background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 45%, #dc2626 100%) !important;
+  box-shadow: 0 4px 14px rgba(185, 28, 28, 0.28) !important;
+  padding: 18px 24px !important;
+}
+
+.modal__header--destructive .modal__title {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+  color: #ffffff !important;
+}
+
+.modal__header--destructive .modal__subtitle {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.modal__header--destructive .modal__close {
+  background: rgba(255, 255, 255, 0.16) !important;
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: 8px !important;
+  color: #ffffff !important;
+}
+
+.modal__header--destructive .modal__close:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
+}
+
+.modal__title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-white);
+  line-height: var(--line-height-tight);
+}
+
+.modal__subtitle {
+  font-size: var(--font-size-xs);
+  color: rgba(255, 255, 255, 0.85);
+  margin-top: 2px;
+}
+
+.modal__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: rgba(255, 255, 255, 0.85);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  cursor: pointer;
+}
+
+.modal__close:hover {
+  color: var(--color-white);
+  background-color: rgba(255, 255, 255, 0.25);
+}
+
+.modal__body {
+  padding: var(--space-5) var(--space-6);
+  overflow-y: auto;
+  flex: 1;
+  background-color: var(--color-background);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-gray-300) transparent;
+}
+
+.modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--color-border);
+  background-color: var(--color-white);
+  flex-shrink: 0;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* Responsive constraints */
+@media (max-width: 768px) {
+  .modal {
+    max-width: 100vw !important;
+  }
+}

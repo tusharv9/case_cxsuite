@@ -1,0 +1,38 @@
+/* ===== EXISTING CUSTOMER DRAWER STYLES ===== */
+
+.existing-customer-drawer {
+  width: var(--drawer-width);
+  max-width: 100vw;
+}
+
+.existing-customer-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md, 8px);
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  margin-bottom: 20px;
+  font-size: var(--font-size-sm, 13px);
+  line-height: 1.45;
+}
+
+.existing-customer-alert__icon {
+  color: #dc2626;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.existing-customer-alert__text strong {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 3px;
+  color: #7f1d1d;
+}
+
+.existing-customer-alert__text p {
+  margin: 0;
+  color: #991b1b;
+}
