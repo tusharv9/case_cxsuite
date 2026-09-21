@@ -40,10 +40,12 @@
   flex-shrink: 0;
 }
 
-.case-column--open       .case-column__indicator { background-color: var(--color-gray-400); }
-.case-column--inprogress .case-column__indicator { background-color: var(--color-brand-primary); }
-.case-column--escalated  .case-column__indicator { background-color: var(--color-status-escalated); }
-.case-column--resolved   .case-column__indicator { background-color: var(--color-status-resolved); }
+.case-column--open              .case-column__indicator { background-color: var(--color-gray-400); }
+.case-column--inprogress        .case-column__indicator { background-color: var(--color-brand-primary); }
+.case-column--waitingoncustomer .case-column__indicator,
+.case-column--waiting           .case-column__indicator { background-color: #d97706; }
+.case-column--escalated         .case-column__indicator { background-color: var(--color-status-escalated); }
+.case-column--resolved          .case-column__indicator { background-color: var(--color-status-resolved); }
 
 .case-column__title {
   font-size: var(--font-size-xs);

@@ -105,6 +105,13 @@ using (var scope = app.Services.CreateScope())
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""ParentCaseId"" uuid NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""LinkedSourceCaseId"" uuid NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SubcaseType"" text DEFAULT 'Original';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""CommunicationChannel"" text DEFAULT 'Voice';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SourceChannel"" text DEFAULT 'Voice';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""PreferredCommunicationChannel"" text DEFAULT 'Phone';");
+        db.Database.ExecuteSqlRaw(@"UPDATE ""Cases"" SET ""SourceChannel"" = ""CommunicationChannel"" WHERE ""SourceChannel"" IS NULL OR ""SourceChannel"" = '';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Subcategory"" text DEFAULT 'General Inquiry';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaPausedAt"" timestamp with time zone NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaTotalPausedMinutes"" integer DEFAULT 0;");
         
         db.Database.ExecuteSqlRaw(@"
             CREATE TABLE IF NOT EXISTS ""CaseChildRelations"" (

@@ -14,10 +14,17 @@ public class Case : AuditableEntity
     public CaseStatus Status { get; set; }
     public string Severity { get; set; } = "Medium"; // Configurable: see LookupValues (CASE_SEVERITY) / SlaConfigurations
     
+    public string SourceChannel { get; set; } = "Voice";
+    public string PreferredCommunicationChannel { get; set; } = "Phone";
+    public string CommunicationChannel { get; set; } = "Voice";
+    public string? Subcategory { get; set; }
+    
     // SLA Tracking
     public DateTime SlaStartTime { get; set; }
     public int SlaTargetHours { get; set; }
     public DateTime? ResolvedAt { get; set; }
+    public DateTime? SlaPausedAt { get; set; }
+    public int SlaTotalPausedMinutes { get; set; } = 0;
     
     // Resolution Details
     public string? Disposition { get; set; }

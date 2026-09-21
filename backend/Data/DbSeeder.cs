@@ -17,6 +17,7 @@ public static class DbSeeder
             FixPreExistingReopenedSubcases(context);
             SeedEscalationTemplates(context);
             SeedPassportCustomer(context);
+            EnsureCaseChannelsAndStatuses(context);
             return;
         }
 
@@ -740,6 +741,160 @@ Customer Experience Team";
         catch (Exception ex)
         {
             Console.WriteLine($"[SeedCaseManagementSettings Error] {ex.Message}");
+        }
+    }
+
+    private static void EnsureCaseChannelsAndStatuses(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            // 1. Ensure LookupValues for COMMUNICATION_CHANNEL includes Voice, Email, WhatsApp, SMS, Branch, Web Chat, Social
+            var channelType = context.LookupTypes.FirstOrDefault(lt => lt.Code == "COMMUNICATION_CHANNEL");
+            if (channelType != null)
+            {
+                var requiredChannels = new[] { "Voice", "Email", "WhatsApp", "SMS", "Branch", "Web Chat", "Social" };
+                int order = 1;
+                foreach (var ch in requiredChannels)
+                {
+                    var exists = context.LookupValues.Any(lv => lv.TypeCode == "COMMUNICATION_CHANNEL" && (lv.Value == ch || lv.Label == ch));
+                    if (!exists)
+                    {
+                        context.LookupValues.Add(new LookupValue
+                        {
+                            Id = Guid.NewGuid(),
+                            LookupTypeId = channelType.Id,
+                            TypeCode = "COMMUNICATION_CHANNEL",
+                            Value = ch,
+                            Label = ch,
+                            DisplayOrder = order,
+                            IsActive = true,
+                            CreatedAt = now
+                        });
+                    }
+                    order++;
+                }
+                context.SaveChanges();
+            }
+
+            // 2. Ensure LookupValues for CASE_STATUS has Waiting on Customer
+            var statusType = context.LookupTypes.FirstOrDefault(lt => lt.Code == "CASE_STATUS");
+            if (statusType != null)
+            {
+                var exists = context.LookupValues.Any(lv => lv.TypeCode == "CASE_STATUS" && (lv.Value == "WaitingOnCustomer" || lv.Label == "Waiting on Customer"));
+                if (!exists)
+                {
+                    context.LookupValues.Add(new LookupValue
+                    {
+                        Id = Guid.NewGuid(),
+                        LookupTypeId = statusType.Id,
+                        TypeCode = "CASE_STATUS",
+                        Value = "WaitingOnCustomer",
+                        Label = "Waiting on Customer",
+                        DisplayOrder = 3,
+                        IsActive = true,
+                        CreatedAt = now
+                    });
+                    context.SaveChanges();
+                }
+            }
+
+            // 3. Update existing cases to have realistic channels and status distribution if needed
+            var cases = context.Cases.OrderBy(c => c.CreatedAt).ToList();
+            if (cases.Count > 0)
+            {
+                foreach (var c in cases)
+                {
+                    if (c.CaseNumber == "C-00001")
+                    {
+                        c.SourceChannel = "Voice";
+                        c.PreferredCommunicationChannel = "Phone";
+                        c.CommunicationChannel = "Voice";
+                    }
+                    else if (c.CaseNumber == "C-00001-R01")
+                    {
+                        c.SourceChannel = "WhatsApp";
+                        c.PreferredCommunicationChannel = "Phone";
+                        c.CommunicationChannel = "WhatsApp";
+                    }
+                    else if (c.CaseNumber == "C-00001-L01")
+                    {
+                        c.SourceChannel = "Email";
+                        c.PreferredCommunicationChannel = "Email";
+                        c.CommunicationChannel = "Email";
+                        c.Status = CaseStatus.Escalated;
+                        c.Severity = "High";
+                    }
+                    else if (c.CaseNumber == "S-00003")
+                    {
+                        c.SourceChannel = "Branch";
+                        c.PreferredCommunicationChannel = "SMS";
+                        c.CommunicationChannel = "Branch";
+                    }
+                    else if (c.CaseNumber == "I-00002")
+                    {
+                        c.SourceChannel = "Web Chat";
+                        c.PreferredCommunicationChannel = "Email";
+                        c.CommunicationChannel = "Web Chat";
+                        c.Status = CaseStatus.WaitingOnCustomer;
+                        c.SlaPausedAt ??= now.AddHours(-1);
+                    }
+                    else
+                    {
+                        if (string.IsNullOrWhiteSpace(c.SourceChannel)) c.SourceChannel = c.CommunicationChannel ?? "Voice";
+                        if (string.IsNullOrWhiteSpace(c.PreferredCommunicationChannel)) c.PreferredCommunicationChannel = "Phone";
+                        c.CommunicationChannel = c.SourceChannel;
+                    }
+                }
+
+                // Ensure at least one Critical priority case exists
+                if (!cases.Any(c => c.Severity == "Critical") && cases.Count > 0)
+                {
+                    cases[0].Severity = "Critical";
+                }
+
+                context.SaveChanges();
+            }
+
+            // 4. Ensure FieldConfigurations for CreateCase has both SourceChannel and PreferredCommunicationChannel
+            var existingCreateCaseFields = context.FieldConfigurations.Where(f => f.ModuleKey == "CaseManagement" && f.SectionKey == "CreateCase").ToList();
+            if (existingCreateCaseFields.Count > 0)
+            {
+                var prefCommField = existingCreateCaseFields.FirstOrDefault(f => f.ApiField == "communicationChannel");
+                if (prefCommField != null)
+                {
+                    prefCommField.ApiField = "preferredCommunicationChannel";
+                    prefCommField.DisplayLabel = "Preferred Communication Channel";
+                }
+
+                if (!existingCreateCaseFields.Any(f => f.ApiField == "sourceChannel"))
+                {
+                    context.FieldConfigurations.Add(new FieldConfiguration
+                    {
+                        Id = Guid.NewGuid(),
+                        ModuleKey = "CaseManagement",
+                        SectionKey = "CreateCase",
+                        ApiField = "sourceChannel",
+                        DisplayLabel = "Source Channel",
+                        IsVisible = true,
+                        IsRequired = true,
+                        IsEditable = true,
+                        IsSensitive = false,
+                        MaskingRule = "None",
+                        VisibleChars = 4,
+                        DisplayOrder = 9,
+                        FieldType = "Dropdown",
+                        LookupTypeCode = "COMMUNICATION_CHANNEL",
+                        CreatedAt = now
+                    });
+                }
+                context.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EnsureCaseChannelsAndStatuses Error] {ex.Message}");
         }
     }
 }

@@ -26,6 +26,8 @@ public class CreateCaseDto
     public string CaseType { get; set; } = "Complaint";
     public string? Subcategory { get; set; }
     public string? PreferredLanguage { get; set; }
+    public string? SourceChannel { get; set; }
+    public string? PreferredCommunicationChannel { get; set; }
     public string? CommunicationChannel { get; set; }
 }
 

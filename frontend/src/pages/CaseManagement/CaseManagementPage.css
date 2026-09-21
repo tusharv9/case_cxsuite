@@ -4,20 +4,20 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
   overflow: hidden;
   background-color: var(--color-background);
 }
 
+/* 1. Header Block & Blue Gradient Banner (Matching Dashboard Reference System) */
 .case-management-page__header {
   padding: var(--space-5) var(--space-6) 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   flex-shrink: 0;
-  background-color: var(--color-background);
 }
 
-/* Blue Gradient Banner matching Lead Reference Design */
 .case-management-banner {
   background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 45%, #2563eb 100%);
   color: #ffffff;
@@ -59,6 +59,12 @@
   gap: 2px;
 }
 
+.case-management-banner__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .case-management-banner__badge {
   display: inline-flex;
   align-items: center;
@@ -72,7 +78,6 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: #ffffff;
-  width: fit-content;
 }
 
 .case-management-banner__title {
@@ -83,58 +88,64 @@
   letter-spacing: -0.01em;
 }
 
+.case-management-banner__subtitle {
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.88);
+  margin: 0;
+}
+
 .case-management-banner__controls {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   flex-wrap: wrap;
   z-index: 2;
-  position: relative;
 }
 
-/* Filter Button inside Blue Banner */
-.btn-filter-banner {
+/* View Toggle Segmented Control inside Blue Banner: [ List ] [ Board ] */
+.banner-view-toggle-group {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.banner-view-toggle-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
   font-size: var(--font-size-sm);
   font-weight: 600;
-  color: #1d4ed8;
-  background-color: #ffffff;
-  border: none;
-  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   transition: all var(--transition-fast);
   font-family: inherit;
-  position: relative;
+  line-height: 1;
 }
 
-.btn-filter-banner:hover {
-  background-color: #f8fafc;
-  color: #1e40af;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+.banner-view-toggle-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
 }
 
-.btn-filter-banner--active {
-  background-color: #eff6ff;
+.banner-view-toggle-btn--active {
+  background-color: #ffffff;
   color: #1d4ed8;
-}
-
-.banner-filter-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background-color: #1d4ed8;
-  display: inline-block;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-weight: 700;
 }
 
 /* Create Case Button inside Blue Banner */
 .btn-create-case-banner {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background-color: #ffffff;
   color: #1d4ed8;
   border: none;
@@ -154,10 +165,219 @@
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
-.case-management-page__board {
+/* 2. Filter & Search Toolbar */
+.case-management-toolbar {
+  display: flex;
+  align-items: center;
+  padding: var(--space-4) var(--space-6);
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  background-color: var(--color-background);
+}
+
+/* Search Box */
+.case-management-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 240px;
+  max-width: 320px;
+  flex: 1;
+}
+
+.case-management-search__icon {
+  position: absolute;
+  left: 11px;
+  color: var(--color-gray-400);
+  pointer-events: none;
+}
+
+.case-management-search__input {
+  width: 100%;
+  height: 36px;
+  padding: 0 32px 0 34px;
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text-primary);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.case-management-search__input:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1);
+}
+
+.case-management-search__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.case-management-search__clear {
+  position: absolute;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-gray-400);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-xs);
+  transition: color var(--transition-fast);
+}
+
+.case-management-search__clear:hover {
+  color: var(--color-text-primary);
+}
+
+/* Filters Wrapper */
+.case-management-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Checkmark Dropdown */
+.case-filter-dropdown {
+  position: relative;
+}
+
+.case-filter-dropdown__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+  user-select: none;
+}
+
+.case-filter-dropdown__btn:hover {
+  border-color: var(--color-gray-300);
+  background-color: var(--color-gray-50);
+}
+
+.case-filter-dropdown__btn--active {
+  border-color: var(--color-brand-primary);
+  background-color: var(--color-brand-primary-light);
+  color: var(--color-brand-primary);
+  font-weight: 600;
+}
+
+.case-filter-dropdown__chevron {
+  color: var(--color-gray-400);
+  transition: transform var(--transition-fast);
+}
+
+.case-filter-dropdown__chevron.open {
+  transform: rotate(180deg);
+}
+
+.case-filter-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 190px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  margin: 0;
+  list-style: none;
+  z-index: var(--z-dropdown);
+  animation: fadeInDown 0.15s ease-out;
+}
+
+.case-filter-dropdown__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.case-filter-dropdown__item:hover {
+  background-color: var(--color-gray-100);
+}
+
+.case-filter-dropdown__item--selected {
+  font-weight: 600;
+  color: var(--color-brand-primary);
+  background-color: var(--color-brand-primary-light);
+}
+
+.case-filter-dropdown__check {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-brand-primary);
+  flex-shrink: 0;
+}
+
+.case-filter-dropdown__item-label {
+  flex: 1;
+}
+
+/* Reset Filter Button */
+.case-management-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background-color: var(--color-gray-100);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+}
+
+.case-management-reset-btn:hover {
+  background-color: var(--color-gray-150);
+  color: var(--color-text-primary);
+}
+
+/* 3. Main Content (List / Board) */
+.case-management-content {
   flex: 1;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

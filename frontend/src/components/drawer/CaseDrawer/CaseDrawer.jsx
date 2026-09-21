@@ -1,12 +1,21 @@
 // ===== CASE DRAWER =====
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   X, UserCheck, ArrowRightLeft, Users, AlertTriangle,
-  FileText, Link2, CheckCircle2, Clock, ArrowRight
+  FileText, Link2, CheckCircle2, Clock, ArrowRight,
+  ChevronDown, Check
 } from 'lucide-react';
+
+const DRAWER_STATUS_OPTIONS = [
+  { value: 'Open', label: 'Open' },
+  { value: 'InProgress', label: 'In Progress' },
+  { value: 'WaitingOnCustomer', label: 'Waiting on Customer' },
+  { value: 'Escalated', label: 'Escalated' },
+  { value: 'Resolved', label: 'Resolved' },
+];
 import { Tabs } from '../../common/Tabs/Tabs.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
 import { Timeline } from '../../timeline/Timeline.jsx';
@@ -28,6 +37,7 @@ import { formatFullDateTime, formatDate } from '../../../utils/dateUtils.js';
 import { PARTICIPANT_ROLE } from '../../../constants/index.js';
 import { createFieldMasker } from '../../../utils/maskUtils.js';
 import { configurableSettingsService } from '../../../services/configurableSettingsService.js';
+import { ChannelBadge } from '../../case/ChannelBadge/ChannelBadge.jsx';
 import './CaseDrawer.css';
 
 // ---- Details Tab ----
@@ -94,58 +104,103 @@ function DetailsTab({ caseData, onOpen360 }) {
       <div className="drawer-section">
         <p className="drawer-section-label">KEY DETAILS</p>
         <div className="key-details-grid-container">
+          {/* Column 1: Core Identification & Status Attributes */}
           <div className="key-details-card">
-            <div className="key-details-row">
-              <span className="key-details-label">Case ID</span>
-              <span className="key-details-value">{caseData.caseNumber}</span>
-            </div>
-            {caseData.parentCaseNumber && (
-              <div className="key-details-row" style={{ backgroundColor: '#eff6ff', padding: '4px 6px', borderRadius: '4px' }}>
-                <span className="key-details-label" style={{ color: '#1e40af', fontWeight: 600 }}>Parent Case</span>
-                <span className="key-details-value" style={{ color: '#1d4ed8', fontWeight: 700, fontFamily: 'monospace' }}>{caseData.parentCaseNumber}</span>
+            <div className="key-details-item">
+              <span className="key-details-item__label">Case ID</span>
+              <div className="key-details-item__value font-mono">
+                {caseData.caseNumber}
+                {caseData.parentCaseNumber && (
+                  <span className="key-details-parent-pill">
+                    Parent: {caseData.parentCaseNumber}
+                  </span>
+                )}
               </div>
-            )}
-            <div className="key-details-row">
-              <span className="key-details-label">Case Type</span>
-              <span className="key-details-value">{caseData.caseType || 'Complaint'}</span>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">Department</span>
-              <span className="key-details-value">{caseData.departmentName}</span>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Case Type</span>
+              <span className="key-details-item__value">{caseData.caseType || 'Complaint'}</span>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">Subcategory</span>
-              <span className="key-details-value">{caseData.subcategory || 'General Inquiry'}</span>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Status</span>
+              <div className="key-details-item__value">
+                <span className={`key-details-status-pill key-details-status-pill--${(caseData.status || 'open').toLowerCase().replace(/[\s_]/g, '')}`}>
+                  <span className="key-details-status-dot" />
+                  {caseData.status === 'WaitingOnCustomer' ? 'Waiting on Customer' : (caseData.status === 'InProgress' ? 'In Progress' : caseData.status)}
+                </span>
+              </div>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">Preferred Language</span>
-              <span className="key-details-value">{caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}</span>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Priority / Severity</span>
+              <div className="key-details-item__value">
+                <span className={`key-details-severity-pill key-details-severity-pill--${(caseData.severity || 'medium').toLowerCase()}`}>
+                  {caseData.severity?.toUpperCase()}
+                </span>
+              </div>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">Preferred Communication Channel</span>
-              <span className="key-details-value">{caseData.communicationChannel || 'Phone'}</span>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Department &amp; Subcategory</span>
+              <span className="key-details-item__value">
+                {caseData.departmentName}
+                {caseData.subcategory && ` · ${caseData.subcategory}`}
+              </span>
+            </div>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Created Date / Time</span>
+              <span className="key-details-item__value text-secondary">
+                {formatFullDateTime(caseData.createdAt)}
+              </span>
             </div>
           </div>
+
+          {/* Column 2: Omnichannel Intake, Preference, People & SLA */}
           <div className="key-details-card">
-            <div className="key-details-row">
-              <span className="key-details-label">Severity</span>
-              <span className="key-details-value">{caseData.severity?.toUpperCase()}</span>
+            <div className="key-details-item">
+              <span className="key-details-item__label">Source Channel</span>
+              <div className="key-details-item__value">
+                <ChannelBadge channel={caseData.sourceChannel || caseData.communicationChannel || 'Voice'} />
+              </div>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">Status</span>
-              <span className="key-details-value">{caseData.status?.toUpperCase()}</span>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Preferred Communication Channel</span>
+              <span className="key-details-item__value">
+                {caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Phone'}
+              </span>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">Owner</span>
-              <span className="key-details-value">{caseData.ownerName || caseData.owner?.name || '—'}</span>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Preferred Language</span>
+              <span className="key-details-item__value">
+                {caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}
+              </span>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">SLA Tracking</span>
-              <SlaDisplay caseItem={caseData} size="sm" />
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Customer</span>
+              <span className="key-details-item__value">
+                {caseData.customer?.fullName || caseData.customerName || '—'}
+              </span>
             </div>
-            <div className="key-details-row">
-              <span className="key-details-label">Created</span>
-              <span className="key-details-value">{formatFullDateTime(caseData.createdAt)}</span>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">Assignee / Owner</span>
+              <div className="key-details-item__value key-details-item__assignee">
+                <Avatar name={caseData.ownerName || caseData.owner?.name} size="xs" />
+                <span>{caseData.ownerName || caseData.owner?.name || 'Unassigned'}</span>
+              </div>
+            </div>
+
+            <div className="key-details-item">
+              <span className="key-details-item__label">SLA Tracking</span>
+              <div className="key-details-item__value">
+                <SlaDisplay caseItem={caseData} size="sm" />
+              </div>
             </div>
           </div>
         </div>
@@ -498,7 +553,20 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
 
   const [openModal, setOpenModal] = useState(null);
   const [pendingCoworker, setPendingCoworker] = useState(null);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const statusDropdownRef = useRef(null);
   const toast = useToast();
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(e.target)) {
+        setStatusDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleOpenModal = (modalName) => {
     reloadUsers();
@@ -513,6 +581,34 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
       await refreshSelectedCase(caseData.id);
     }
     refreshBoard();
+  };
+
+  const handleStatusSelect = async (newStatus) => {
+    if (!caseData || isUpdatingStatus) return;
+    const currentNorm = (caseData.status || '').toLowerCase().replace(/[\s_]/g, '');
+    const newNorm = newStatus.toLowerCase().replace(/[\s_]/g, '');
+    if (currentNorm === newNorm) {
+      setStatusDropdownOpen(false);
+      return;
+    }
+
+    try {
+      setIsUpdatingStatus(true);
+      await caseService.updateCaseStatus(caseData.id, { status: newStatus });
+      if (newNorm === 'waitingoncustomer') {
+        toast.info('Status updated to Waiting on Customer. SLA clock paused.');
+      } else if (currentNorm === 'waitingoncustomer' || Boolean(caseData.slaPausedAt)) {
+        toast.success(`Status updated to ${newStatus}. SLA clock resumed.`);
+      } else {
+        toast.success(`Status updated to ${newStatus}.`);
+      }
+      await handleSuccess();
+    } catch (err) {
+      toast.error(err.message || 'Failed to update case status.');
+    } finally {
+      setIsUpdatingStatus(false);
+      setStatusDropdownOpen(false);
+    }
   };
 
   const confirmRemoveCoworker = async () => {
@@ -531,7 +627,16 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
     ?.filter(p => p.role === PARTICIPANT_ROLE.CO_WORKER || p.role === 'CoWorker' || p.role?.toLowerCase() === 'coworker')
     .map(p => p.userId) || [];
 
-  const sla = caseData ? getSlaDisplay(caseData.slaStartTime, getSlaConfig(caseData.severity, caseData.slaTargetHours).internalHours) : null;
+  const sla = caseData
+    ? getSlaDisplay(
+        caseData.slaStartTime,
+        getSlaConfig(caseData.severity, caseData.slaTargetHours).internalHours,
+        caseData.status,
+        Date.now(),
+        caseData.slaPausedAt,
+        caseData.slaTotalPausedMinutes
+      )
+    : null;
 
   const childRelations = caseData?.childRelations || [];
   const linkRelations = childRelations.filter((cr) => cr.relationType?.toLowerCase() === 'link');
@@ -634,16 +739,57 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
               </div>
               <h2 className="case-drawer__title-redesign">{caseData.title}</h2>
               <div className="case-drawer__badges-redesign">
-                <span className="badge-pill badge-pill--status">
-                  {caseData.status?.toUpperCase()}
-                </span>
+                {/* Interactive Status Dropdown */}
+                <div className="case-drawer__status-menu-container" ref={statusDropdownRef}>
+                  <button
+                    type="button"
+                    className={`case-drawer__status-trigger case-drawer__status-trigger--${(caseData.status || 'open').toLowerCase().replace(/[\s_]/g, '')}`}
+                    onClick={() => setStatusDropdownOpen((prev) => !prev)}
+                    disabled={isUpdatingStatus}
+                    aria-haspopup="listbox"
+                    aria-expanded={statusDropdownOpen}
+                    title="Change case status"
+                    id="drawer-status-trigger"
+                  >
+                    <span className={`case-drawer__status-dot case-drawer__status-dot--${(caseData.status || 'open').toLowerCase().replace(/[\s_]/g, '')}`} />
+                    <span>
+                      {DRAWER_STATUS_OPTIONS.find(
+                        (o) => o.value.toLowerCase().replace(/[\s_]/g, '') === (caseData.status || '').toLowerCase().replace(/[\s_]/g, '')
+                      )?.label?.toUpperCase() || caseData.status?.toUpperCase() || 'OPEN'}
+                    </span>
+                    <ChevronDown size={11} className={`case-drawer__status-chevron ${statusDropdownOpen ? 'open' : ''}`} />
+                  </button>
+
+                  {statusDropdownOpen && (
+                    <ul className="case-drawer__status-dropdown-list" role="listbox">
+                      {DRAWER_STATUS_OPTIONS.map((opt) => {
+                        const isSelected = (caseData.status || '').toLowerCase().replace(/[\s_]/g, '') === opt.value.toLowerCase().replace(/[\s_]/g, '');
+                        const optKey = opt.value.toLowerCase().replace(/[\s_]/g, '');
+                        return (
+                          <li
+                            key={opt.value}
+                            role="option"
+                            aria-selected={isSelected}
+                            className={`case-drawer__status-dropdown-item ${isSelected ? 'selected' : ''}`}
+                            onClick={() => handleStatusSelect(opt.value)}
+                          >
+                            <span className={`case-drawer__status-dot case-drawer__status-dot--${optKey}`} />
+                            <span style={{ flex: 1 }}>{opt.label}</span>
+                            {isSelected && <Check size={13} strokeWidth={2.5} />}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+
                 <span className="badge-pill badge-pill--severity">
                   {caseData.severity?.toUpperCase()}
                 </span>
                 {sla && (
-                  <span className="badge-pill badge-pill--sla">
+                  <span className={`badge-pill badge-pill--sla ${sla.status === 'paused' ? 'badge-pill--sla-paused' : ''}`}>
                     <Clock size={12} />
-                    SLA · {sla.label}
+                    SLA &middot; {sla.label}
                   </span>
                 )}
                 <span className="badge-pill badge-pill--dept">

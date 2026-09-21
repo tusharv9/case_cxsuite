@@ -64,6 +64,14 @@ public class CaseService : ICaseService
 
         int slaTargetHours = await GetSlaTargetHoursAsync(severity);
 
+        string sourceChannel = !string.IsNullOrWhiteSpace(dto.SourceChannel)
+            ? dto.SourceChannel
+            : (!string.IsNullOrWhiteSpace(dto.CommunicationChannel) ? dto.CommunicationChannel : "Voice");
+
+        string preferredChannel = !string.IsNullOrWhiteSpace(dto.PreferredCommunicationChannel)
+            ? dto.PreferredCommunicationChannel
+            : "Phone";
+
         var newCase = new Case
         {
             CaseNumber = caseNumber,
@@ -75,8 +83,14 @@ public class CaseService : ICaseService
             OwnerId = createdByUserId,
             Severity = severity,
             Status = CaseStatus.Open,
+            SourceChannel = sourceChannel,
+            PreferredCommunicationChannel = preferredChannel,
+            CommunicationChannel = sourceChannel,
+            Subcategory = string.IsNullOrWhiteSpace(dto.Subcategory) ? "General Inquiry" : dto.Subcategory,
             SlaStartTime = DateTime.UtcNow,
             SlaTargetHours = slaTargetHours,
+            SlaTotalPausedMinutes = 0,
+            SlaPausedAt = null,
         };
 
         await _caseRepository.AddAsync(newCase);
@@ -133,16 +147,58 @@ public class CaseService : ICaseService
         if (existingCase.Status == CaseStatus.Resolved)
             throw new InvalidOperationException("Cannot update status of a resolved case.");
 
-        var newStatus = Enum.Parse<CaseStatus>(dto.Status, true);
+        string rawStatus = dto.Status?.Trim() ?? "";
+        CaseStatus newStatus;
+        if (string.Equals(rawStatus, "Waiting on Customer", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(rawStatus, "WaitingOnCustomer", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(rawStatus, "Waiting_On_Customer", StringComparison.OrdinalIgnoreCase))
+        {
+            newStatus = CaseStatus.WaitingOnCustomer;
+        }
+        else if (string.Equals(rawStatus, "In Progress", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(rawStatus, "InProgress", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(rawStatus, "In_Progress", StringComparison.OrdinalIgnoreCase))
+        {
+            newStatus = CaseStatus.InProgress;
+        }
+        else
+        {
+            newStatus = Enum.Parse<CaseStatus>(rawStatus, true);
+        }
         
         if (existingCase.Status == newStatus)
             throw new InvalidOperationException($"Case is already in '{newStatus}' status.");
+
+        var oldStatus = existingCase.Status;
+
+        // SLA Pause / Resumption Logic
+        if (newStatus == CaseStatus.WaitingOnCustomer)
+        {
+            // Pause SLA clock
+            existingCase.SlaPausedAt = DateTime.UtcNow;
+        }
+        else if (oldStatus == CaseStatus.WaitingOnCustomer)
+        {
+            // Resume SLA clock: accumulate elapsed paused minutes
+            if (existingCase.SlaPausedAt.HasValue)
+            {
+                var pausedMinutes = (int)Math.Max(0, Math.Round((DateTime.UtcNow - existingCase.SlaPausedAt.Value).TotalMinutes));
+                existingCase.SlaTotalPausedMinutes += pausedMinutes;
+                existingCase.SlaPausedAt = null;
+            }
+        }
 
         existingCase.Status = newStatus;
         
         if (newStatus == CaseStatus.Resolved)
         {
             existingCase.ResolvedAt = DateTime.UtcNow;
+            if (existingCase.SlaPausedAt.HasValue)
+            {
+                var pausedMinutes = (int)Math.Max(0, Math.Round((DateTime.UtcNow - existingCase.SlaPausedAt.Value).TotalMinutes));
+                existingCase.SlaTotalPausedMinutes += pausedMinutes;
+                existingCase.SlaPausedAt = null;
+            }
         }
 
         await _caseRepository.UpdateAsync(existingCase);
@@ -154,11 +210,12 @@ public class CaseService : ICaseService
             _ => EventType.Note
         };
 
+        var statusLabel = newStatus == CaseStatus.WaitingOnCustomer ? "Waiting on Customer" : (newStatus == CaseStatus.InProgress ? "In Progress" : newStatus.ToString());
         var caseEvent = new CaseEvent
         {
             CaseId = caseId,
             EventType = eventType,
-            Message = dto.Note ?? $"Status changed to {newStatus}",
+            Message = dto.Note ?? $"Status changed to {statusLabel}",
             CreatedAt = DateTime.UtcNow,
             UserId = dto.UserId
         };
@@ -466,6 +523,13 @@ public class CaseService : ICaseService
         if (existingCase.Status == CaseStatus.Resolved)
             throw new InvalidOperationException("Case is already resolved.");
             
+        if (existingCase.Status == CaseStatus.WaitingOnCustomer && existingCase.SlaPausedAt.HasValue)
+        {
+            var pausedMinutes = (int)Math.Max(0, Math.Round((DateTime.UtcNow - existingCase.SlaPausedAt.Value).TotalMinutes));
+            existingCase.SlaTotalPausedMinutes += pausedMinutes;
+            existingCase.SlaPausedAt = null;
+        }
+
         existingCase.Status = CaseStatus.Resolved;
         existingCase.Severity = "Low";
         existingCase.ResolvedAt = DateTime.UtcNow;

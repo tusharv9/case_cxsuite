@@ -4,6 +4,7 @@ public enum CaseStatus
 {
     Open,
     InProgress,
+    WaitingOnCustomer,
     Escalated,
     Resolved,
     Accepted,

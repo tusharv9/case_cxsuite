@@ -1,135 +1,142 @@
-// ===== CASE CARD =====
+// ===== CASE CARD — OmniConnect Reference System =====
 
-import { Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Clock, AlertTriangle, CheckCircle2, Pause } from 'lucide-react';
 import { getSlaDisplay, getSlaConfig } from '../../../utils/slaUtils.js';
 import { useNow } from '../../../hooks/useNow.js';
 import { getInitials, getAvatarColor } from '../../../utils/avatarUtils.js';
-import { DeptBadge } from '../../common/Badge/Badge.jsx';
+import { ChannelBadge } from '../ChannelBadge/ChannelBadge.jsx';
 import './CaseCard.css';
 
-function SlaSection({ status, severity, slaStartTime, slaTargetHours, caseNumber }) {
+function SlaBadge({ status, severity, slaStartTime, slaTargetHours, slaPausedAt, slaTotalPausedMinutes }) {
   const now = useNow(1000);
-  const isResolved = status === 'Resolved';
-  const isEscalated = status === 'Escalated';
   const { internalHours } = getSlaConfig(severity, slaTargetHours);
-  const sla = getSlaDisplay(slaStartTime, internalHours, status, now);
-  const remainingTimeStr = sla.label;
+  const sla = getSlaDisplay(slaStartTime, internalHours, status, now, slaPausedAt, slaTotalPausedMinutes);
 
-  if (isResolved) {
+  if (sla.status === 'within') {
     return (
-      <div className="case-card__sla case-card__sla--resolved">
-        <CheckCircle2 size={12} strokeWidth={2.5} className="sla-icon" />
-        <span className="sla-label">Within SLA</span>
-      </div>
+      <span className="case-card-sla-badge case-card-sla-badge--met">
+        <CheckCircle2 size={11} strokeWidth={2.5} />
+        <span>{sla.label}</span>
+      </span>
     );
   }
 
-  if (isEscalated) {
+  if (sla.status === 'paused') {
     return (
-      <div className="case-card__sla case-card__sla--breached">
-        <AlertTriangle size={12} strokeWidth={2.5} className="sla-icon" />
-        <span className="sla-label">Breached</span>
-        {caseNumber === 'C-10301' && (
-          <span className="sla-breached-ref">{caseNumber}</span>
-        )}
-      </div>
+      <span className="case-card-sla-badge case-card-sla-badge--paused">
+        <Pause size={10} strokeWidth={2.5} />
+        <span>{sla.label}</span>
+      </span>
     );
   }
 
-  // Active cases (Open or InProgress)
-  let severityLabel = 'Info';
-  let severityClass = 'info';
-  let icon = <Clock size={12} strokeWidth={2.5} />;
-
-  if (severity === 'Warn') {
-    severityLabel = 'At risk';
-    severityClass = 'warn';
-  } else if (severity === 'Bad') {
-    severityLabel = 'Critical';
-    severityClass = 'bad';
-    icon = <AlertTriangle size={12} strokeWidth={2.5} />;
-  } else if (severity === 'Ok') {
-    severityLabel = 'Within SLA';
-    severityClass = 'ok';
-    icon = <CheckCircle2 size={12} strokeWidth={2.5} />;
+  if (sla.status === 'breached') {
+    return (
+      <span className="case-card-sla-badge case-card-sla-badge--breached">
+        <Clock size={11} strokeWidth={2.5} />
+        <span>{sla.label}</span>
+      </span>
+    );
   }
 
   return (
-    <div className={`case-card__sla case-card__sla--active case-card__sla--${severityClass}`}>
-      <div className="case-card__sla-left">
-        {icon}
-        <span className="sla-sev-label">{severityLabel}</span>
-      </div>
-      <span className="sla-time-val">{remainingTimeStr}</span>
-    </div>
+    <span className="case-card-sla-badge case-card-sla-badge--active">
+      <Clock size={11} strokeWidth={2.5} />
+      <span>{sla.label}</span>
+    </span>
   );
 }
 
-export function CaseCard({ caseData, isSelected, onClick, onHandleClick }) {
-  const now = useNow(1000);
-  const { title, departmentName, severity, status, ownerName, caseNumber, createdAt, slaStartTime, slaTargetHours } = caseData;
+function PriorityBadge({ severity }) {
+  const norm = (severity || 'Medium').trim();
+  const lower = norm.toLowerCase();
+
+  let className = 'case-card-priority-badge--medium';
+  let label = norm;
+
+  if (lower === 'critical' || lower === 'bad') {
+    className = 'case-card-priority-badge--critical';
+    label = 'Critical';
+  } else if (lower === 'high' || lower === 'warn') {
+    className = 'case-card-priority-badge--high';
+    label = 'High';
+  } else if (lower === 'low' || lower === 'ok') {
+    className = 'case-card-priority-badge--low';
+    label = 'Low';
+  } else if (lower === 'medium' || lower === 'info') {
+    className = 'case-card-priority-badge--medium';
+    label = 'Medium';
+  }
+
+  return (
+    <span className={`case-card-priority-badge ${className}`}>
+      {label}
+    </span>
+  );
+}
+
+export function CaseCard({ caseData, isSelected, onClick }) {
+  const {
+    title,
+    severity,
+    status,
+    ownerName,
+    caseNumber,
+    createdAt,
+    slaStartTime,
+    slaTargetHours,
+    slaPausedAt,
+    slaTotalPausedMinutes,
+    sourceChannel,
+    communicationChannel,
+  } = caseData;
 
   const resolvedSlaStartTime = slaStartTime || createdAt;
-  const { internalHours } = getSlaConfig(severity, slaTargetHours);
-  const sla = getSlaDisplay(resolvedSlaStartTime, internalHours, status, now);
-  const isResolved = status === 'Resolved';
-  const slaClass = isResolved ? 'sla-resolved' : `sla-${sla.status}`;
   const ownerInitials = ownerName ? getInitials(ownerName) : '?';
-  const ownerColor = ownerName ? getAvatarColor(ownerName) : { bg: '#9ca3af', text: '#fff' };
+  const ownerColor = ownerName ? getAvatarColor(ownerName) : { bg: '#94a3af', text: '#ffffff' };
 
   return (
     <article
-      className={`case-card case-card--${slaClass}${isSelected ? ' case-card--selected' : ''}`}
+      className={`case-card${isSelected ? ' case-card--selected' : ''}`}
       onClick={onClick}
       role="button"
       tabIndex={0}
       aria-label={`Case ${caseNumber}: ${title}`}
       onKeyDown={(e) => e.key === 'Enter' && onClick?.()}
     >
-      {/* Department capsule top left */}
-      <div className="case-card__dept">
-        <DeptBadge name={departmentName} />
-      </div>
-
-      {/* Title */}
-      <h3 className="case-card__title">{title}</h3>
-
-      {/* SLA section */}
-      <div className="case-card__meta">
-        <SlaSection
+      {/* 1. Header: Priority & SLA Status */}
+      <div className="case-card__header">
+        <PriorityBadge severity={severity} />
+        <SlaBadge
           status={status}
           severity={severity}
           slaStartTime={resolvedSlaStartTime}
           slaTargetHours={slaTargetHours}
-          caseNumber={caseNumber}
+          slaPausedAt={slaPausedAt}
+          slaTotalPausedMinutes={slaTotalPausedMinutes}
         />
       </div>
 
-      {/* Footer: Owner avatar + Case ID right next to it */}
+      {/* 2. Body: Case ID & Title */}
+      <div className="case-card__body">
+        <span className="case-card__id">{caseNumber}</span>
+        <h4 className="case-card__title" title={title}>{title}</h4>
+      </div>
+
+      {/* 3. Footer: Channel Pill + Dynamic Agent Avatar/Initials */}
       <div className="case-card__footer">
-        <span
-          className="case-card__owner-initials"
-          style={{ backgroundColor: ownerColor.bg, color: ownerColor.text }}
-          aria-label={ownerName}
-          title={ownerName}
-        >
-          {ownerInitials}
-        </span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <span className="case-card__case-id">{caseNumber}</span>
-          {(caseData.isSubcase || caseData.parentCaseNumber) && (
-            <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: 500 }}>
-              Parent: {caseData.parentCaseNumber || 'Parent Case'}
-            </span>
-          )}
-        </div>
-        {status === 'Open' ? (
-          <span className="case-card__open-cta">
-            <button type="button" className="case-card__handle-btn" onClick={(e) => { e.stopPropagation(); onHandleClick?.(); }}>Handle</button> &rarr;
+        <ChannelBadge channel={sourceChannel || communicationChannel || 'Voice'} />
+        
+        <div className="case-card__agent-wrapper">
+          <span
+            className="case-card__agent-avatar"
+            style={{ backgroundColor: ownerColor.bg, color: ownerColor.text }}
+            title={`Assigned Agent: ${ownerName || 'Unassigned'}`}
+            aria-label={`Assigned Agent: ${ownerName || 'Unassigned'}`}
+          >
+            {ownerInitials}
           </span>
-        ) : (
-          <span className="case-card__open-cta">Open &rarr;</span>
-        )}
+        </div>
       </div>
     </article>
   );

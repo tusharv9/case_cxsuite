@@ -248,7 +248,11 @@ public class AppDbContext : DbContext
     {
         if (string.IsNullOrWhiteSpace(value)) return CaseStatus.Open;
         if (Enum.TryParse<CaseStatus>(value, true, out var status)) return status;
-        if (string.Equals(value, "In_Progress", StringComparison.OrdinalIgnoreCase)) return CaseStatus.InProgress;
+        if (string.Equals(value, "In_Progress", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "In Progress", StringComparison.OrdinalIgnoreCase)) return CaseStatus.InProgress;
+        if (string.Equals(value, "Waiting_On_Customer", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "Waiting on Customer", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "WaitingOnCustomer", StringComparison.OrdinalIgnoreCase)) return CaseStatus.WaitingOnCustomer;
         return CaseStatus.Open;
     }
 }

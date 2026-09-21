@@ -13,6 +13,7 @@ export const DEFAULT_USER_ID = '7ef3fe56-2fa7-4cdb-83c0-3e697ec3f6e1';
 export const CASE_STATUS = {
   OPEN: 'Open',
   IN_PROGRESS: 'InProgress',
+  WAITING_ON_CUSTOMER: 'WaitingOnCustomer',
   ESCALATED: 'Escalated',
   RESOLVED: 'Resolved',
 };
@@ -20,6 +21,7 @@ export const CASE_STATUS = {
 export const CASE_STATUS_LABELS = {
   Open: 'Open',
   InProgress: 'In Progress',
+  WaitingOnCustomer: 'Waiting on Customer',
   Escalated: 'Escalated',
   Resolved: 'Resolved',
 };
@@ -27,6 +29,7 @@ export const CASE_STATUS_LABELS = {
 export const CASE_STATUS_COLORS = {
   Open: { color: 'var(--color-status-open)', bg: 'var(--color-status-open-bg)', border: 'var(--color-status-open-border)' },
   InProgress: { color: 'var(--color-status-inprogress)', bg: 'var(--color-status-inprogress-bg)', border: 'var(--color-status-inprogress-border)' },
+  WaitingOnCustomer: { color: '#b45309', bg: '#fef3c7', border: '#fde68a' },
   Escalated: { color: 'var(--color-status-escalated)', bg: 'var(--color-status-escalated-bg)', border: 'var(--color-status-escalated-border)' },
   Resolved: { color: 'var(--color-status-resolved)', bg: 'var(--color-status-resolved-bg)', border: 'var(--color-status-resolved-border)' },
 };
@@ -110,10 +113,58 @@ export const PARTICIPANT_ROLE = {
 
 // Board columns definition
 export const BOARD_COLUMNS = [
-  { key: 'Open',       label: 'OPEN',                  statusClass: 'col--open' },
-  { key: 'InProgress', label: 'IN PROGRESS',            statusClass: 'col--inprogress' },
-  { key: 'Escalated',  label: 'ESCALATED · SLA RISK',   statusClass: 'col--escalated' },
-  { key: 'Resolved',   label: 'RESOLVED · TODAY',       statusClass: 'col--resolved' },
+  { key: 'Open',              label: 'OPEN',                 statusClass: 'col--open' },
+  { key: 'InProgress',        label: 'IN PROGRESS',           statusClass: 'col--inprogress' },
+  { key: 'WaitingOnCustomer', label: 'WAITING ON CUSTOMER',  statusClass: 'col--waiting' },
+  { key: 'Escalated',         label: 'ESCALATED',             statusClass: 'col--escalated' },
+  { key: 'Resolved',          label: 'RESOLVED',              statusClass: 'col--resolved' },
+];
+
+// Defined Filter Options for Case Management
+export const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'Open', label: 'Open' },
+  { value: 'InProgress', label: 'In Progress' },
+  { value: 'WaitingOnCustomer', label: 'Waiting on Customer' },
+  { value: 'Escalated', label: 'Escalated' },
+  { value: 'Resolved', label: 'Resolved' },
+];
+
+export const PRIORITY_FILTER_OPTIONS = [
+  { value: 'all', label: 'All priorities' },
+  { value: 'Critical', label: 'Critical' },
+  { value: 'High', label: 'High' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'Low', label: 'Low' },
+];
+
+// Explicitly excludes 'Mobile App' per specification
+export const CHANNEL_FILTER_OPTIONS = [
+  { value: 'all', label: 'All channels' },
+  { value: 'Voice', label: 'Voice' },
+  { value: 'Email', label: 'Email' },
+  { value: 'WhatsApp', label: 'WhatsApp' },
+  { value: 'SMS', label: 'SMS' },
+  { value: 'Branch', label: 'Branch' },
+  { value: 'Web Chat', label: 'Web Chat' },
+  { value: 'Social', label: 'Social' },
+];
+
+export const SOURCE_CHANNEL_OPTIONS = [
+  { value: 'Voice', label: 'Voice' },
+  { value: 'Email', label: 'Email' },
+  { value: 'WhatsApp', label: 'WhatsApp' },
+  { value: 'SMS', label: 'SMS' },
+  { value: 'Branch', label: 'Branch' },
+  { value: 'Web Chat', label: 'Web Chat' },
+  { value: 'Social', label: 'Social' },
+];
+
+export const PREFERRED_COMMUNICATION_CHANNEL_OPTIONS = [
+  { value: 'Phone', label: 'Phone' },
+  { value: 'Email', label: 'Email' },
+  { value: 'WhatsApp', label: 'WhatsApp' },
+  { value: 'SMS', label: 'SMS' },
 ];
 
 // Predefined Escalation reasons (Without 'Other' duplicate since UI appends a single 'Other' option)

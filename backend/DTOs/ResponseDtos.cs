@@ -10,6 +10,9 @@ public class CaseSummaryDto
     public DateTime SlaStartTime { get; set; }
     public int SlaTargetHours { get; set; }
     public DateTime? ResolvedAt { get; set; }
+    public DateTime? SlaPausedAt { get; set; }
+    public int SlaTotalPausedMinutes { get; set; }
+    public bool IsSlaPaused => SlaPausedAt.HasValue || Status == "WaitingOnCustomer";
     public Guid DepartmentId { get; set; }
     public string DepartmentName { get; set; } = string.Empty;
     public string OwnerName { get; set; } = string.Empty;
@@ -21,6 +24,8 @@ public class CaseSummaryDto
     public string CaseType { get; set; } = "Complaint";
     public string? Subcategory { get; set; }
     public string? PreferredLanguage { get; set; }
+    public string? SourceChannel { get; set; }
+    public string? PreferredCommunicationChannel { get; set; }
     public string? CommunicationChannel { get; set; }
     public Guid? ParentCaseId { get; set; }
     public string? ParentCaseNumber { get; set; }

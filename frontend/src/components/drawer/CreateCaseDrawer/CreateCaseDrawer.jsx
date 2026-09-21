@@ -15,6 +15,10 @@ import { getSlaConfig } from '../../../utils/slaUtils.js';
 import { formatDate } from '../../../utils/dateUtils.js';
 import { CreateCustomerDrawer } from '../CreateCustomerDrawer/CreateCustomerDrawer.jsx';
 import { ExistingCustomerDrawer } from '../ExistingCustomerDrawer/ExistingCustomerDrawer.jsx';
+import {
+  SOURCE_CHANNEL_OPTIONS,
+  PREFERRED_COMMUNICATION_CHANNEL_OPTIONS,
+} from '../../../constants/index.js';
 import './CreateCaseDrawer.css';
 
 const DEFAULT_CREATE_CASE_FIELDS = [
@@ -23,10 +27,11 @@ const DEFAULT_CREATE_CASE_FIELDS = [
   { apiField: 'description', displayLabel: 'Description', isVisible: true, isRequired: true, displayOrder: 3 },
   { apiField: 'selectCustomer', displayLabel: 'Select Customer', isVisible: true, isRequired: true, displayOrder: 4 },
   { apiField: 'departmentId', displayLabel: 'Department', isVisible: true, isRequired: true, displayOrder: 5 },
-  { apiField: 'subCategory', displayLabel: 'Subcategory', isVisible: true, isRequired: true, displayOrder: 6 },
+  { apiField: 'subCategory', displayLabel: 'Subcategory', isVisible: true, isRequired: false, displayOrder: 6 },
   { apiField: 'preferredLanguage', displayLabel: 'Preferred Language', isVisible: true, isRequired: false, displayOrder: 7 },
-  { apiField: 'communicationChannel', displayLabel: 'Preferred Communication Channel', isVisible: true, isRequired: false, displayOrder: 8 },
-  { apiField: 'severity', displayLabel: 'Severity', isVisible: true, isRequired: true, displayOrder: 9 },
+  { apiField: 'preferredCommunicationChannel', displayLabel: 'Preferred Communication Channel', isVisible: true, isRequired: false, displayOrder: 8 },
+  { apiField: 'sourceChannel', displayLabel: 'Source Channel', isVisible: true, isRequired: true, displayOrder: 9 },
+  { apiField: 'severity', displayLabel: 'Severity', isVisible: true, isRequired: true, displayOrder: 10 },
 ];
 
 export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
@@ -40,7 +45,8 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     departmentId: '',
     subcategory: '',
     preferredLanguage: 'Bahasa Malaysia',
-    communicationChannel: 'Phone',
+    preferredCommunicationChannel: 'Phone',
+    sourceChannel: 'Voice',
     severity: 'Medium',
     slaTargetHours: '12',
   });
@@ -103,7 +109,32 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           .sort((a, b) => a.displayOrder - b.displayOrder);
 
         if (sortedFields && sortedFields.length > 0) {
-          setFieldConfigs(sortedFields);
+          const normalized = sortedFields.map((f) => {
+            if (f.apiField === 'communicationChannel') {
+              return { ...f, apiField: 'preferredCommunicationChannel', displayLabel: 'Preferred Communication Channel' };
+            }
+            return f;
+          });
+          if (!normalized.some((f) => f.apiField === 'preferredCommunicationChannel')) {
+            normalized.push({
+              apiField: 'preferredCommunicationChannel',
+              displayLabel: 'Preferred Communication Channel',
+              isVisible: true,
+              isRequired: false,
+              displayOrder: 8,
+            });
+          }
+          if (!normalized.some((f) => f.apiField === 'sourceChannel')) {
+            normalized.push({
+              apiField: 'sourceChannel',
+              displayLabel: 'Source Channel',
+              isVisible: true,
+              isRequired: true,
+              displayOrder: 9,
+            });
+          }
+          normalized.sort((a, b) => a.displayOrder - b.displayOrder);
+          setFieldConfigs(normalized);
         } else {
           setFieldConfigs(DEFAULT_CREATE_CASE_FIELDS);
         }
@@ -140,7 +171,8 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
         departmentId: '',
         subcategory: '',
         preferredLanguage: languages.length > 0 ? languages[0].value : 'Bahasa Malaysia',
-        communicationChannel: channels.length > 0 ? channels[0].value : 'Phone',
+        preferredCommunicationChannel: 'Phone',
+        sourceChannel: 'Voice',
         severity: defaultSeverity,
         slaTargetHours: String(externalHours),
       });
@@ -228,6 +260,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     if (!form.customerId) e.customerId = 'Please select a customer.';
     if (!form.departmentId) e.departmentId = 'Please select a department.';
     if (!form.severity) e.severity = 'Please select severity.';
+    if (!form.sourceChannel) e.sourceChannel = 'Please select a source channel.';
     if (!form.slaTargetHours || isNaN(Number(form.slaTargetHours)) || Number(form.slaTargetHours) < 1) {
       e.slaTargetHours = 'Please enter a valid SLA target (hours).';
     }
@@ -252,7 +285,9 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
         caseType: form.caseType,
         subcategory: form.subcategory,
         preferredLanguage: form.preferredLanguage,
-        communicationChannel: form.communicationChannel,
+        preferredCommunicationChannel: form.preferredCommunicationChannel,
+        sourceChannel: form.sourceChannel,
+        communicationChannel: form.sourceChannel,
       });
       toast.success('Case created successfully.');
       onSuccess?.();
@@ -442,18 +477,36 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       );
     }
 
-    if (key === 'communicationChannel') {
+    if (key === 'preferredCommunicationChannel' || key === 'communicationChannel') {
       return (
         <Select
           key={key}
-          label={label}
+          label="Preferred Communication Channel"
           required={isRequired}
           disabled={!isEditable}
-          value={form.communicationChannel}
-          onChange={set('communicationChannel')}
+          value={form.preferredCommunicationChannel}
+          onChange={set('preferredCommunicationChannel')}
         >
-          {channels.map((o) => (
-            <option key={o.id || o.value} value={o.value}>{o.label || o.value}</option>
+          {PREFERRED_COMMUNICATION_CHANNEL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </Select>
+      );
+    }
+
+    if (key === 'sourceChannel') {
+      return (
+        <Select
+          key={key}
+          label="Source Channel"
+          required={isRequired}
+          disabled={!isEditable}
+          value={form.sourceChannel}
+          onChange={set('sourceChannel')}
+          error={errors.sourceChannel}
+        >
+          {SOURCE_CHANNEL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </Select>
       );
