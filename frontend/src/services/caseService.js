@@ -190,4 +190,20 @@ export const caseService = {
       window.URL.revokeObjectURL(url);
     });
   },
+
+  /**
+   * Escalate case to next matrix level
+   * dto: { reason: string, note?: string }
+   */
+  escalateCase(caseId, dto) {
+    return api.post(`/api/cases/${caseId}/escalate`, dto).then((r) => r.data);
+  },
+
+  /**
+   * Get 4-level escalation matrix configuration and dynamic next target for a case
+   */
+  getEscalationMatrix(caseId) {
+    const params = caseId ? { caseId } : {};
+    return api.get('/api/cases/escalation-matrix', { params }).then((r) => r.data);
+  },
 };

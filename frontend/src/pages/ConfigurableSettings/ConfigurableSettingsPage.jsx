@@ -247,7 +247,11 @@ export function ConfigurableSettingsPage() {
       severities.filter((s) => {
         const draft = slaDrafts[s.name];
         if (!draft) return false;
-        return Number(draft.internal) !== s.internalHours || Number(draft.external) !== s.externalHours;
+        return (
+          Number(draft.internal) !== s.internalHours ||
+          Number(draft.external) !== s.externalHours ||
+          Number(draft.firstResponse) !== (s.firstResponseMinutes ?? 240)
+        );
       }),
     [severities, slaDrafts]
   );
@@ -370,6 +374,9 @@ export function ConfigurableSettingsPage() {
         }
         if (draft.external !== '' && Number(draft.external) !== row.externalHours) {
           props.push({ label: 'External SLA', oldVal: `${row.externalHours} hrs`, newVal: `${draft.external} hrs` });
+        }
+        if (draft.firstResponse !== '' && Number(draft.firstResponse) !== (row.firstResponseMinutes ?? 240)) {
+          props.push({ label: 'First Response Target', oldVal: `${row.firstResponseMinutes ?? 240} min`, newVal: `${draft.firstResponse} min` });
         }
         if (props.length > 0) {
           list.push({
@@ -541,7 +548,14 @@ export function ConfigurableSettingsPage() {
     setIdTypes(JSON.parse(JSON.stringify(savedIdTypes)));
     setSlaDrafts(
       Object.fromEntries(
-        severities.map((s) => [s.name, { internal: String(s.internalHours), external: String(s.externalHours) }])
+        severities.map((s) => [
+          s.name,
+          {
+            internal: String(s.internalHours),
+            external: String(s.externalHours),
+            firstResponse: String(s.firstResponseMinutes ?? 240),
+          },
+        ])
       )
     );
 
@@ -728,7 +742,14 @@ export function ConfigurableSettingsPage() {
       setSlaStatuses(ssList || []);
       setSlaDrafts(
         Object.fromEntries(
-          (slaList || []).map((s) => [s.name, { internal: String(s.internalHours), external: String(s.externalHours) }])
+          (slaList || []).map((s) => [
+            s.name,
+            {
+              internal: String(s.internalHours),
+              external: String(s.externalHours),
+              firstResponse: String(s.firstResponseMinutes ?? 240),
+            },
+          ])
         )
       );
     } catch (err) {
@@ -1269,7 +1290,14 @@ export function ConfigurableSettingsPage() {
     setSeverities(list || []);
     setSlaDrafts(
       Object.fromEntries(
-        (list || []).map((s) => [s.name, { internal: String(s.internalHours), external: String(s.externalHours) }])
+        (list || []).map((s) => [
+          s.name,
+          {
+            internal: String(s.internalHours),
+            external: String(s.externalHours),
+            firstResponse: String(s.firstResponseMinutes ?? 240),
+          },
+        ])
       )
     );
     return list || [];
@@ -1360,8 +1388,9 @@ export function ConfigurableSettingsPage() {
       const draft = slaDrafts[row.name];
       const internal = Number(draft.internal);
       const external = Number(draft.external);
-      if (draft.internal === '' || draft.external === '') {
-        toast.error(`SLA hours for "${row.name}" cannot be empty.`);
+      const firstResponse = Number(draft.firstResponse);
+      if (draft.internal === '' || draft.external === '' || draft.firstResponse === '') {
+        toast.error(`SLA values for "${row.name}" cannot be empty.`);
         return false;
       }
       if (!Number.isInteger(internal) || internal <= 0) {
@@ -1372,13 +1401,22 @@ export function ConfigurableSettingsPage() {
         toast.error(`External SLA for "${row.name}" must be a whole number of hours greater than 0.`);
         return false;
       }
+      if (!Number.isInteger(firstResponse) || firstResponse <= 0) {
+        toast.error(`First Response Target for "${row.name}" must be a whole number of minutes greater than 0.`);
+        return false;
+      }
     }
 
     setIsSavingSla(true);
     try {
       for (const row of slaDirtyRows) {
         const draft = slaDrafts[row.name];
-        await configurableSettingsService.saveSlaConfiguration(row.name, Number(draft.internal), Number(draft.external));
+        await configurableSettingsService.saveSlaConfiguration(
+          row.name,
+          Number(draft.internal),
+          Number(draft.external),
+          Number(draft.firstResponse)
+        );
       }
       await refreshSeverities();
       toast.success(`SLA configuration saved for ${slaDirtyRows.length} severity level(s).`);
@@ -2504,11 +2542,12 @@ export function ConfigurableSettingsPage() {
                         <div className="sla-col-desc">Description &amp; Guidelines</div>
                         <div className="sla-col-input">Internal SLA (Agent)</div>
                         <div className="sla-col-input">External SLA (Customer)</div>
+                        <div className="sla-col-input">First Response Target</div>
                       </div>
                       <div className="sla-table__body">
                         {severities.map((sev) => {
                           const badge = SEVERITY_BADGES[sev.name] || SEVERITY_BADGE_FALLBACK;
-                          const draft = slaDrafts[sev.name] || { internal: '', external: '' };
+                          const draft = slaDrafts[sev.name] || { internal: '', external: '', firstResponse: '' };
                           return (
                             <div key={sev.id} className="sla-row">
                               <div className="sla-col-sev">
@@ -2556,6 +2595,24 @@ export function ConfigurableSettingsPage() {
                                     aria-label={`External SLA hours for ${sev.name}`}
                                   />
                                   <span className="input-unit-tag">hrs</span>
+                                </div>
+                              </div>
+                              <div className="sla-col-input">
+                                <div className="input-unit-wrapper">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    className="sla-input-number"
+                                    value={draft.firstResponse ?? ''}
+                                    onChange={(e) =>
+                                      setSlaDrafts((prev) => ({
+                                        ...prev,
+                                        [sev.name]: { ...prev[sev.name], firstResponse: e.target.value },
+                                      }))
+                                    }
+                                    aria-label={`First response target minutes for ${sev.name}`}
+                                  />
+                                  <span className="input-unit-tag">min</span>
                                 </div>
                               </div>
                             </div>

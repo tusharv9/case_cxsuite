@@ -168,8 +168,13 @@ export const configurableSettingsService = {
     return response.data;
   },
 
-  async saveSlaConfiguration(severity, internalHours, externalHours) {
-    const payload = { severity, internalHours: Number(internalHours), externalHours: Number(externalHours) };
+  async saveSlaConfiguration(severity, internalHours, externalHours, firstResponseMinutes) {
+    const payload = {
+      severity,
+      internalHours: Number(internalHours),
+      externalHours: Number(externalHours),
+      firstResponseMinutes: firstResponseMinutes !== undefined ? Number(firstResponseMinutes) : 240,
+    };
     const response = await api.post('/api/ConfigurableSettings/sla', payload);
     return response.data;
   },

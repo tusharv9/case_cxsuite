@@ -158,6 +158,21 @@ public class CasesController : BaseApiController
         return Ok(result);
     }
 
+    [HttpPost("{id:guid}/escalate")]
+    public async Task<IActionResult> EscalateCase(Guid id, [FromBody] EscalateCaseDto dto)
+    {
+        dto.UserId = CurrentUserId;
+        await _caseService.EscalateCaseAsync(id, dto, CurrentUserId);
+        return Ok(new { message = "Case escalated successfully." });
+    }
+
+    [HttpGet("escalation-matrix")]
+    public async Task<IActionResult> GetEscalationMatrix([FromQuery] Guid? caseId, CancellationToken ct)
+    {
+        var matrix = await _caseService.GetEscalationMatrixConfigAsync(caseId, ct);
+        return Ok(matrix);
+    }
+
     [HttpGet("audit")]
     public async Task<IActionResult> GetAuditLogs([FromQuery] int page = 1, [FromQuery] int pageSize = 10, [FromQuery] string? actionType = null, [FromQuery] string? search = null, CancellationToken ct = default)
     {

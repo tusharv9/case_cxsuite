@@ -100,6 +100,7 @@ public class CreateOrUpdateSlaDto
     public string Severity { get; set; } = string.Empty;
     public int InternalHours { get; set; }
     public int ExternalHours { get; set; }
+    public int FirstResponseMinutes { get; set; } = 240;
 }
 
 public class CreateOrUpdateEscalationTemplateDto
@@ -153,6 +154,7 @@ public class SeverityDto
     public int DisplayOrder { get; set; }
     public int InternalHours { get; set; }
     public int ExternalHours { get; set; }
+    public int FirstResponseMinutes { get; set; } = 240;
     public bool IsSystem { get; set; }
     public int CasesUsing { get; set; }
     public bool IsActive { get; set; } = true;
@@ -163,6 +165,7 @@ public class CreateSeverityDto
     public string Name { get; set; } = string.Empty;
     public int InternalHours { get; set; } = 22;
     public int ExternalHours { get; set; } = 24;
+    public int FirstResponseMinutes { get; set; } = 240;
     public int DisplayOrder { get; set; } = 0;
 }
 
@@ -170,6 +173,7 @@ public class UpdateSeverityDto
 {
     public string Name { get; set; } = string.Empty;
     public int DisplayOrder { get; set; } = 0;
+    public int? FirstResponseMinutes { get; set; }
     public bool IsActive { get; set; } = true;
 }
 

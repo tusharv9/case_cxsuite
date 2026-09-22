@@ -13,6 +13,7 @@ import {
   RESOLVE_DISPOSITIONS,
   LINK_RELATIONSHIPS,
 } from '../../../constants/index.js';
+import { AlertTriangle, ShieldAlert } from 'lucide-react';
 import './actions.css';
 
 // User Select Card Component for List Selection
@@ -504,9 +505,8 @@ export function EscalateModal({
   departments = [],
   onSuccess,
 }) {
-  const [selectedDeptId, setSelectedDeptId] = useState('');
-  const [selectedAgentId, setSelectedAgentId] = useState('');
-  const [reason, setReason] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [reason, setReason] = useState('SLA Breach / Risk');
   const [customReason, setCustomReason] = useState('');
   const [note, setNote] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -514,155 +514,173 @@ export function EscalateModal({
 
   useEffect(() => {
     if (isOpen) {
-      setSelectedDeptId('');
-      setSelectedAgentId('');
-      setReason('');
+      setSelectedUserId('');
+      setReason('SLA Breach / Risk');
       setCustomReason('');
       setNote('');
     }
   }, [isOpen]);
 
-  // Load the configured escalation template and fill its placeholders with this case's data
-  const caseNumber = caseData?.caseNumber;
-  const caseCustomerName = caseData?.customerName || caseData?.customer?.fullName;
-  const caseSeverity = caseData?.severity;
-  const targetDeptName = departments.find((d) => String(d.id) === String(selectedDeptId))?.name;
-
-  useEffect(() => {
-    if (!selectedDeptId || !reason || reason === 'Other') return;
-
-    configurableSettingsService.getEscalationTemplates(selectedDeptId, reason)
-      .then((tmpl) => {
-        if (!tmpl || (!tmpl.subjectTemplate && !tmpl.bodyTemplate)) return;
-
-        const values = {
-          caseNumber,
-          customerName: caseCustomerName,
-          departmentName: targetDeptName || tmpl.departmentName,
-          severity: caseSeverity,
-        };
-
-        const subject = applyEscalationPlaceholders(tmpl.subjectTemplate, values);
-        const body = applyEscalationPlaceholders(tmpl.bodyTemplate, values);
-        setNote(`${subject ? `[Subject: ${subject}]\n` : ''}${body}`);
-      })
-      .catch(() => {});
-  }, [selectedDeptId, reason, caseNumber, caseCustomerName, caseSeverity, targetDeptName]);
-
-  const deptAgents = useMemo(() => {
-    if (!selectedDeptId) return [];
-    return users.filter((u) => String(u.departmentId) === String(selectedDeptId));
-  }, [users, selectedDeptId]);
+  const selectedUser = useMemo(() => {
+    return users.find((u) => String(u.id) === String(selectedUserId));
+  }, [users, selectedUserId]);
 
   const handleConfirm = async () => {
-    if (!selectedDeptId) return toast.error('Please select a department.');
-    if (!selectedAgentId) return toast.error('Please select an agent to escalate to.');
-    if (!reason) return toast.error('Please select an escalation reason.');
+    if (!selectedUserId) {
+      return toast.error('Please select who to escalate this case to.');
+    }
+    if (!reason) {
+      return toast.error('Please select an escalation reason.');
+    }
     if (reason === 'Other' && !customReason.trim()) {
       return toast.error('Please specify custom reason.');
     }
+    const finalReason = reason === 'Other' ? customReason.trim() : reason;
+
     setIsLoading(true);
     try {
-      const finalReason = reason === 'Other' ? customReason.trim() : reason;
-      const targetAgent = users.find((u) => u.id === selectedAgentId);
-      const fullNote = `Escalated to ${targetAgent?.name || 'Agent'}. Reason: ${finalReason}.${note ? ' ' + note.trim() : ''}`;
-      await caseService.updateCaseStatus(caseId, { status: 'Escalated', note: fullNote });
+      await caseService.escalateCase(caseId, {
+        reason: finalReason,
+        note: note.trim() || undefined,
+        targetUserId: selectedUserId,
+      });
       toast.success('Case escalated successfully.');
       onSuccess?.();
       onClose();
     } catch (err) {
-      toast.error(err.message);
+      toast.error(err.message || 'Failed to escalate case.');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const ESCALATION_OPTIONS = [
+    'SLA Breach / Risk',
+    'Complex Technical Issue',
+    'Customer Complaint Repeat',
+    'Regulatory / Compliance',
+    'Management Escalation',
+    'Fraud Risk',
+    'Other',
+  ];
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title="Escalate Case"
-      subtitle="Escalate case to a specific department & supervisor/agent"
+      subtitle="Select who to escalate this case to and provide an escalation reason"
       size="md"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="danger" isLoading={isLoading} onClick={handleConfirm}>
+          <Button
+            variant="danger"
+            isLoading={isLoading}
+            disabled={!selectedUserId}
+            onClick={handleConfirm}
+          >
             Escalate Case
           </Button>
         </>
       }
     >
       <div className="action-modal-form">
-        {/* Step 1: Department */}
+        {/* Step 1: Who to escalate to */}
         <Select
-          label="Department"
+          label="Escalate To"
           required
-          value={selectedDeptId}
-          onChange={(e) => {
-            setSelectedDeptId(e.target.value);
-            setSelectedAgentId('');
-          }}
+          value={selectedUserId}
+          onChange={(e) => setSelectedUserId(e.target.value)}
         >
-          <option value="">Select department...</option>
-          {departments.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
+          <option value="">Select person to escalate to...</option>
+          {users.map((u) => {
+            const teamInfo = u.team ? ` — ${u.team}` : '';
+            const statusInfo = u.status ? ` (${u.status})` : '';
+            return (
+              <option key={u.id} value={u.id}>
+                {u.name} — {u.role || 'Agent'}{teamInfo}{statusInfo}
+              </option>
+            );
+          })}
         </Select>
 
-        {/* Step 2: Agent selection list for selected department */}
-        {selectedDeptId && (
-          <div>
-            <p style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 6 }}>
-              Escalate To *
-            </p>
-            <UserSelectList
-              users={deptAgents}
-              selectedId={selectedAgentId}
-              onSelect={setSelectedAgentId}
-            />
+        {/* Selected User Preview */}
+        {selectedUser && (
+          <div className="agent-preview-card">
+            <div className="agent-preview-card__header">
+              <Avatar name={selectedUser.name} size="sm" />
+              <div className="agent-preview-card__name-group">
+                <span className="agent-preview-card__name">{selectedUser.name}</span>
+                <span className="agent-preview-card__status">
+                  <span
+                    className={`status-dot ${
+                      selectedUser.status?.toLowerCase() === 'available'
+                        ? 'status-dot--online'
+                        : selectedUser.status?.toLowerCase() === 'busy'
+                        ? 'status-dot--busy'
+                        : 'status-dot--away'
+                    }`}
+                  />
+                  {selectedUser.status || 'Available'}
+                </span>
+              </div>
+            </div>
+            <div className="agent-preview-card__details">
+              <div className="agent-preview-card__row">
+                <span className="agent-preview-card__label">Role:</span>
+                <span className="agent-preview-card__val">{selectedUser.role || 'Agent'}</span>
+              </div>
+              <div className="agent-preview-card__row">
+                <span className="agent-preview-card__label">Team:</span>
+                <span className="agent-preview-card__val">{selectedUser.team || '—'}</span>
+              </div>
+              <div className="agent-preview-card__row">
+                <span className="agent-preview-card__label">Queue:</span>
+                <span className="agent-preview-card__val">{selectedUser.queue || '—'}</span>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Step 3: Reason (Single 'Other' option) */}
+        {/* Step 2: Escalation Reason */}
         <Select
           label="Escalation Reason"
           required
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         >
-          <option value="">Select escalation reason...</option>
-          {ESCALATION_REASONS.map((r) => (
+          {ESCALATION_OPTIONS.map((r) => (
             <option key={r} value={r}>
               {r}
             </option>
           ))}
-          <option value="Other">Other</option>
         </Select>
 
-        {/* Step 4: Custom Reason if Other */}
         {reason === 'Other' && (
           <Input
             label="Please specify reason"
             required
-            placeholder="Enter custom reason..."
+            placeholder="Describe the escalation reason..."
             value={customReason}
             onChange={(e) => setCustomReason(e.target.value)}
           />
         )}
 
-        {/* Step 5: Escalation Template */}
-        <Textarea
-          label="Escalation Template"
-          placeholder="Enter escalation template details..."
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={3}
-        />
+        {/* Step 3: Additional Notes */}
+        <div>
+          <label className="form-label" style={{ marginBottom: 6, display: 'block', fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+            Additional Notes / Justification (Optional)
+          </label>
+          <Textarea
+            rows={3}
+            placeholder="Add relevant context or notes for the escalation handler..."
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </div>
       </div>
     </Modal>
   );

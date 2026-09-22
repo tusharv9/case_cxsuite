@@ -64,6 +64,9 @@ builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IConfigurableSettingsService, ConfigurableSettingsService>();
 
+// Register SLA Escalation Background Worker
+builder.Services.AddHostedService<SlaEscalationBackgroundService>();
+
 // In-process cache used by the authorization middleware and lookup caching
 builder.Services.AddMemoryCache();
 
@@ -112,6 +115,19 @@ using (var scope = app.Services.CreateScope())
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Subcategory"" text DEFAULT 'General Inquiry';");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaPausedAt"" timestamp with time zone NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaTotalPausedMinutes"" integer DEFAULT 0;");
+        
+        // Priority First Response SLA & Escalation Matrix Columns
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseTargetMinutes"" integer DEFAULT 240;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseDueAt"" timestamp with time zone NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseActualAt"" timestamp with time zone NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseStatus"" text DEFAULT 'Pending';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""EscalationLevel"" integer DEFAULT 1;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Sla70ReminderSent"" boolean DEFAULT false;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Sla90Escalated"" boolean DEFAULT false;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaBreachedEscalated"" boolean DEFAULT false;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Sla12hBreachedEscalated"" boolean DEFAULT false;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaBreachedAt"" timestamp with time zone NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""SlaConfigurations"" ADD COLUMN IF NOT EXISTS ""FirstResponseMinutes"" integer DEFAULT 240;");
         
         db.Database.ExecuteSqlRaw(@"
             CREATE TABLE IF NOT EXISTS ""CaseChildRelations"" (

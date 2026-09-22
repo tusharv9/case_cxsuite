@@ -38,6 +38,11 @@ public static class MappingExtensions
             ParentCaseId = c.ParentCaseId,
             ParentCaseNumber = c.ParentCase != null ? c.ParentCase.CaseNumber : null,
             SubcaseType = c.SubcaseType ?? "Original",
+            FirstResponseTargetMinutes = c.FirstResponseTargetMinutes,
+            FirstResponseDueAt = c.FirstResponseDueAt,
+            FirstResponseActualAt = c.FirstResponseActualAt,
+            FirstResponseStatus = c.FirstResponseStatus,
+            EscalationLevel = c.EscalationLevel,
             ChildRelations = c.ChildRelations.Select(cr => new CaseChildRelationDto
             {
                 ChildId = cr.ChildId,
@@ -84,6 +89,11 @@ public static class MappingExtensions
             ParentCaseId = c.ParentCaseId,
             ParentCaseNumber = c.ParentCase != null ? c.ParentCase.CaseNumber : null,
             SubcaseType = c.SubcaseType ?? "Original",
+            FirstResponseTargetMinutes = c.FirstResponseTargetMinutes,
+            FirstResponseDueAt = c.FirstResponseDueAt,
+            FirstResponseActualAt = c.FirstResponseActualAt,
+            FirstResponseStatus = c.FirstResponseStatus,
+            EscalationLevel = c.EscalationLevel,
             Description = c.Description,
             Disposition = c.Disposition,
             ResolutionNote = c.ResolutionNote,

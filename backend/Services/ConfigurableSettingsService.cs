@@ -478,6 +478,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             Severity = s.Severity,
             InternalHours = s.InternalHours,
             ExternalHours = s.ExternalHours,
+            FirstResponseMinutes = s.FirstResponseMinutes,
             IsActive = s.IsActive
         });
     }
@@ -492,6 +493,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             Severity = dto.Severity.Trim(),
             InternalHours = dto.InternalHours,
             ExternalHours = dto.ExternalHours,
+            FirstResponseMinutes = dto.FirstResponseMinutes > 0 ? dto.FirstResponseMinutes : 240,
             IsActive = true
         };
 
@@ -502,6 +504,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             Severity = saved.Severity,
             InternalHours = saved.InternalHours,
             ExternalHours = saved.ExternalHours,
+            FirstResponseMinutes = saved.FirstResponseMinutes,
             IsActive = saved.IsActive
         };
     }
@@ -552,6 +555,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
                 DisplayOrder = lookup.DisplayOrder,
                 InternalHours = sla?.InternalHours ?? 0,
                 ExternalHours = sla?.ExternalHours ?? 0,
+                FirstResponseMinutes = sla?.FirstResponseMinutes ?? 240,
                 IsSystem = SystemSeverities.Contains(lookup.Value, StringComparer.OrdinalIgnoreCase),
                 CasesUsing = await _repository.CountCasesBySeverityAsync(lookup.Value, ct),
                 IsActive = lookup.IsActive
@@ -574,6 +578,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
         var internalHours = dto.InternalHours <= 0 ? 22 : dto.InternalHours;
         var externalHours = dto.ExternalHours <= 0 ? 24 : dto.ExternalHours;
+        var firstResponseMinutes = dto.FirstResponseMinutes > 0 ? dto.FirstResponseMinutes : 240;
         ValidateSlaHours(internalHours, "Internal SLA");
         ValidateSlaHours(externalHours, "External SLA");
 
@@ -593,6 +598,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             Severity = name,
             InternalHours = internalHours,
             ExternalHours = externalHours,
+            FirstResponseMinutes = firstResponseMinutes,
             IsActive = true
         }, ct);
 
@@ -603,6 +609,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             DisplayOrder = created.DisplayOrder,
             InternalHours = internalHours,
             ExternalHours = externalHours,
+            FirstResponseMinutes = firstResponseMinutes,
             IsSystem = false,
             CasesUsing = 0
         };
@@ -648,6 +655,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             DisplayOrder = dto.DisplayOrder,
             InternalHours = sla?.InternalHours ?? 0,
             ExternalHours = sla?.ExternalHours ?? 0,
+            FirstResponseMinutes = sla?.FirstResponseMinutes ?? 240,
             IsSystem = SystemSeverities.Contains(name, StringComparer.OrdinalIgnoreCase),
             CasesUsing = await _repository.CountCasesBySeverityAsync(name, ct),
             IsActive = dto.IsActive

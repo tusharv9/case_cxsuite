@@ -310,6 +310,7 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
         {
             existing.InternalHours = sla.InternalHours;
             existing.ExternalHours = sla.ExternalHours;
+            existing.FirstResponseMinutes = sla.FirstResponseMinutes;
             existing.IsActive = sla.IsActive;
             existing.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(ct);

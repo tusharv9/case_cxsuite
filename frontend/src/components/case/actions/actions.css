@@ -402,3 +402,209 @@
   flex-shrink: 0;
   margin-left: 12px;
 }
+
+/* ===== 4-LEVEL ESCALATION MATRIX VISUAL STYLES ===== */
+.escalation-matrix-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
+  background-color: #ffffff;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.escalation-matrix-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 8px;
+}
+
+.escalation-matrix-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.escalation-matrix-subtitle {
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+.escalation-cards-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 4px 6px 4px;
+}
+
+.escalation-matrix-card {
+  position: relative;
+  flex: 1;
+  min-width: 140px;
+  background-color: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 14px 10px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  transition: all 0.2s ease;
+}
+
+.escalation-matrix-card--current {
+  border-color: #3b82f6 !important;
+  background-color: #eff6ff !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3) !important;
+}
+
+.escalation-matrix-card--next {
+  border-color: #ea580c !important;
+  background-color: #fff7ed !important;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.3) !important;
+}
+
+.escalation-level-badge {
+  position: absolute;
+  top: -9px;
+  left: 10px;
+  background-color: #ea580c;
+  color: #ffffff;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+.escalation-matrix-card--current .escalation-level-badge {
+  background-color: #2563eb;
+}
+
+.escalation-matrix-card--next .escalation-level-badge {
+  background-color: #ea580c;
+}
+
+.escalation-card-role-box {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #1e293b;
+  text-align: center;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.escalation-matrix-card--current .escalation-card-role-box {
+  background-color: #ffffff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.escalation-matrix-card--next .escalation-card-role-box {
+  background-color: #ffffff;
+  border-color: #fdba74;
+  color: #c2410c;
+}
+
+.escalation-card-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.escalation-card-info-box {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  padding: 6px 6px;
+  font-size: 10.5px;
+  color: #334155;
+  line-height: 1.3;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+}
+
+.escalation-card-connector {
+  color: #94a3b8;
+  font-weight: 700;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.escalation-target-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background-color: #fff7ed;
+  border: 1px solid #fed7aa;
+}
+
+.escalation-target-banner--max {
+  background-color: #fef2f2;
+  border-color: #fee2e2;
+}
+
+.escalation-target-banner__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: #fed7aa;
+  color: #ea580c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.escalation-target-banner--max .escalation-target-banner__icon {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+.escalation-target-banner__text {
+  flex: 1;
+}
+
+.escalation-target-banner__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #9a3412;
+}
+
+.escalation-target-banner--max .escalation-target-banner__title {
+  color: #991b1b;
+}
+
+.escalation-target-banner__desc {
+  font-size: 12px;
+  color: #7c2d12;
+  margin-top: 2px;
+}
+
+.escalation-target-banner--max .escalation-target-banner__desc {
+  color: #7f1d1d;
+}

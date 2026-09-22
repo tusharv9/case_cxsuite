@@ -35,6 +35,23 @@ public class CaseSummaryDto
     public string SubcaseType { get; set; } = "Original";
     public bool IsSubcase => ParentCaseId.HasValue || (SubcaseType != null && SubcaseType != "Original");
     public List<CaseChildRelationDto> ChildRelations { get; set; } = new();
+
+    // First Response SLA Tracking
+    public int FirstResponseTargetMinutes { get; set; } = 240;
+    public DateTime? FirstResponseDueAt { get; set; }
+    public DateTime? FirstResponseActualAt { get; set; }
+    public string FirstResponseStatus { get; set; } = "Pending"; // Met, Breached, Pending
+
+    // Escalation Matrix Tracking
+    public int EscalationLevel { get; set; } = 1;
+    public string EscalationLevelName => EscalationLevel switch
+    {
+        1 => "Assigned Agent",
+        2 => "Team Lead",
+        3 => "CX Supervisor",
+        4 => "Head of Customer Experience",
+        _ => "Assigned Agent"
+    };
 }
 
 public class CaseDetailDto : CaseSummaryDto
@@ -175,7 +192,31 @@ public class SlaConfigurationDto
     public string Severity { get; set; } = string.Empty;
     public int InternalHours { get; set; }
     public int ExternalHours { get; set; }
+    public int FirstResponseMinutes { get; set; } = 240;
     public bool IsActive { get; set; } = true;
+}
+
+public class EscalationMatrixLevelDto
+{
+    public int Level { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public string Trigger { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string? CurrentTargetUserName { get; set; }
+    public Guid? CurrentTargetUserId { get; set; }
+}
+
+public class EscalationMatrixResponseDto
+{
+    public string Title { get; set; } = "Escalation matrix";
+    public string Subtitle { get; set; } = "fully configurable — auto-fires from SLA consumption; all triggers audit-logged";
+    public int CurrentLevel { get; set; } = 1;
+    public int? NextLevel { get; set; }
+    public string? NextTargetRole { get; set; }
+    public string? NextTargetUserName { get; set; }
+    public Guid? NextTargetUserId { get; set; }
+    public List<EscalationMatrixLevelDto> Levels { get; set; } = new();
 }
 
 public class DepartmentEscalationTemplateDto

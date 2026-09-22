@@ -38,6 +38,14 @@ public class UpdateCaseStatusDto
     public Guid UserId { get; set; } // The user making the change
 }
 
+public class EscalateCaseDto
+{
+    public string? Reason { get; set; }
+    public string? Note { get; set; }
+    public Guid? TargetUserId { get; set; }
+    public Guid UserId { get; set; }
+}
+
 public class AssignCaseDto
 {
     public Guid OwnerId { get; set; }

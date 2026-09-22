@@ -26,6 +26,20 @@ public class Case : AuditableEntity
     public DateTime? SlaPausedAt { get; set; }
     public int SlaTotalPausedMinutes { get; set; } = 0;
     
+    // First Response SLA Tracking
+    public int FirstResponseTargetMinutes { get; set; } = 240;
+    public DateTime? FirstResponseDueAt { get; set; }
+    public DateTime? FirstResponseActualAt { get; set; }
+    public string FirstResponseStatus { get; set; } = "Pending"; // Met, Breached, Pending
+
+    // Escalation Matrix Tracking
+    public int EscalationLevel { get; set; } = 1; // 1 = Assigned Agent, 2 = Team Lead, 3 = CX Supervisor, 4 = Head of CX
+    public bool Sla70ReminderSent { get; set; } = false;
+    public bool Sla90Escalated { get; set; } = false;
+    public bool SlaBreachedEscalated { get; set; } = false;
+    public bool Sla12hBreachedEscalated { get; set; } = false;
+    public DateTime? SlaBreachedAt { get; set; }
+    
     // Resolution Details
     public string? Disposition { get; set; }
     public string? ResolutionNote { get; set; }

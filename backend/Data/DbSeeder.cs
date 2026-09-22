@@ -19,6 +19,7 @@ public static class DbSeeder
             SeedEscalationTemplates(context);
             SeedPassportCustomer(context);
             EnsureCaseChannelsAndStatuses(context);
+            EnsureFirstResponseAndEscalationMatrix(context);
             return;
         }
 
@@ -126,7 +127,9 @@ public static class DbSeeder
                 ("Farhan Lee", "farhan@bank.com", "Senior Dispute Specialist", "Card Disputes", "Dispute Resolution", UserStatus.Available, ccDept.Id),
                 ("Nurul Huda", "nurul@bank.com", "Service Agent", "Digital Banking", "Digital Support", UserStatus.Busy, ccDept.Id),
                 ("Zulkhairi Ahmad", "zulkhairi@bank.com", "Senior Fraud SME", "Fraud Risk", "AML & Fraud Risk", UserStatus.Available, fiDept.Id),
-                ("Daniel Chong", "daniel@bank.com", "Loan Specialist", "Loan Processing", "Underwriting", UserStatus.Away, mfDept.Id)
+                ("Daniel Chong", "daniel@bank.com", "Loan Specialist", "Loan Processing", "Underwriting", UserStatus.Away, mfDept.Id),
+                ("Amina Al-Mansoor", "amina@bank.com", "CX Supervisor", "Contact Centre", "Executive Escalations", UserStatus.Available, ccDept.Id),
+                ("David Tan Sri", "david.tan@bank.com", "Head of Customer Experience", "Contact Centre", "Executive CX Office", UserStatus.Available, ccDept.Id)
             };
 
             foreach (var (name, email, role, team, queue, status, deptId) in devUsers)
@@ -612,10 +615,10 @@ Customer Experience Team";
             if (!context.SlaConfigurations.Any())
             {
                 context.SlaConfigurations.AddRange(
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Critical", InternalHours = 2, ExternalHours = 4, IsActive = true, CreatedAt = now },
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "High", InternalHours = 6, ExternalHours = 8, IsActive = true, CreatedAt = now },
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Medium", InternalHours = 10, ExternalHours = 12, IsActive = true, CreatedAt = now },
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Low", InternalHours = 22, ExternalHours = 24, IsActive = true, CreatedAt = now }
+                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Critical", InternalHours = 2, ExternalHours = 4, FirstResponseMinutes = 30, IsActive = true, CreatedAt = now },
+                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "High", InternalHours = 6, ExternalHours = 8, FirstResponseMinutes = 60, IsActive = true, CreatedAt = now },
+                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Medium", InternalHours = 10, ExternalHours = 12, FirstResponseMinutes = 240, IsActive = true, CreatedAt = now },
+                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Low", InternalHours = 22, ExternalHours = 24, FirstResponseMinutes = 480, IsActive = true, CreatedAt = now }
                 );
                 context.SaveChanges();
             }
@@ -1012,6 +1015,91 @@ Customer Experience Team";
         catch (Exception ex)
         {
             Console.WriteLine($"[EnsureCaseChannelsAndStatuses Error] {ex.Message}");
+        }
+    }
+
+    private static void EnsureFirstResponseAndEscalationMatrix(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            // 1. Backfill SlaConfigurations with FirstResponseMinutes (Critical: 30m, High: 60m, Medium: 240m, Low: 480m)
+            var slaConfigs = context.SlaConfigurations.ToList();
+            bool slasUpdated = false;
+            foreach (var sla in slaConfigs)
+            {
+                int expectedFrMinutes = sla.Severity.ToLower() switch
+                {
+                    "critical" => 30,
+                    "high" => 60,
+                    "medium" => 240,
+                    "low" => 480,
+                    _ => 240
+                };
+
+                if (sla.FirstResponseMinutes == 0 || sla.FirstResponseMinutes == 240 && (sla.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) || sla.Severity.Equals("High", StringComparison.OrdinalIgnoreCase)))
+                {
+                    sla.FirstResponseMinutes = expectedFrMinutes;
+                    slasUpdated = true;
+                }
+            }
+            if (slasUpdated) context.SaveChanges();
+
+            // 2. Backfill Cases with FirstResponse details and EscalationLevel
+            var cases = context.Cases.ToList();
+            if (cases.Count > 0)
+            {
+                bool casesUpdated = false;
+                foreach (var c in cases)
+                {
+                    int frMinutes = c.Severity.ToLower() switch
+                    {
+                        "critical" => 30,
+                        "high" => 60,
+                        "medium" => 240,
+                        "low" => 480,
+                        _ => 240
+                    };
+
+                    c.FirstResponseTargetMinutes = frMinutes;
+
+                    if (!c.FirstResponseDueAt.HasValue)
+                    {
+                        c.FirstResponseDueAt = c.SlaStartTime.AddMinutes(frMinutes).AddMinutes(c.SlaTotalPausedMinutes);
+                        casesUpdated = true;
+                    }
+
+                    if (c.Status == CaseStatus.Resolved)
+                    {
+                        c.FirstResponseActualAt ??= c.SlaStartTime.AddMinutes(Math.Min(15, frMinutes - 5));
+                        c.FirstResponseStatus = "Met";
+                        casesUpdated = true;
+                    }
+                    else if (c.FirstResponseActualAt.HasValue)
+                    {
+                        c.FirstResponseStatus = c.FirstResponseActualAt.Value <= c.FirstResponseDueAt.Value ? "Met" : "Breached";
+                        casesUpdated = true;
+                    }
+                    else
+                    {
+                        c.FirstResponseStatus = now > c.FirstResponseDueAt.Value ? "Breached" : "Pending";
+                        casesUpdated = true;
+                    }
+
+                    if (c.EscalationLevel <= 0)
+                    {
+                        c.EscalationLevel = c.Status == CaseStatus.Escalated ? 2 : 1;
+                        casesUpdated = true;
+                    }
+                }
+
+                if (casesUpdated) context.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EnsureFirstResponseAndEscalationMatrix Error] {ex.Message}");
         }
     }
 }

@@ -43,7 +43,63 @@ import { configurableSettingsService } from '../../../services/configurableSetti
 import { ChannelBadge } from '../../case/ChannelBadge/ChannelBadge.jsx';
 import './CaseDrawer.css';
 
-// ---- Details Tab ----
+function FirstResponseBadge({ caseItem }) {
+  if (!caseItem) return null;
+  const status = caseItem.firstResponseStatus || 'Pending';
+  const targetMin = caseItem.firstResponseTargetMinutes;
+
+  if (status === 'Met') {
+    let metDuration = '';
+    if (caseItem.createdAt && caseItem.firstResponseActualAt) {
+      const diffMs = new Date(caseItem.firstResponseActualAt) - new Date(caseItem.createdAt);
+      if (diffMs > 0) {
+        const diffMins = Math.round(diffMs / 60000);
+        metDuration = diffMins < 60 ? ` (${diffMins}m)` : ` (${Math.floor(diffMins / 60)}h ${diffMins % 60}m)`;
+      }
+    }
+    return (
+      <span className="first-response-badge first-response-badge--met" title={`First response met${metDuration}`}>
+        <span className="first-response-badge__dot" />
+        Met{metDuration}
+      </span>
+    );
+  }
+
+  if (status === 'Breached') {
+    return (
+      <span className="first-response-badge first-response-badge--breached" title="First response SLA breached">
+        <span className="first-response-badge__dot" />
+        Breached
+      </span>
+    );
+  }
+
+  // Pending
+  let remainingText = '';
+  if (caseItem.firstResponseDueAt) {
+    const diffMs = new Date(caseItem.firstResponseDueAt) - new Date();
+    if (diffMs <= 0) {
+      return (
+        <span className="first-response-badge first-response-badge--breached" title="First response SLA breached">
+          <span className="first-response-badge__dot" />
+          Breached
+        </span>
+      );
+    }
+    const diffMins = Math.round(diffMs / 60000);
+    remainingText = diffMins < 60 ? `${diffMins}m left` : `${Math.floor(diffMins / 60)}h ${diffMins % 60}m left`;
+  } else if (targetMin) {
+    remainingText = targetMin < 60 ? `${targetMin}m target` : `${targetMin / 60}h target`;
+  }
+
+  return (
+    <span className="first-response-badge first-response-badge--pending" title={`First response target: ${targetMin || 240} mins`}>
+      <span className="first-response-badge__dot" />
+      {remainingText ? `Pending (${remainingText})` : 'Pending'}
+    </span>
+  );
+}
+
 // ---- Details Tab ----
 function DetailsTab({ caseData, onOpen360 }) {
   const childRelations = caseData.childRelations || [];
@@ -96,61 +152,74 @@ function DetailsTab({ caseData, onOpen360 }) {
         </div>
       </div>
 
-      {/* KEY DETAILS SECTION — Clean enterprise information card */}
+      {/* KEY DETAILS SECTION — Compact Enterprise 2-Column Grid */}
       <div className="drawer-section">
         <p className="drawer-section-label">KEY DETAILS</p>
-        <div className="key-details-card">
-          <div className="key-details-row">
-            <span className="key-details-label">Case ID</span>
-            <div className="key-details-value font-mono">
-              <span>{caseData.caseNumber}</span>
-              {caseData.parentCaseNumber && (
-                <span className="key-details-parent-pill">
-                  Parent: {caseData.parentCaseNumber}
-                </span>
-              )}
+        <div className="key-details-grid">
+          {/* Left Column */}
+          <div className="key-details-column">
+            <div className="key-details-row">
+              <span className="key-details-label" title="Case ID">Case ID</span>
+              <div className="key-details-value font-mono key-details-value--case-id">
+                <span className="key-details-case-num" title={caseData.caseNumber}>{caseData.caseNumber}</span>
+                {caseData.parentCaseNumber && (
+                  <span className="key-details-parent-pill" title={`Parent Case: ${caseData.parentCaseNumber}`}>
+                    Parent: {caseData.parentCaseNumber}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="key-details-row">
+              <span className="key-details-label" title="Case Type">Case Type</span>
+              <span className="key-details-value" title={caseData.caseType || 'Complaint'}>
+                {caseData.caseType || 'Complaint'}
+              </span>
+            </div>
+
+            <div className="key-details-row">
+              <span className="key-details-label" title="Created On">Created On</span>
+              <span className="key-details-value text-secondary" title={formatFullDateTime(caseData.createdAt)}>
+                {formatFullDateTime(caseData.createdAt)}
+              </span>
+            </div>
+
+            <div className="key-details-row">
+              <span className="key-details-label" title="Resolution SLA">Resolution SLA</span>
+              <div className="key-details-value">
+                <SlaDisplay caseItem={caseData} size="sm" />
+              </div>
             </div>
           </div>
 
-          <div className="key-details-row">
-            <span className="key-details-label">Case Type</span>
-            <span className="key-details-value">{caseData.caseType || 'Complaint'}</span>
-          </div>
-
-          <div className="key-details-row">
-            <span className="key-details-label">Created Date / Time</span>
-            <span className="key-details-value text-secondary">
-              {formatFullDateTime(caseData.createdAt)}
-            </span>
-          </div>
-
-          <div className="key-details-divider" />
-
-          <div className="key-details-row">
-            <span className="key-details-label">Source Channel</span>
-            <div className="key-details-value">
-              <ChannelBadge channel={caseData.sourceChannel || caseData.communicationChannel || 'Email'} />
+          {/* Right Column */}
+          <div className="key-details-column">
+            <div className="key-details-row">
+              <span className="key-details-label" title="Source Channel">Source Channel</span>
+              <div className="key-details-value">
+                <ChannelBadge channel={caseData.sourceChannel || caseData.communicationChannel || 'Email'} />
+              </div>
             </div>
-          </div>
 
-          <div className="key-details-row">
-            <span className="key-details-label">Preferred Communication</span>
-            <span className="key-details-value">
-              {caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Email'}
-            </span>
-          </div>
+            <div className="key-details-row">
+              <span className="key-details-label" title="Preferred Communication">Pref. Comm</span>
+              <span className="key-details-value" title={caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Email'}>
+                {caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Email'}
+              </span>
+            </div>
 
-          <div className="key-details-row">
-            <span className="key-details-label">Preferred Language</span>
-            <span className="key-details-value">
-              {caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}
-            </span>
-          </div>
+            <div className="key-details-row">
+              <span className="key-details-label" title="Preferred Language">Language</span>
+              <span className="key-details-value" title={caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}>
+                {caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}
+              </span>
+            </div>
 
-          <div className="key-details-row">
-            <span className="key-details-label">SLA Tracking</span>
-            <div className="key-details-value">
-              <SlaDisplay caseItem={caseData} size="sm" />
+            <div className="key-details-row">
+              <span className="key-details-label" title="First Response SLA">First Response</span>
+              <div className="key-details-value">
+                <FirstResponseBadge caseItem={caseData} />
+              </div>
             </div>
           </div>
         </div>

@@ -20,6 +20,9 @@ public interface ICaseService
 
     Task UnlinkCaseAsync(Guid caseId, UnlinkCaseDto dto);
     Task ResolveCaseAsync(Guid caseId, ResolveCaseDto dto);
+    Task EscalateCaseAsync(Guid caseId, EscalateCaseDto dto, Guid userId);
+    Task EvaluateSlaEscalationsAsync(Guid? caseId = null, CancellationToken ct = default);
+    Task<EscalationMatrixResponseDto> GetEscalationMatrixConfigAsync(Guid? caseId = null, CancellationToken ct = default);
     Task<ReopenCaseResultDto> ReopenCaseAsync(Guid caseId, ReopenCaseDto dto);
     Task<PagedResponseDto<CaseAuditEventDto>> GetCaseAuditEventsAsync(int page = 1, int pageSize = 10, string? actionType = null, string? search = null, CancellationToken ct = default);
     Task AddTimelineInteractionAsync(Guid caseId, AddTimelineInteractionDto dto, Guid userId);
