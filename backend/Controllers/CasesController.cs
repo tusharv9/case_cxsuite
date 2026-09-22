@@ -61,6 +61,43 @@ public class CasesController : BaseApiController
         return Ok(new { message = "Note added successfully." });
     }
 
+    [HttpPost("{id:guid}/timeline-interaction")]
+    public async Task<IActionResult> AddTimelineInteraction(Guid id, [FromBody] AddTimelineInteractionDto dto)
+    {
+        dto.UserId = CurrentUserId;
+        await _caseService.AddTimelineInteractionAsync(id, dto, CurrentUserId);
+        return Ok(new { message = dto.IsInternal ? "Internal note posted successfully." : "Customer reply sent successfully." });
+    }
+
+    [HttpPost("{id:guid}/swarm")]
+    public async Task<IActionResult> RequestSwarm(Guid id, [FromBody] RequestSwarmDto dto)
+    {
+        dto.UserId = CurrentUserId;
+        await _caseService.RequestSwarmAsync(id, dto, CurrentUserId);
+        return Ok(new { message = "Swarm requested successfully. Team Lead and Subject Matter Experts have been notified and added to the case." });
+    }
+
+    [HttpGet("{id:guid}/attachments")]
+    public async Task<IActionResult> GetAttachments(Guid id, CancellationToken ct)
+    {
+        var attachments = await _caseService.GetAttachmentsAsync(id, ct);
+        return Ok(attachments);
+    }
+
+    [HttpPost("{id:guid}/attachments")]
+    public async Task<IActionResult> UploadAttachment(Guid id, [FromForm] Microsoft.AspNetCore.Http.IFormFile file, [FromForm] string? note)
+    {
+        var attachment = await _caseService.UploadAttachmentAsync(id, file, note, CurrentUserId);
+        return Ok(attachment);
+    }
+
+    [HttpGet("{id:guid}/attachments/{attachmentId:guid}/download")]
+    public async Task<IActionResult> DownloadAttachment(Guid id, Guid attachmentId)
+    {
+        var (fileBytes, contentType, fileName) = await _caseService.GetAttachmentDownloadAsync(id, attachmentId);
+        return File(fileBytes, contentType, fileName);
+    }
+
     [HttpPost("{id:guid}/coworkers")]
     public async Task<IActionResult> AddCoworkers(Guid id, [FromBody] AddCoworkersDto dto)
     {
@@ -78,8 +115,15 @@ public class CasesController : BaseApiController
     [HttpPut("{id:guid}/transfer")]
     public async Task<IActionResult> TransferDepartment(Guid id, [FromBody] TransferDepartmentDto dto)
     {
-        await _caseService.TransferDepartmentAsync(id, dto.DepartmentId, CurrentUserId);
+        await _caseService.TransferDepartmentAsync(id, dto, CurrentUserId);
         return Ok(new { message = "Department transferred successfully." });
+    }
+
+    [HttpGet("{id:guid}/related-customer-cases")]
+    public async Task<IActionResult> GetRelatedCustomerCases(Guid id)
+    {
+        var cases = await _caseService.GetRelatedCustomerCasesAsync(id);
+        return Ok(cases);
     }
 
     [HttpPost("{id:guid}/link")]

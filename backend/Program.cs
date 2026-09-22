@@ -157,8 +157,39 @@ using (var scope = app.Services.CreateScope())
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""Module"" text NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""EntityName"" text NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""OldValue"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""NewValue"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""ActionType"" text NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""IsInternal"" boolean DEFAULT true;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""Channel"" text NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""Team"" text NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""Queue"" text NULL;");
+
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""CaseAttachments"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_CaseAttachments"" PRIMARY KEY,
+                ""CaseId"" uuid NOT NULL CONSTRAINT ""FK_CaseAttachments_Cases_CaseId"" REFERENCES ""Cases"" (""Id"") ON DELETE CASCADE,
+                ""FileName"" text NOT NULL,
+                ""FileType"" text NOT NULL,
+                ""FileSizeBytes"" bigint NOT NULL DEFAULT 0,
+                ""StoragePath"" text NOT NULL,
+                ""Note"" text NULL,
+                ""UploadedByUserId"" uuid NOT NULL CONSTRAINT ""FK_CaseAttachments_Users_UploadedByUserId"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""FileType"" text DEFAULT '';
+            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""ContentType"" text DEFAULT 'application/octet-stream';
+            DO $$ BEGIN ALTER TABLE ""CaseAttachments"" ALTER COLUMN ""ContentType"" DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""FileSizeBytes"" bigint DEFAULT 0;
+            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""FileSize"" bigint DEFAULT 0;
+            DO $$ BEGIN ALTER TABLE ""CaseAttachments"" ALTER COLUMN ""FileSize"" DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""StoragePath"" text DEFAULT '';
+
+            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""Note"" text NULL;
+            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""UploadedByUserId"" uuid;
+            CREATE INDEX IF NOT EXISTS ""IX_CaseAttachments_CaseId"" ON ""CaseAttachments"" (""CaseId"");
+            CREATE INDEX IF NOT EXISTS ""IX_CaseAttachments_UploadedByUserId"" ON ""CaseAttachments"" (""UploadedByUserId"");
+        ");
+
+
 
         db.Database.ExecuteSqlRaw(@"
             CREATE TABLE IF NOT EXISTS ""NotificationRules"" (

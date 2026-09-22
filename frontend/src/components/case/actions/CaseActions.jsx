@@ -55,28 +55,36 @@ export function AssignModal({
   isOpen,
   onClose,
   caseId,
+  caseData,
   users = [],
   currentOwnerId,
   onSuccess,
 }) {
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [reason, setReason] = useState('Escalation');
   const [isLoading, setIsLoading] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
     if (isOpen) {
       setSelectedUserId(currentOwnerId || '');
+      setReason('Escalation');
     }
   }, [isOpen, currentOwnerId]);
 
+  const selectedUser = users.find((u) => String(u.id) === String(selectedUserId));
+
   const handleConfirm = async () => {
     if (!selectedUserId) {
-      return toast.error('Please select a user to assign.');
+      return toast.error('Please select an agent to assign.');
+    }
+    if (!reason) {
+      return toast.error('Please select a reason.');
     }
     setIsLoading(true);
     try {
-      await caseService.assignCase(caseId, { ownerId: selectedUserId });
-      toast.success('Case assigned successfully.');
+      await caseService.assignCase(caseId, { ownerId: selectedUserId, reason });
+      toast.success('Case reassigned successfully.');
       onSuccess?.();
       onClose();
     } catch (err) {
@@ -86,30 +94,99 @@ export function AssignModal({
     }
   };
 
+  const caseRef = caseData?.caseNumber || '';
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Assign / Reassign Owner"
+      title={caseRef ? `Reassign case ${caseRef}` : 'Reassign case'}
       subtitle="Select an agent to take ownership of this case"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" isLoading={isLoading} onClick={handleConfirm}>
-            Confirm Assignment
-          </Button>
+          <button
+            type="button"
+            className="action-btn--orange"
+            disabled={isLoading || !selectedUserId}
+            onClick={handleConfirm}
+          >
+            {isLoading ? 'Assigning...' : 'Assign'}
+          </button>
         </>
       }
     >
       <div className="action-modal-form">
-        <label className="form-label form-label--required">Select Owner</label>
-        <UserSelectList
-          users={users}
-          selectedId={selectedUserId}
-          onSelect={setSelectedUserId}
-        />
+        <Select
+          label="Assign to"
+          required
+          value={selectedUserId}
+          onChange={(e) => setSelectedUserId(e.target.value)}
+        >
+          <option value="">Select agent...</option>
+          {users.map((u) => {
+            const teamInfo = u.team ? ` — ${u.team}` : '';
+            const statusInfo = u.status ? ` (${u.status})` : '';
+            return (
+              <option key={u.id} value={u.id}>
+                {u.name} — {u.role || 'Agent'}{teamInfo}{statusInfo}
+              </option>
+            );
+          })}
+        </Select>
+
+        {selectedUser && (
+          <div className="agent-preview-card">
+            <div className="agent-preview-card__header">
+              <Avatar name={selectedUser.name} size="sm" />
+              <div className="agent-preview-card__name-group">
+                <span className="agent-preview-card__name">{selectedUser.name}</span>
+                <span className="agent-preview-card__status">
+                  <span
+                    className={`status-dot ${
+                      selectedUser.status?.toLowerCase() === 'available'
+                        ? 'status-dot--online'
+                        : selectedUser.status?.toLowerCase() === 'busy'
+                        ? 'status-dot--busy'
+                        : 'status-dot--away'
+                    }`}
+                  />
+                  {selectedUser.status || 'Available'}
+                </span>
+              </div>
+            </div>
+            <div className="agent-preview-card__details">
+              <div className="agent-preview-card__row">
+                <span className="agent-preview-card__label">Role:</span>
+                <span className="agent-preview-card__val">{selectedUser.role || 'Agent'}</span>
+              </div>
+              <div className="agent-preview-card__row">
+                <span className="agent-preview-card__label">Team:</span>
+                <span className="agent-preview-card__val">{selectedUser.team || '—'}</span>
+              </div>
+              <div className="agent-preview-card__row">
+                <span className="agent-preview-card__label">Queue:</span>
+                <span className="agent-preview-card__val">{selectedUser.queue || '—'}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <Select
+          label="Reason"
+          required
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        >
+          <option value="Escalation">Escalation</option>
+          <option value="Workload rebalancing">Workload rebalancing</option>
+          <option value="Specialist required">Specialist required</option>
+          <option value="Shift handover">Shift handover</option>
+          <option value="Leave / absence coverage">Leave / absence coverage</option>
+          <option value="Customer request">Customer request</option>
+        </Select>
       </div>
     </Modal>
   );
@@ -122,27 +199,39 @@ export function TransferModal({
   isOpen,
   onClose,
   caseId,
+  caseData,
   departments = [],
   onSuccess,
 }) {
+  const [transferTo, setTransferTo] = useState('Queue');
+  const [targetQueue, setTargetQueue] = useState('Tier 2 - General Escalations (4 waiting)');
   const [selectedDeptId, setSelectedDeptId] = useState('');
+  const [reason, setReason] = useState('Skill / product expertise');
+  const [handoverNote, setHandoverNote] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
     if (isOpen) {
-      setSelectedDeptId('');
+      setTransferTo('Queue');
+      setTargetQueue('Tier 2 - General Escalations (4 waiting)');
+      setSelectedDeptId(departments[0]?.id || '');
+      setReason('Skill / product expertise');
+      setHandoverNote('');
     }
-  }, [isOpen]);
+  }, [isOpen, departments]);
 
   const handleConfirm = async () => {
-    if (!selectedDeptId) {
-      return toast.error('Please select a target department.');
-    }
     setIsLoading(true);
     try {
-      await caseService.transferDepartment(caseId, { departmentId: selectedDeptId });
-      toast.success('Case transferred to new department.');
+      await caseService.transferDepartment(caseId, {
+        departmentId: transferTo === 'Department' ? selectedDeptId : undefined,
+        transferTo,
+        targetQueue,
+        reason,
+        handoverNote: handoverNote.trim(),
+      });
+      toast.success('Case transferred successfully.');
       onSuccess?.();
       onClose();
     } catch (err) {
@@ -152,37 +241,103 @@ export function TransferModal({
     }
   };
 
+  const caseRef = caseData?.caseNumber || '';
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Transfer Department"
-      subtitle="Transfer case ownership to another department"
+      title={caseRef ? `Transfer case ${caseRef}` : 'Transfer case'}
+      subtitle="Transfer case ownership to another team or queue"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" isLoading={isLoading} onClick={handleConfirm}>
-            Transfer Case
-          </Button>
+          <button
+            type="button"
+            className="action-btn--orange"
+            disabled={isLoading}
+            onClick={handleConfirm}
+          >
+            {isLoading ? 'Transferring...' : '⇄ Transfer Case'}
+          </button>
         </>
       }
     >
       <div className="action-modal-form">
+        {/* SLA Explanation banner */}
+        <div className="transfer-explanation-banner">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+          <span>SLA clock keeps running — transfers never reset targets</span>
+        </div>
+
         <Select
-          label="Target Department"
+          label="Transfer to"
           required
-          value={selectedDeptId}
-          onChange={(e) => setSelectedDeptId(e.target.value)}
+          value={transferTo}
+          onChange={(e) => setTransferTo(e.target.value)}
         >
-          <option value="">Select target department...</option>
-          {departments.map((dept) => (
-            <option key={dept.id} value={dept.id}>
-              {dept.name}
-            </option>
-          ))}
+          <option value="Queue">Queue</option>
+          <option value="Department">Department</option>
+          <option value="Team">Team</option>
         </Select>
+
+        {transferTo === 'Department' ? (
+          <Select
+            label="Target Department"
+            required
+            value={selectedDeptId}
+            onChange={(e) => setSelectedDeptId(e.target.value)}
+          >
+            <option value="">Select target department...</option>
+            {departments.map((dept) => (
+              <option key={dept.id} value={dept.id}>
+                {dept.name}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <Select
+            label="Target queue"
+            required
+            value={targetQueue}
+            onChange={(e) => setTargetQueue(e.target.value)}
+          >
+            <option value="Tier 2 - General Escalations (4 waiting)">Tier 2 - General Escalations (4 waiting)</option>
+            <option value="Dispute Resolution & Chargebacks (7 waiting)">Dispute Resolution & Chargebacks (7 waiting)</option>
+            <option value="Fraud & Security Review (2 waiting)">Fraud & Security Review (2 waiting)</option>
+            <option value="MicroFinance Tier 2 (1 waiting)">MicroFinance Tier 2 (1 waiting)</option>
+            <option value="Digital Support Specialist (3 waiting)">Digital Support Specialist (3 waiting)</option>
+            <option value="Underwriting Review (5 waiting)">Underwriting Review (5 waiting)</option>
+          </Select>
+        )}
+
+        <Select
+          label="Reason"
+          required
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        >
+          <option value="Skill / product expertise">Skill / product expertise</option>
+          <option value="Misrouted case">Misrouted case</option>
+          <option value="Language requirement">Language requirement</option>
+          <option value="Escalation to Tier 2">Escalation to Tier 2</option>
+          <option value="Workload rebalancing">Workload rebalancing</option>
+          <option value="Customer request">Customer request</option>
+        </Select>
+
+        <Textarea
+          label="Handover note (shown to receiving team)"
+          rows={3}
+          placeholder="Include relevant context, customer sentiment, or urgency..."
+          value={handoverNote}
+          onChange={(e) => setHandoverNote(e.target.value)}
+        />
       </div>
     </Modal>
   );
@@ -584,38 +739,44 @@ export function NoteModal({ isOpen, onClose, caseId, onSuccess }) {
 }
 
 // ============================================================
-// 6. LINK CASE MODAL (Generates Sub-Case ID e.g. C-00045-L01)
+// 6. LINK CASE MODAL (Simplified Select Case -> Link Case)
 // ============================================================
-export function LinkCaseModal({ isOpen, onClose, caseId, onSuccess }) {
-  const [relationship, setRelationship] = useState('');
+export function LinkCaseModal({ isOpen, onClose, caseId, caseData, onSuccess }) {
   const [caseRef, setCaseRef] = useState('');
+  const [relatedCases, setRelatedCases] = useState([]);
+  const [isLoadingRelated, setIsLoadingRelated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
-    if (isOpen) {
-      setRelationship('');
+    if (isOpen && caseId) {
       setCaseRef('');
+      setIsLoadingRelated(true);
+      caseService
+        .getRelatedCustomerCases(caseId)
+        .then((data) => setRelatedCases(data || []))
+        .catch(() => setRelatedCases([]))
+        .finally(() => setIsLoadingRelated(false));
     }
-  }, [isOpen]);
+  }, [isOpen, caseId]);
 
   const handleConfirm = async () => {
-    if (!relationship) return toast.error('Please select relationship type.');
-    if (!caseRef.trim()) return toast.error('Please enter a case reference.');
+    if (!caseRef) {
+      return toast.error('Please select a case to link.');
+    }
     setIsLoading(true);
     try {
       const res = await caseService.linkCase(caseId, {
-        relationshipType: relationship,
-        targetCaseNumber: caseRef.trim(),
+        relationshipType: 'Relates to',
+        targetCaseNumber: caseRef,
       });
       const childIdMsg = res?.childId ? ` (Sub-Case ID: ${res.childId})` : '';
       toast.success(`Case linked successfully${childIdMsg}.`);
       onSuccess?.();
-      setRelationship('');
       setCaseRef('');
       onClose();
     } catch (err) {
-      toast.error(err.message);
+      toast.error(err.message || 'Failed to link case.');
     } finally {
       setIsLoading(false);
     }
@@ -626,41 +787,76 @@ export function LinkCaseModal({ isOpen, onClose, caseId, onSuccess }) {
       isOpen={isOpen}
       onClose={onClose}
       title="Link Case"
-      subtitle="Associate this case with another related case (Generates Sub-Case ID e.g. C-00045-L01)"
+      subtitle={caseData?.customerName ? `Associate with other cases for ${caseData.customerName}` : 'Associate with other customer cases'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" isLoading={isLoading} onClick={handleConfirm}>
+          <Button
+            variant="primary"
+            isLoading={isLoading}
+            disabled={!caseRef}
+            onClick={handleConfirm}
+          >
             Link Case
           </Button>
         </>
       }
     >
       <div className="action-modal-form">
-        <Select
-          label="Relationship Type"
-          required
-          value={relationship}
-          onChange={(e) => setRelationship(e.target.value)}
-        >
-          <option value="">Select relationship...</option>
-          {LINK_RELATIONSHIPS.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </Select>
+        {/* Customer Cases List (Directly Selectable) */}
         <div>
-          <label className="form-label form-label--required">Case Reference (Case Number)</label>
-          <input
-            className="form-input"
-            type="text"
-            placeholder="e.g. C-10301"
-            value={caseRef}
-            onChange={(e) => setCaseRef(e.target.value)}
-          />
+          <label className="form-label" style={{ marginBottom: 8, display: 'block' }}>
+            Other Cases for this Customer {isLoadingRelated ? '(Loading...)' : `(${relatedCases.length})`}
+          </label>
+          {isLoadingRelated ? (
+            <p style={{ fontSize: 13, color: '#94a3b8', padding: 8 }}>Loading customer cases...</p>
+          ) : relatedCases.length === 0 ? (
+            <p style={{ fontSize: 12.5, color: '#94a3b8', fontStyle: 'italic', padding: 6 }}>
+              No other cases found for this customer to link.
+            </p>
+          ) : (
+            <div className="related-cases-container scrollbar-thin">
+              {relatedCases.map((rc) => {
+                const isSelected = caseRef === rc.caseNumber;
+                return (
+                  <div
+                    key={rc.id}
+                    className={`related-case-item ${isSelected ? 'related-case-item--selected' : ''} ${rc.isAlreadyLinked ? 'related-case-item--linked' : ''}`}
+                    onClick={() => {
+                      if (!rc.isAlreadyLinked) {
+                        setCaseRef(isSelected ? '' : rc.caseNumber);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={rc.isAlreadyLinked ? -1 : 0}
+                    aria-pressed={isSelected}
+                    title={rc.isAlreadyLinked ? 'Already linked to this case' : `Click to select ${rc.caseNumber}`}
+                  >
+                    <div className="related-case-item__content">
+                      <div className="related-case-item__header-line">
+                        <span className="related-case-item__ref">{rc.caseNumber}</span>
+                        <span className="related-case-item__type">{rc.caseType || 'Complaint'}</span>
+                      </div>
+                      <p className="related-case-item__title">{rc.title}</p>
+                    </div>
+                    <div className="related-case-item__badges">
+                      {rc.isAlreadyLinked ? (
+                        <span className="badge-pill badge-pill--cowork" style={{ fontSize: 10, padding: '2px 8px' }}>
+                          ALREADY LINKED
+                        </span>
+                      ) : (
+                        <span className="badge-pill" style={{ fontSize: 10, padding: '2px 8px', textTransform: 'uppercase', fontWeight: 600 }}>
+                          {rc.status}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </Modal>

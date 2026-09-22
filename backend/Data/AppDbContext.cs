@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<LookupType> LookupTypes { get; set; } = null!;
     public DbSet<LookupValue> LookupValues { get; set; } = null!;
     public DbSet<CustomerCustomAttribute> CustomerCustomAttributes { get; set; } = null!;
+    public DbSet<CaseAttachment> CaseAttachments { get; set; } = null!;
 
     public DbSet<CaseTypeConfig> CaseTypeConfigs { get; set; } = null!;
     public DbSet<DepartmentSubCategory> DepartmentSubCategories { get; set; } = null!;
@@ -73,6 +74,18 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<CaseChildRelation>()
             .HasIndex(cr => cr.ChildId)
             .IsUnique();
+
+        modelBuilder.Entity<CaseAttachment>()
+            .HasOne(ca => ca.Case)
+            .WithMany(c => c.Attachments)
+            .HasForeignKey(ca => ca.CaseId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<CaseAttachment>()
+            .HasOne(ca => ca.UploadedByUser)
+            .WithMany()
+            .HasForeignKey(ca => ca.UploadedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // --- Performance indexes ---
         // Mirrored as idempotent CREATE INDEX IF NOT EXISTS statements in Program.cs, because

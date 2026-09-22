@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   X, UserCheck, ArrowRightLeft, Users, AlertTriangle,
   FileText, Link2, CheckCircle2, Clock, ArrowRight,
-  ChevronDown, Check
+  ChevronDown, Check, Paperclip, Flame, UserPlus, ExternalLink
 } from 'lucide-react';
 
 const DRAWER_STATUS_OPTIONS = [
@@ -16,15 +16,18 @@ const DRAWER_STATUS_OPTIONS = [
   { value: 'Escalated', label: 'Escalated' },
   { value: 'Resolved', label: 'Resolved' },
 ];
+
 import { Tabs } from '../../common/Tabs/Tabs.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
-import { Timeline } from '../../timeline/Timeline.jsx';
+import { Timeline, TimelineInteractionBox } from '../../timeline/Timeline.jsx';
 import { EmptyState } from '../../common/Loader/Loader.jsx';
 import { Skeleton } from '../../common/Skeleton/Skeleton.jsx';
 import {
   AssignModal, TransferModal, CoworkerModal,
   EscalateModal, NoteModal, LinkCaseModal, ResolveModal, ReopenModal
 } from '../../../components/case/actions/CaseActions.jsx';
+import { CollaborationDrawer } from '../CollaborationDrawer/CollaborationDrawer.jsx';
+import { AttachmentsDrawer } from '../AttachmentsDrawer/AttachmentsDrawer.jsx';
 import { useCases } from '../../../hooks/useCases.js';
 import { useUsers } from '../../../hooks/useUsers.js';
 import { useDepartments } from '../../../hooks/useDepartments.js';
@@ -41,11 +44,8 @@ import { ChannelBadge } from '../../case/ChannelBadge/ChannelBadge.jsx';
 import './CaseDrawer.css';
 
 // ---- Details Tab ----
+// ---- Details Tab ----
 function DetailsTab({ caseData, onOpen360 }) {
-  const coworkers = caseData.participants?.filter(
-    (p) => p.role === PARTICIPANT_ROLE.CO_WORKER || p.role === 'CoWorker'
-  ) || [];
-
   const childRelations = caseData.childRelations || [];
   const reopenRelations = childRelations.filter((cr) => cr.relationType?.toLowerCase() === 'reopen');
 
@@ -63,24 +63,28 @@ function DetailsTab({ caseData, onOpen360 }) {
     return () => { active = false; };
   }, []);
 
-  const rawNric = caseData.customer?.nric || caseData.customer?.idValue || '';
-  const maskedNric = masker('idValue', rawNric) || masker('nric', rawNric) || rawNric || '—';
-  const maskedPhone = masker('phoneNumber', caseData.customer?.phoneNumber) || caseData.customer?.phoneNumber || '—';
-  const maskedDob = caseData.customer?.dateOfBirth ? masker('dateOfBirth', formatDate(caseData.customer.dateOfBirth)) : '';
-
   return (
     <div className="drawer-details scrollbar-thin">
       {/* CUSTOMER SECTION */}
       <div className="drawer-section">
         <p className="drawer-section-label">CUSTOMER</p>
         <div className="drawer-customer-row">
-          <Avatar name={caseData.customer?.fullName} size="md" />
+          <Avatar name={caseData.customer?.fullName || caseData.customerName} size="md" />
           <div className="drawer-customer-info">
-            <p className="drawer-customer-name">{masker('fullName', caseData.customer?.fullName) || caseData.customer?.fullName}</p>
-            <p className="drawer-customer-nric">
-              NRIC {maskedNric} · {maskedPhone}
-              {maskedDob ? ` · DOB ${maskedDob}` : ''}
-            </p>
+            <div className="drawer-customer-header-line">
+              <p className="drawer-customer-name">
+                {masker('fullName', caseData.customer?.fullName) || caseData.customer?.fullName || caseData.customerName || '—'}
+              </p>
+              {/* Dynamic DB-calculated Open and Total Case counts */}
+              <div className="drawer-customer-case-counts">
+                <span className="customer-count-pill customer-count-pill--open">
+                  <strong>{caseData.customer?.openCasesCount ?? 0}</strong> Open Cases
+                </span>
+                <span className="customer-count-pill customer-count-pill--total">
+                  <strong>{caseData.customer?.totalCasesCount ?? 0}</strong> Total Cases
+                </span>
+              </div>
+            </div>
           </div>
           <button
             className="drawer-open360-btn"
@@ -92,117 +96,86 @@ function DetailsTab({ caseData, onOpen360 }) {
         </div>
       </div>
 
-      {/* DESCRIPTION SECTION */}
+      {/* KEY DETAILS SECTION — Clean enterprise information card */}
       <div className="drawer-section">
-        <p className="drawer-section-label">DESCRIPTION</p>
-        <div className="drawer-description">
-          {caseData.description || 'No description provided.'}
+        <p className="drawer-section-label">KEY DETAILS</p>
+        <div className="key-details-card">
+          <div className="key-details-row">
+            <span className="key-details-label">Case ID</span>
+            <div className="key-details-value font-mono">
+              <span>{caseData.caseNumber}</span>
+              {caseData.parentCaseNumber && (
+                <span className="key-details-parent-pill">
+                  Parent: {caseData.parentCaseNumber}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="key-details-row">
+            <span className="key-details-label">Case Type</span>
+            <span className="key-details-value">{caseData.caseType || 'Complaint'}</span>
+          </div>
+
+          <div className="key-details-row">
+            <span className="key-details-label">Created Date / Time</span>
+            <span className="key-details-value text-secondary">
+              {formatFullDateTime(caseData.createdAt)}
+            </span>
+          </div>
+
+          <div className="key-details-divider" />
+
+          <div className="key-details-row">
+            <span className="key-details-label">Source Channel</span>
+            <div className="key-details-value">
+              <ChannelBadge channel={caseData.sourceChannel || caseData.communicationChannel || 'Email'} />
+            </div>
+          </div>
+
+          <div className="key-details-row">
+            <span className="key-details-label">Preferred Communication</span>
+            <span className="key-details-value">
+              {caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Email'}
+            </span>
+          </div>
+
+          <div className="key-details-row">
+            <span className="key-details-label">Preferred Language</span>
+            <span className="key-details-value">
+              {caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}
+            </span>
+          </div>
+
+          <div className="key-details-row">
+            <span className="key-details-label">SLA Tracking</span>
+            <div className="key-details-value">
+              <SlaDisplay caseItem={caseData} size="sm" />
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* KEY DETAILS SECTION */}
+      {/* CURRENT OWNER SECTION — Agent, Dynamic Team & Queue */}
       <div className="drawer-section">
-        <p className="drawer-section-label">KEY DETAILS</p>
-        <div className="key-details-grid-container">
-          {/* Column 1: Core Identification & Status Attributes */}
-          <div className="key-details-card">
-            <div className="key-details-item">
-              <span className="key-details-item__label">Case ID</span>
-              <div className="key-details-item__value font-mono">
-                {caseData.caseNumber}
-                {caseData.parentCaseNumber && (
-                  <span className="key-details-parent-pill">
-                    Parent: {caseData.parentCaseNumber}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Case Type</span>
-              <span className="key-details-item__value">{caseData.caseType || 'Complaint'}</span>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Status</span>
-              <div className="key-details-item__value">
-                <span className={`key-details-status-pill key-details-status-pill--${(caseData.status || 'open').toLowerCase().replace(/[\s_]/g, '')}`}>
-                  <span className="key-details-status-dot" />
-                  {caseData.status === 'WaitingOnCustomer' ? 'Waiting on Customer' : (caseData.status === 'InProgress' ? 'In Progress' : caseData.status)}
-                </span>
-              </div>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Priority / Severity</span>
-              <div className="key-details-item__value">
-                <span className={`key-details-severity-pill key-details-severity-pill--${(caseData.severity || 'medium').toLowerCase()}`}>
-                  {caseData.severity?.toUpperCase()}
-                </span>
-              </div>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Department &amp; Subcategory</span>
-              <span className="key-details-item__value">
-                {caseData.departmentName}
-                {caseData.subcategory && ` · ${caseData.subcategory}`}
+        <p className="drawer-section-label">CURRENT OWNER</p>
+        <div className="owner-card">
+          <Avatar name={caseData.ownerName} size="md" />
+          <div className="owner-card__info">
+            <p className="owner-card__name">{caseData.ownerName || 'Unassigned'}</p>
+            <div className="owner-card__metadata-grid">
+              <span className="owner-card__meta-item">
+                <span className="owner-card__meta-label">Role:</span> {caseData.ownerRole || 'Agent'}
               </span>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Created Date / Time</span>
-              <span className="key-details-item__value text-secondary">
-                {formatFullDateTime(caseData.createdAt)}
+              <span className="owner-card__meta-item">
+                <span className="owner-card__meta-label">Team:</span> {caseData.ownerTeam || '—'}
+              </span>
+              <span className="owner-card__meta-item">
+                <span className="owner-card__meta-label">Queue:</span> {caseData.ownerQueue || '—'}
               </span>
             </div>
           </div>
-
-          {/* Column 2: Omnichannel Intake, Preference, People & SLA */}
-          <div className="key-details-card">
-            <div className="key-details-item">
-              <span className="key-details-item__label">Source Channel</span>
-              <div className="key-details-item__value">
-                <ChannelBadge channel={caseData.sourceChannel || caseData.communicationChannel || 'Voice'} />
-              </div>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Preferred Communication Channel</span>
-              <span className="key-details-item__value">
-                {caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Phone'}
-              </span>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Preferred Language</span>
-              <span className="key-details-item__value">
-                {caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}
-              </span>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Customer</span>
-              <span className="key-details-item__value">
-                {caseData.customer?.fullName || caseData.customerName || '—'}
-              </span>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">Assignee / Owner</span>
-              <div className="key-details-item__value key-details-item__assignee">
-                <Avatar name={caseData.ownerName || caseData.owner?.name} size="xs" />
-                <span>{caseData.ownerName || caseData.owner?.name || 'Unassigned'}</span>
-              </div>
-            </div>
-
-            <div className="key-details-item">
-              <span className="key-details-item__label">SLA Tracking</span>
-              <div className="key-details-item__value">
-                <SlaDisplay caseItem={caseData} size="sm" />
-              </div>
-            </div>
-          </div>
+          <span className="badge-pill badge-pill--owner">OWNER</span>
         </div>
       </div>
 
@@ -238,67 +211,8 @@ function DetailsTab({ caseData, onOpen360 }) {
                   </p>
                 )}
                 <p style={{ fontSize: '11px', color: '#9a3412' }}>
-                  Reopened by {cr.createdByName || 'Agent'} · {formatFullDateTime(cr.createdAt)}
+                  Reopened by {cr.createdByName || 'Agent'} &middot; {formatFullDateTime(cr.createdAt)}
                 </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* CURRENT OWNER */}
-      {caseData.ownerName && (
-        <div className="drawer-section">
-          <p className="drawer-section-label">CURRENT OWNER</p>
-          <div className="owner-card">
-            <Avatar name={caseData.ownerName} size="md" />
-            <div className="owner-card__info">
-              <p className="owner-card__name">{caseData.ownerName}</p>
-              {caseData.ownerRole && <p className="owner-card__role">{caseData.ownerRole}</p>}
-            </div>
-            <span className="badge-pill badge-pill--owner">OWNER</span>
-          </div>
-        </div>
-      )}
-
-      {/* CO-WORKERS */}
-      {coworkers.length > 0 && (
-        <div className="drawer-section">
-          <p className="drawer-section-label">CO-WORKERS ({coworkers.length})</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {coworkers.map((p) => (
-              <div key={p.userId} className="owner-card">
-                <Avatar name={p.userName} size="md" />
-                <div className="owner-card__info">
-                  <p className="owner-card__name">{p.userName}</p>
-                  {p.roleTitle && <p className="owner-card__role">{p.roleTitle}</p>}
-                </div>
-                <span className="badge-pill badge-pill--cowork">CO-WORK</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* RECENT ACTIVITY */}
-      {caseData.events && caseData.events.length > 0 && (
-        <div className="drawer-section">
-          <p className="drawer-section-label">RECENT ACTIVITY</p>
-          <div className="drawer-recent-activity-list">
-            {caseData.events.slice(-5).reverse().map((evt) => (
-              <div key={evt.id} className="activity-item">
-                <div className="activity-item__header">
-                  <span className={`badge-pill badge-pill--activity badge-pill--activity-${evt.eventType?.toLowerCase()}`}>
-                    {evt.eventType?.toUpperCase()}
-                  </span>
-                  <span className="activity-item__time">{formatFullDateTime(evt.createdAt)}</span>
-                </div>
-                <div className="activity-item__body">
-                  <p className="activity-item__message">{evt.message}</p>
-                </div>
-                {evt.userName && (
-                  <p className="activity-item__author">by {evt.userName}</p>
-                )}
               </div>
             ))}
           </div>
@@ -309,9 +223,10 @@ function DetailsTab({ caseData, onOpen360 }) {
 }
 
 // ---- People Tab ----
-function PeopleTab({ caseData, onRemoveCoworker }) {
-  const coworkers = caseData.participants?.filter(p => p.role === PARTICIPANT_ROLE.CO_WORKER || p.role === 'CoWorker') || [];
-  const watchers = caseData.participants?.filter(p => p.role === PARTICIPANT_ROLE.WATCHER || p.role === 'Watcher') || [];
+function PeopleTab({ caseData, onRemoveCoworker, onOpenCollaboration }) {
+  const coworkers = caseData.participants?.filter(
+    (p) => p.role === PARTICIPANT_ROLE.CO_WORKER || p.role === 'CoWorker' || p.role?.toLowerCase() === 'coworker'
+  ) || [];
 
   return (
     <div className="scrollbar-thin" style={{ overflowY: 'auto', height: '100%', padding: '16px 20px' }}>
@@ -323,7 +238,17 @@ function PeopleTab({ caseData, onRemoveCoworker }) {
             <Avatar name={caseData.ownerName} size="md" />
             <div className="owner-card__info">
               <p className="owner-card__name">{caseData.ownerName}</p>
-              {caseData.ownerRole && <p className="owner-card__role">{caseData.ownerRole}</p>}
+              <div className="owner-card__metadata-grid">
+                <span className="owner-card__meta-item">
+                  <span className="owner-card__meta-label">Role:</span> {caseData.ownerRole || 'Agent'}
+                </span>
+                <span className="owner-card__meta-item">
+                  <span className="owner-card__meta-label">Team:</span> {caseData.ownerTeam || '—'}
+                </span>
+                <span className="owner-card__meta-item">
+                  <span className="owner-card__meta-label">Queue:</span> {caseData.ownerQueue || '—'}
+                </span>
+              </div>
             </div>
             <span className="badge-pill badge-pill--owner">OWNER</span>
           </div>
@@ -332,7 +257,17 @@ function PeopleTab({ caseData, onRemoveCoworker }) {
 
       {/* Co-workers */}
       <div className="people-section" style={{ borderTop: '1px solid var(--color-border)', paddingTop: 16, marginTop: 16 }}>
-        <p className="drawer-section-label">CO-WORKERS ({coworkers.length})</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <p className="drawer-section-label" style={{ margin: 0 }}>CO-WORKERS ({coworkers.length})</p>
+          <button
+            type="button"
+            className="btn btn--outline"
+            style={{ fontSize: '11px', padding: '3px 10px' }}
+            onClick={onOpenCollaboration}
+          >
+            Manage Collaboration
+          </button>
+        </div>
         {coworkers.length > 0 ? (
           <div className="people-list">
             {coworkers.map(p => (
@@ -366,24 +301,6 @@ function PeopleTab({ caseData, onRemoveCoworker }) {
           </div>
         ) : <EmptyState title="No co-workers" description="Add co-workers to collaborate on this case." />}
       </div>
-
-      {/* Watchers */}
-      <div className="people-section" style={{ borderTop: '1px solid var(--color-border)', paddingTop: 16, marginTop: 16 }}>
-        <p className="drawer-section-label">WATCHERS / SUPERVISORS ({watchers.length})</p>
-        {watchers.length > 0 ? (
-          <div className="people-list">
-            {watchers.map(p => (
-              <div key={p.userId} className="owner-card">
-                <Avatar name={p.userName} size="md" />
-                <div className="owner-card__info">
-                  <p className="owner-card__name">{p.userName}</p>
-                </div>
-                <span className="badge-pill" style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }}>WATCHER</span>
-              </div>
-            ))}
-          </div>
-        ) : <EmptyState title="No watchers" description="Supervisors watching this case will appear here." />}
-      </div>
     </div>
   );
 }
@@ -404,7 +321,7 @@ function LinkedCasesTab({ caseData, onUnlinkSuccess }) {
       await caseService.unlinkCase(caseData.id, { targetCaseNumber });
       setPendingUnlink(null);
       toast.success(`Case ${targetCaseNumber} unlinked successfully.`);
-      onUnlinkSuccess?.();
+      await onUnlinkSuccess?.();
     } catch (e) {
       toast.error(e.message || 'Failed to unlink case.');
     } finally {
@@ -443,60 +360,63 @@ function LinkedCasesTab({ caseData, onUnlinkSuccess }) {
       
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {linkRelations.length > 0 ? (
-          linkRelations.map((cr) => (
-            <div
-              key={cr.childId}
-              style={{
-                padding: '14px 16px',
-                borderRadius: '8px',
-                border: '1px solid var(--color-border)',
-                backgroundColor: '#f8fafc',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--color-brand-primary)', fontFamily: 'monospace' }}>
-                  Child Case ID: {cr.childId}
-                </span>
-                <span className="badge-pill badge-pill--dept">LINKED CASE</span>
-              </div>
-              {cr.linkedCaseNumber && (
-                <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                  Target Case: {cr.linkedCaseNumber} {cr.linkedCaseTitle ? `· ${cr.linkedCaseTitle}` : ''}
-                </p>
-              )}
-              {cr.reason && (
-                <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                  <strong>Reason:</strong> {cr.reason}
-                </p>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-                  Linked by {cr.createdByName || 'Agent'} · {formatFullDateTime(cr.createdAt)}
-                </span>
+          linkRelations.map((cr) => {
+            const targetIdentifier = cr.linkedCaseNumber || cr.childId;
+            return (
+              <div
+                key={cr.childId}
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--color-border)',
+                  backgroundColor: '#f8fafc',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--color-brand-primary)', fontFamily: 'monospace' }}>
+                    Child Case ID: {cr.childId}
+                  </span>
+                  <span className="badge-pill badge-pill--dept">LINKED CASE</span>
+                </div>
                 {cr.linkedCaseNumber && (
-                  <button
-                    className="btn"
-                    style={{
-                      fontSize: '11px',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      border: '1px solid var(--color-danger)',
-                      backgroundColor: 'transparent',
-                      color: 'var(--color-danger)'
-                    }}
-                    disabled={unlinkingId === cr.linkedCaseNumber}
-                    onClick={() => handleUnlink(cr.linkedCaseNumber)}
-                  >
-                    {unlinkingId === cr.linkedCaseNumber ? 'Unlinking...' : 'Unlink'}
-                  </button>
+                  <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    Target Case: {cr.linkedCaseNumber} {cr.linkedCaseTitle ? `&middot; ${cr.linkedCaseTitle}` : ''}
+                  </p>
                 )}
+                {cr.reason && (
+                  <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                    <strong>Reason:</strong> {cr.reason}
+                  </p>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                  <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
+                    Linked by {cr.createdByName || 'Agent'} &middot; {formatFullDateTime(cr.createdAt)}
+                  </span>
+                  {targetIdentifier && (
+                    <button
+                      className="btn"
+                      style={{
+                        fontSize: '11px',
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        border: '1px solid var(--color-danger)',
+                        backgroundColor: 'transparent',
+                        color: 'var(--color-danger)'
+                      }}
+                      disabled={unlinkingId === targetIdentifier}
+                      onClick={() => handleUnlink(targetIdentifier)}
+                    >
+                      {unlinkingId === targetIdentifier ? 'Unlinking...' : 'Unlink'}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
           linked.map((lc) => (
             <div
@@ -552,9 +472,12 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
   const { departments, reload: reloadDepartments } = useDepartments();
 
   const [openModal, setOpenModal] = useState(null);
+  const [isCollaborationOpen, setIsCollaborationOpen] = useState(false);
+  const [isAttachmentsOpen, setIsAttachmentsOpen] = useState(false);
   const [pendingCoworker, setPendingCoworker] = useState(null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isRequestingSwarm, setIsRequestingSwarm] = useState(false);
   const statusDropdownRef = useRef(null);
   const toast = useToast();
 
@@ -618,8 +541,32 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
       toast.success(`${pendingCoworker.name || 'Co-worker'} removed from this case.`);
       await handleSuccess();
     } catch (e) {
-      // The co-worker stays on the case and the dialog stays open so the action can be retried.
       toast.error(e.message || 'Failed to remove co-worker.');
+    }
+  };
+
+  const handleRequestSwarm = async () => {
+    if (!caseData) return;
+    setIsRequestingSwarm(true);
+    try {
+      const res = await caseService.requestSwarm(caseData.id);
+      toast.success(res.message || 'Swarm requested! Team Lead & SMEs mobilized.');
+      await handleSuccess();
+    } catch (err) {
+      toast.error(err.message || 'Failed to request swarm.');
+    } finally {
+      setIsRequestingSwarm(false);
+    }
+  };
+
+  const handleAddCollaborator = async (userId) => {
+    if (!userId || !caseData) return;
+    try {
+      await caseService.addCoworkers(caseData.id, { coworkerIds: [userId] });
+      toast.success('Collaborator added to case.');
+      await handleSuccess();
+    } catch (err) {
+      toast.error(err.message || 'Failed to add collaborator.');
     }
   };
 
@@ -627,46 +574,54 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
     ?.filter(p => p.role === PARTICIPANT_ROLE.CO_WORKER || p.role === 'CoWorker' || p.role?.toLowerCase() === 'coworker')
     .map(p => p.userId) || [];
 
-  const sla = caseData
-    ? getSlaDisplay(
-        caseData.slaStartTime,
-        getSlaConfig(caseData.severity, caseData.slaTargetHours).internalHours,
-        caseData.status,
-        Date.now(),
-        caseData.slaPausedAt,
-        caseData.slaTotalPausedMinutes
-      )
-    : null;
-
   const childRelations = caseData?.childRelations || [];
   const linkRelations = childRelations.filter((cr) => cr.relationType?.toLowerCase() === 'link');
   const linkedCount = Math.max(caseData?.linkedCases?.length || 0, linkRelations.length);
+
+  const coworkerCount = caseData?.participants?.filter(
+    p => p.role === PARTICIPANT_ROLE.CO_WORKER || p.role === 'CoWorker' || p.role?.toLowerCase() === 'coworker'
+  )?.length || 0;
 
   const tabs = caseData
     ? [
         {
           key: 'details',
           label: 'Details',
-          content: <DetailsTab caseData={caseData} onOpen360={(id) => { onClose(); navigate(`/customer360/${id}`); }} />,
+          content: (
+            <DetailsTab
+              caseData={caseData}
+              onOpen360={(id) => { onClose(); navigate(`/customer360/${id}`); }}
+            />
+          ),
         },
         {
           key: 'workflow',
           label: 'Workflow timeline',
           count: caseData.events?.length || 0,
           content: (
-            <div className="scrollbar-thin" style={{ overflowY: 'auto', height: '100%', padding: '0 20px' }}>
-              <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-tertiary)', padding: '12px 0 4px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                Workflow timeline · {caseData.events?.length || 0} Events
-              </p>
-              <Timeline events={caseData.events || []} />
+            <div className="scrollbar-thin" style={{ overflowY: 'auto', height: '100%', padding: '16px 20px 24px' }}>
+              <Timeline
+                events={caseData.events || []}
+                caseId={caseData.id}
+                channel={caseData.communicationChannel || caseData.sourceChannel || 'Email'}
+                users={users}
+                onSuccess={handleSuccess}
+                showInteraction={true}
+              />
             </div>
           ),
         },
         {
           key: 'people',
           label: 'People',
-          count: caseData.participants?.length || 0,
-          content: <PeopleTab caseData={caseData} onRemoveCoworker={setPendingCoworker} />,
+          count: coworkerCount,
+          content: (
+            <PeopleTab
+              caseData={caseData}
+              onRemoveCoworker={setPendingCoworker}
+              onOpenCollaboration={() => setIsCollaborationOpen(true)}
+            />
+          ),
         },
         {
           key: 'linked',
@@ -726,18 +681,20 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
           </div>
         ) : (
           <>
-            {/* Header */}
+            {/* Header with Removed SLA badge, Dynamic Department & Subcategory badges */}
             <div className="case-drawer__header-redesign">
               <div className="case-drawer__header-top">
                 <span className="case-drawer__case-ref-redesign">
-                  {caseData.caseNumber} &middot; {caseData.departmentName ? caseData.departmentName.toUpperCase() : 'UNKNOWN'}
+                  {caseData.caseNumber} &middot; {caseData.departmentName ? caseData.departmentName.toUpperCase() : 'CONTACT CENTER'}
                   {caseData.subcategory ? ` \u00B7 ${caseData.subcategory.toUpperCase()}` : ''}
                 </span>
                 <button className="case-drawer__close-redesign" onClick={onClose} aria-label="Close drawer">
                   <X size={18} />
                 </button>
               </div>
+
               <h2 className="case-drawer__title-redesign">{caseData.title}</h2>
+
               <div className="case-drawer__badges-redesign">
                 {/* Interactive Status Dropdown */}
                 <div className="case-drawer__status-menu-container" ref={statusDropdownRef}>
@@ -784,21 +741,24 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
                 </div>
 
                 <span className="badge-pill badge-pill--severity">
-                  {caseData.severity?.toUpperCase()}
+                  {caseData.severity?.toUpperCase() || 'MEDIUM'}
                 </span>
-                {sla && (
-                  <span className={`badge-pill badge-pill--sla ${sla.status === 'paused' ? 'badge-pill--sla-paused' : ''}`}>
-                    <Clock size={12} />
-                    SLA &middot; {sla.label}
+
+                {/* Contact Center (Department) badge */}
+                <span className="badge-pill badge-pill--dept">
+                  {caseData.departmentName || 'Contact Center'}
+                </span>
+
+                {/* Subcategory badge */}
+                {caseData.subcategory && (
+                  <span className="badge-pill badge-pill--subcat">
+                    {caseData.subcategory}
                   </span>
                 )}
-                <span className="badge-pill badge-pill--dept">
-                  {caseData.departmentName}
-                </span>
               </div>
             </div>
 
-            {/* Action buttons */}
+            {/* Action buttons: Cleaned up without duplicates */}
             <div className="case-drawer__actions-redesign">
               {caseData.status !== 'Resolved' ? (
                 <>
@@ -808,14 +768,11 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
                   <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('transfer')} id="action-transfer">
                     <ArrowRightLeft size={14} /> Transfer dept
                   </button>
-                  <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('coworker')} id="action-coworker">
-                    <Users size={14} /> + Co-worker
+                  <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => setIsAttachmentsOpen(true)} id="action-attachments">
+                    <Paperclip size={14} /> Attachments {caseData.attachments?.length ? `(${caseData.attachments.length})` : ''}
                   </button>
                   <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('escalate')} id="action-escalate">
                     <AlertTriangle size={14} /> Escalate
-                  </button>
-                  <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('note')} id="action-note">
-                    <FileText size={14} /> Add note
                   </button>
                   <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('link')} id="action-link">
                     <Link2 size={14} /> Link case
@@ -823,14 +780,20 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
                   <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('resolve')} id="action-resolve">
                     <CheckCircle2 size={14} /> Resolve
                   </button>
+                  <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => setIsCollaborationOpen(true)} id="action-collaboration" title="Open case collaboration drawer">
+                    <Users size={14} /> Case Collaboration
+                  </button>
                 </>
               ) : (
                 <>
-                  <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('note')} id="action-note">
-                    <FileText size={14} /> Add note
+                  <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => setIsAttachmentsOpen(true)} id="action-attachments">
+                    <Paperclip size={14} /> Attachments {caseData.attachments?.length ? `(${caseData.attachments.length})` : ''}
                   </button>
                   <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => handleOpenModal('link')} id="action-link">
                     <Link2 size={14} /> Link case
+                  </button>
+                  <button className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--outline" onClick={() => setIsCollaborationOpen(true)} id="action-collaboration" title="Open case collaboration drawer">
+                    <Users size={14} /> Case Collaboration
                   </button>
                   <button
                     className="case-drawer__action-btn-redesign case-drawer__action-btn-redesign--primary"
@@ -862,6 +825,7 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
               isOpen={openModal === 'transfer'}
               onClose={() => setOpenModal(null)}
               caseId={caseData.id}
+              caseData={caseData}
               departments={departments}
               onSuccess={handleSuccess}
             />
@@ -893,6 +857,7 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
               isOpen={openModal === 'link'}
               onClose={() => setOpenModal(null)}
               caseId={caseData.id}
+              caseData={caseData}
               onSuccess={handleSuccess}
             />
             <ResolveModal
@@ -905,6 +870,24 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
               isOpen={openModal === 'reopen'}
               onClose={() => setOpenModal(null)}
               caseId={caseData.id}
+              onSuccess={handleSuccess}
+            />
+
+            {/* Sub-Drawers for Collaboration & Attachments */}
+            <CollaborationDrawer
+              isOpen={isCollaborationOpen}
+              onClose={() => setIsCollaborationOpen(false)}
+              caseId={caseData.id}
+              caseData={caseData}
+              users={users}
+              onSuccess={handleSuccess}
+            />
+
+            <AttachmentsDrawer
+              isOpen={isAttachmentsOpen}
+              onClose={() => setIsAttachmentsOpen(false)}
+              caseId={caseData.id}
+              caseData={caseData}
               onSuccess={handleSuccess}
             />
           </>

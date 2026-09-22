@@ -94,6 +94,13 @@ export const caseService = {
   },
 
   /**
+   * Get related cases for the same customer
+   */
+  getRelatedCustomerCases(caseId) {
+    return api.get(`/api/cases/${caseId}/related-customer-cases`).then((r) => r.data);
+  },
+
+  /**
    * Unlink a case from another case
    * dto: { targetCaseNumber: string }
    */
@@ -129,5 +136,58 @@ export const caseService = {
         throw err;
       })
       .then((r) => r.data);
+  },
+
+  /**
+   * Add internal note or customer reply interaction to timeline
+   * dto: { message: string, isInternal: boolean, channel?: string }
+   */
+  addTimelineInteraction(caseId, dto) {
+    return api.post(`/api/cases/${caseId}/timeline-interaction`, dto).then((r) => r.data);
+  },
+
+  /**
+   * Request a swarm for a case (pulls Team Lead and SMEs, elevates attention)
+   * dto: { reason?: string }
+   */
+  requestSwarm(caseId, dto = {}) {
+    return api.post(`/api/cases/${caseId}/swarm`, dto).then((r) => r.data);
+  },
+
+  /**
+   * Get all attachments for a case
+   */
+  getAttachments(caseId) {
+    return api.get(`/api/cases/${caseId}/attachments`).then((r) => r.data);
+  },
+
+  /**
+   * Upload a real file attachment for a case
+   * formData contains 'file' and optional 'note'
+   */
+  uploadAttachment(caseId, formData) {
+    return api.post(`/api/cases/${caseId}/attachments`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }).then((r) => r.data);
+  },
+
+  /**
+   * Download a case attachment
+   */
+  downloadAttachment(caseId, attachmentId, fileName = 'attachment') {
+    return api.get(`/api/cases/${caseId}/attachments/${attachmentId}/download`, {
+      responseType: 'blob',
+    }).then((response) => {
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    });
   },
 };

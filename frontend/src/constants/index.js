@@ -6,8 +6,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 export const LOGGED_IN_USER_ID_KEY = 'csm_logged_in_user_id';
 
 // Seeded fallback user ID (Siti Nurhaliza) — used as X-User-Id header on bootstrap
-// before localStorage is populated so the backend 401 guard doesn't block /api/users.
-export const DEFAULT_USER_ID = '7ef3fe56-2fa7-4cdb-83c0-3e697ec3f6e1'; 
+export const DEFAULT_USER_ID = '89c65b43-8858-40b7-bfd4-1d7d56f085e0'; // Siti Nurhaliza
 
 // Case Status
 export const CASE_STATUS = {

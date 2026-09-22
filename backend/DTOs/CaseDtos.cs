@@ -42,6 +42,7 @@ public class AssignCaseDto
 {
     public Guid OwnerId { get; set; }
     public Guid UserId { get; set; } // The user making the change
+    public string? Reason { get; set; }
 }
 
 public class AddNoteDto
@@ -58,7 +59,23 @@ public class AddCoworkersDto
 public class TransferDepartmentDto
 {
     public Guid DepartmentId { get; set; }
+    public string? TransferTo { get; set; } // "Queue", "Department", "Team"
+    public string? TargetQueue { get; set; }
+    public string? Reason { get; set; }
+    public string? HandoverNote { get; set; }
 }
+
+public record RelatedCustomerCaseDto(
+    Guid Id,
+    string CaseNumber,
+    string CaseType,
+    string Title,
+    string Status,
+    string Severity,
+    DateTime CreatedAt,
+    bool IsAlreadyLinked
+);
+
 
 public class CreateUserDto
 {
@@ -108,4 +125,31 @@ public class SetDepartmentOwnerDto
 public class UpdateUserStatusDto
 {
     public string Status { get; set; } = string.Empty;
+}
+
+public class AddTimelineInteractionDto
+{
+    public string Message { get; set; } = string.Empty;
+    public bool IsInternal { get; set; } = true;
+    public string? Channel { get; set; }
+    public Guid UserId { get; set; }
+}
+
+public class RequestSwarmDto
+{
+    public string? Reason { get; set; }
+    public Guid UserId { get; set; }
+}
+
+public class CaseAttachmentDto
+{
+    public Guid Id { get; set; }
+    public Guid CaseId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string FileType { get; set; } = string.Empty;
+    public long FileSizeBytes { get; set; }
+    public string? Note { get; set; }
+    public Guid UploadedByUserId { get; set; }
+    public string UploadedByUserName { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
 }

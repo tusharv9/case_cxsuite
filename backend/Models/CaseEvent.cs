@@ -19,4 +19,8 @@ public class CaseEvent
     public string? OldValue { get; set; }
     public string? NewValue { get; set; }
     public string? ActionType { get; set; }
+
+    // Case Details Drawer Timeline Interaction & Mentions
+    public bool IsInternal { get; set; } = true;
+    public string? Channel { get; set; }
 }

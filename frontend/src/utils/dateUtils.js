@@ -21,6 +21,23 @@ export function formatRelativeDate(dateString) {
   }
 }
 
+export function formatTimeAgo(dateString) {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffSecs = Math.floor((now - date) / 1000);
+  if (diffSecs < 60) return 'just now';
+  const diffMins = Math.floor(diffSecs / 60);
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return formatDate(date);
+}
+
+
+
 /**
  * Format date + time: "2026-07-06 · 12:54"
  */

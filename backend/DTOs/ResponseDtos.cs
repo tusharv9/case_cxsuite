@@ -17,6 +17,9 @@ public class CaseSummaryDto
     public string DepartmentName { get; set; } = string.Empty;
     public string OwnerName { get; set; } = string.Empty;
     public Guid OwnerId { get; set; }
+    public string? OwnerRole { get; set; }
+    public string? OwnerTeam { get; set; }
+    public string? OwnerQueue { get; set; }
     public DateTime CreatedAt { get; set; }
     public Guid CustomerId { get; set; }
     public string CustomerName { get; set; } = string.Empty;
@@ -44,6 +47,7 @@ public class CaseDetailDto : CaseSummaryDto
     public List<ParticipantDto> Participants { get; set; } = new();
     public List<LinkedCaseDto> LinkedCases { get; set; } = new();
     public List<CaseSummaryDto> Subcases { get; set; } = new();
+    public List<CaseAttachmentDto> Attachments { get; set; } = new();
 }
 
 public class CaseChildRelationDto
@@ -79,6 +83,8 @@ public class CustomerSummaryDto
     public string NRIC { get; set; } = string.Empty;
     public string PhoneNumber { get; set; } = string.Empty;
     public DateTime? DateOfBirth { get; set; }
+    public int OpenCasesCount { get; set; }
+    public int TotalCasesCount { get; set; }
     public List<CustomerCustomAttributeDto> CustomAttributes { get; set; } = new();
 }
 
@@ -95,10 +101,13 @@ public class CustomerDetailDto : CustomerSummaryDto
 public class CaseEventDto
 {
     public Guid Id { get; set; }
+    public Guid UserId { get; set; }
     public string EventType { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public string UserName { get; set; } = string.Empty;
+    public bool IsInternal { get; set; } = true;
+    public string? Channel { get; set; }
 }
 
 public class ParticipantDto
@@ -124,7 +133,10 @@ public class UserDto
     public string Status { get; set; } = string.Empty;
     public Guid DepartmentId { get; set; }
     public string DepartmentName { get; set; } = string.Empty;
+    public string? Team { get; set; }
+    public string? Queue { get; set; }
 }
+
 
 public class DepartmentDto
 {

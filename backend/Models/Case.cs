@@ -42,6 +42,7 @@ public class Case : AuditableEntity
     
     public ICollection<CaseEvent> Events { get; set; } = new List<CaseEvent>();
     public ICollection<CaseParticipant> Participants { get; set; } = new List<CaseParticipant>();
+    public ICollection<CaseAttachment> Attachments { get; set; } = new List<CaseAttachment>();
     
     public ICollection<LinkedCase> LinkedCases { get; set; } = new List<LinkedCase>();
     public ICollection<LinkedCase> LinkedToCases { get; set; } = new List<LinkedCase>();

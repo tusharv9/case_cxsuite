@@ -23,6 +23,9 @@ public static class MappingExtensions
             DepartmentName = c.Department != null ? c.Department.Name : string.Empty,
             OwnerId = c.OwnerId,
             OwnerName = c.Owner != null ? c.Owner.Name : string.Empty,
+            OwnerRole = c.Owner != null ? c.Owner.Role : null,
+            OwnerTeam = c.Owner != null ? c.Owner.Team : null,
+            OwnerQueue = c.Owner != null ? c.Owner.Queue : null,
             CreatedAt = c.CreatedAt,
             CustomerId = c.CustomerId,
             CustomerName = c.Customer != null ? c.Customer.FullName : string.Empty,
@@ -66,6 +69,9 @@ public static class MappingExtensions
             DepartmentName = c.Department != null ? c.Department.Name : string.Empty,
             OwnerId = c.OwnerId,
             OwnerName = c.Owner != null ? c.Owner.Name : string.Empty,
+            OwnerRole = c.Owner != null ? c.Owner.Role : null,
+            OwnerTeam = c.Owner != null ? c.Owner.Team : null,
+            OwnerQueue = c.Owner != null ? c.Owner.Queue : null,
             CreatedAt = c.CreatedAt,
             CustomerId = c.CustomerId,
             CustomerName = c.Customer != null ? c.Customer.FullName : string.Empty,
@@ -87,21 +93,38 @@ public static class MappingExtensions
                 FullName = c.Customer.FullName,
                 NRIC = c.Customer.NRIC,
                 PhoneNumber = c.Customer.PhoneNumber,
-                DateOfBirth = c.Customer.DateOfBirth
+                DateOfBirth = c.Customer.DateOfBirth,
+                OpenCasesCount = c.Customer.Cases.Count(x => x.Status != CaseStatus.Resolved && x.Status != CaseStatus.Closed && x.Status != CaseStatus.Cancelled),
+                TotalCasesCount = c.Customer.Cases.Count()
             } : null!,
             Events = c.Events.Select(e => new CaseEventDto
             {
                 Id = e.Id,
+                UserId = e.UserId,
                 EventType = e.EventType.ToString(),
                 Message = e.Message,
                 CreatedAt = e.CreatedAt,
-                UserName = e.User != null ? e.User.Name : string.Empty
+                UserName = e.User != null ? e.User.Name : string.Empty,
+                IsInternal = e.IsInternal,
+                Channel = e.Channel
             }).ToList(),
             Participants = c.Participants.Select(p => new ParticipantDto
             {
                 UserId = p.UserId,
                 UserName = p.User != null ? p.User.Name : string.Empty,
                 Role = p.Role.ToString()
+            }).ToList(),
+            Attachments = c.Attachments.Select(a => new CaseAttachmentDto
+            {
+                Id = a.Id,
+                CaseId = a.CaseId,
+                FileName = a.FileName,
+                FileType = a.FileType,
+                FileSizeBytes = a.FileSizeBytes,
+                Note = a.Note,
+                UploadedByUserId = a.UploadedByUserId,
+                UploadedByUserName = a.UploadedByUser != null ? a.UploadedByUser.Name : string.Empty,
+                CreatedAt = a.CreatedAt
             }).ToList(),
             LinkedCases = c.LinkedCases.Select(l => new LinkedCaseDto
             {
@@ -133,6 +156,9 @@ public static class MappingExtensions
                 DepartmentName = sc.Department != null ? sc.Department.Name : string.Empty,
                 OwnerId = sc.OwnerId,
                 OwnerName = sc.Owner != null ? sc.Owner.Name : string.Empty,
+                OwnerRole = sc.Owner != null ? sc.Owner.Role : null,
+                OwnerTeam = sc.Owner != null ? sc.Owner.Team : null,
+                OwnerQueue = sc.Owner != null ? sc.Owner.Queue : null,
                 CreatedAt = sc.CreatedAt,
                 CustomerId = sc.CustomerId,
                 CustomerName = sc.Customer != null ? sc.Customer.FullName : string.Empty,
@@ -158,6 +184,8 @@ public static class MappingExtensions
             CustomerSegment = c.CustomerSegment,
             PreferredLanguage = c.PreferredLanguage ?? "Bahasa Malaysia",
             DateOfBirth = c.DateOfBirth,
+            OpenCasesCount = c.Cases.Count(x => x.Status != CaseStatus.Resolved && x.Status != CaseStatus.Closed && x.Status != CaseStatus.Cancelled),
+            TotalCasesCount = c.Cases.Count(),
             CustomAttributes = c.CustomAttributes.Select(ca => new CustomerCustomAttributeDto
             {
                 FieldKey = ca.FieldKey,
@@ -214,9 +242,12 @@ public static class MappingExtensions
             Role = u.Role,
             Status = u.Status.ToString(),
             DepartmentId = u.DepartmentId,
-            DepartmentName = u.Department != null ? u.Department.Name : string.Empty
+            DepartmentName = u.Department != null ? u.Department.Name : string.Empty,
+            Team = u.Team,
+            Queue = u.Queue
         });
     }
+
 
     public static IQueryable<DepartmentDto> MapToDepartmentDto(this IQueryable<Department> query)
     {

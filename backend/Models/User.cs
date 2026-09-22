@@ -12,6 +12,9 @@ public class User : AuditableEntity
     
     public UserStatus Status { get; set; } = UserStatus.Available;
     
+    public string? Team { get; set; }
+    public string? Queue { get; set; }
+
     public Guid DepartmentId { get; set; }
     public Department Department { get; set; } = null!;
 }

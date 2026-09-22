@@ -113,14 +113,28 @@ public class CaseRepository : ICaseRepository
 
     public async Task RemoveLinkedCaseAsync(Guid caseId, Guid targetCaseId)
     {
-        var linkedCase = await _context.Set<LinkedCase>()
-            .FirstOrDefaultAsync(lc => lc.CaseId == caseId && lc.TargetCaseId == targetCaseId);
+        var linkedCases = await _context.Set<LinkedCase>()
+            .Where(lc => (lc.CaseId == caseId && lc.TargetCaseId == targetCaseId) ||
+                         (lc.CaseId == targetCaseId && lc.TargetCaseId == caseId))
+            .ToListAsync();
             
-        if (linkedCase != null)
+        if (linkedCases.Any())
         {
-            _context.Set<LinkedCase>().Remove(linkedCase);
-            await _context.SaveChangesAsync();
+            _context.Set<LinkedCase>().RemoveRange(linkedCases);
         }
+
+        var childRelations = await _context.Set<CaseChildRelation>()
+            .Where(cr => cr.RelationType == ChildRelationType.Link &&
+                         ((cr.ParentCaseId == caseId && cr.LinkedCaseId == targetCaseId) ||
+                          (cr.ParentCaseId == targetCaseId && cr.LinkedCaseId == caseId)))
+            .ToListAsync();
+
+        if (childRelations.Any())
+        {
+            _context.Set<CaseChildRelation>().RemoveRange(childRelations);
+        }
+
+        await _context.SaveChangesAsync();
     }
 
     public async Task<Guid?> GetDepartmentOwnerAsync(Guid departmentId)

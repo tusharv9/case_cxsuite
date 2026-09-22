@@ -3,21 +3,30 @@ namespace CaseManagement.Api.Services;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Models;
 using CaseManagement.Api.Repositories;
+using CaseManagement.Api.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Hosting;
 
 public class CaseService : ICaseService
 {
     private readonly ICaseRepository _caseRepository;
     private readonly INotificationService _notificationService;
     private readonly IConfigurableSettingsService _settingsService;
+    private readonly AppDbContext _context;
+    private readonly IWebHostEnvironment _env;
 
     public CaseService(
         ICaseRepository caseRepository,
         INotificationService notificationService,
-        IConfigurableSettingsService settingsService)
+        IConfigurableSettingsService settingsService,
+        AppDbContext context,
+        IWebHostEnvironment env)
     {
         _caseRepository = caseRepository;
         _notificationService = notificationService;
         _settingsService = settingsService;
+        _context = context;
+        _env = env;
     }
 
     public async Task<Case> CreateCaseAsync(CreateCaseDto dto, Guid createdByUserId)
@@ -254,11 +263,15 @@ public class CaseService : ICaseService
         
         await _caseRepository.UpdateAsync(existingCase);
 
+        var newOwner = await _context.Users.FindAsync(dto.OwnerId);
+        var ownerName = newOwner?.Name ?? "new agent";
+        var reasonText = !string.IsNullOrWhiteSpace(dto.Reason) ? $" Reason: {dto.Reason}." : "";
+
         var caseEvent = new CaseEvent
         {
             CaseId = caseId,
             EventType = EventType.Assign,
-            Message = $"Owner confirmed/reassigned.",
+            Message = $"Reassigned to {ownerName}.{reasonText}",
             CreatedAt = DateTime.UtcNow,
             UserId = dto.UserId
         };
@@ -361,7 +374,7 @@ public class CaseService : ICaseService
         await _caseRepository.AddEventAsync(caseEvent);
     }
 
-    public async Task TransferDepartmentAsync(Guid caseId, Guid newDepartmentId, Guid transferredByUserId)
+    public async Task TransferDepartmentAsync(Guid caseId, TransferDepartmentDto dto, Guid transferredByUserId)
     {
         var existingCase = await _caseRepository.GetByIdAsync(caseId);
         if (existingCase == null) throw new ArgumentException("Case not found");
@@ -369,29 +382,30 @@ public class CaseService : ICaseService
         if (existingCase.Status == CaseStatus.Resolved)
             throw new InvalidOperationException("Cannot transfer a resolved case.");
 
-        if (existingCase.DepartmentId == newDepartmentId)
-            throw new InvalidOperationException("Case is already assigned to this department.");
-
-        existingCase.DepartmentId = newDepartmentId;
-        
-        var newOwnerId = await _caseRepository.GetDepartmentOwnerAsync(newDepartmentId);
-        if (newOwnerId.HasValue)
+        if (dto.DepartmentId != Guid.Empty && dto.DepartmentId != existingCase.DepartmentId)
         {
-            existingCase.OwnerId = newOwnerId.Value;
+            existingCase.DepartmentId = dto.DepartmentId;
+            var newOwnerId = await _caseRepository.GetDepartmentOwnerAsync(dto.DepartmentId);
+            if (newOwnerId.HasValue)
+            {
+                existingCase.OwnerId = newOwnerId.Value;
+            }
         }
 
-        existingCase.SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity);
-
-        // Reset SLA timer
-        existingCase.SlaStartTime = DateTime.UtcNow;
-
+        // SLA TARGETS DO NOT RESET: Transfer keeps SLA clock running continuously without interruption
         await _caseRepository.UpdateAsync(existingCase);
+
+        var targetDesc = !string.IsNullOrWhiteSpace(dto.TargetQueue)
+            ? dto.TargetQueue
+            : (!string.IsNullOrWhiteSpace(dto.TransferTo) ? dto.TransferTo : "new department");
+        var reasonDesc = !string.IsNullOrWhiteSpace(dto.Reason) ? $" Reason: {dto.Reason}." : "";
+        var noteDesc = !string.IsNullOrWhiteSpace(dto.HandoverNote) ? $" Note: {dto.HandoverNote}" : "";
 
         var caseEvent = new CaseEvent
         {
             CaseId = caseId,
             EventType = EventType.Transfer,
-            Message = $"Transferred to new department.",
+            Message = $"Transferred to {targetDesc}.{reasonDesc}{noteDesc}",
             CreatedAt = DateTime.UtcNow,
             UserId = transferredByUserId
         };
@@ -500,19 +514,85 @@ public class CaseService : ICaseService
         if (existingCase == null) throw new ArgumentException("Case not found");
         
         var targetCase = await _caseRepository.GetByCaseNumberAsync(dto.TargetCaseNumber);
-        if (targetCase == null) throw new ArgumentException("Target case not found");
+        Guid? targetCaseId = targetCase?.Id;
+        string targetCaseNumber = dto.TargetCaseNumber;
 
-        await _caseRepository.RemoveLinkedCaseAsync(caseId, targetCase.Id);
-        
+        if (!targetCaseId.HasValue && existingCase.ChildRelations != null)
+        {
+            var matchingChildRel = existingCase.ChildRelations.FirstOrDefault(cr =>
+                cr.RelationType == ChildRelationType.Link &&
+                (cr.ChildId.Equals(dto.TargetCaseNumber, StringComparison.OrdinalIgnoreCase) ||
+                 (cr.LinkedCase != null && cr.LinkedCase.CaseNumber.Equals(dto.TargetCaseNumber, StringComparison.OrdinalIgnoreCase))));
+
+            if (matchingChildRel?.LinkedCaseId != null)
+            {
+                targetCaseId = matchingChildRel.LinkedCaseId.Value;
+                if (matchingChildRel.LinkedCase != null)
+                {
+                    targetCaseNumber = matchingChildRel.LinkedCase.CaseNumber;
+                }
+            }
+        }
+
+        if (targetCaseId.HasValue)
+        {
+            await _caseRepository.RemoveLinkedCaseAsync(caseId, targetCaseId.Value);
+        }
+        else
+        {
+            // Remove by ChildId if matched
+            var relationsToRemove = await _context.Set<CaseChildRelation>()
+                .Where(cr => (cr.ParentCaseId == caseId || cr.LinkedCaseId == caseId) &&
+                             cr.RelationType == ChildRelationType.Link &&
+                             cr.ChildId == dto.TargetCaseNumber)
+                .ToListAsync();
+
+            if (relationsToRemove.Any())
+            {
+                _context.Set<CaseChildRelation>().RemoveRange(relationsToRemove);
+                await _context.SaveChangesAsync();
+            }
+        }
+
         var caseEvent = new CaseEvent
         {
             CaseId = caseId,
             EventType = EventType.Note,
-            Message = $"Unlinked from case {targetCase.CaseNumber}",
+            Message = $"Unlinked from case {targetCaseNumber}",
             CreatedAt = DateTime.UtcNow,
             UserId = dto.UserId
         };
         await _caseRepository.AddEventAsync(caseEvent);
+    }
+
+    public async Task<List<RelatedCustomerCaseDto>> GetRelatedCustomerCasesAsync(Guid caseId)
+    {
+        var existingCase = await _context.Cases
+            .Include(c => c.LinkedCases)
+            .Include(c => c.ChildRelations)
+            .FirstOrDefaultAsync(c => c.Id == caseId);
+
+        if (existingCase == null) return new List<RelatedCustomerCaseDto>();
+
+        var customerCases = await _context.Cases
+            .Where(c => c.CustomerId == existingCase.CustomerId && c.Id != caseId)
+            .OrderByDescending(c => c.CreatedAt)
+            .ToListAsync();
+
+        var linkedTargetIds = existingCase.LinkedCases.Select(lc => lc.TargetCaseId)
+            .Concat(existingCase.ChildRelations.Where(cr => cr.LinkedCaseId.HasValue).Select(cr => cr.LinkedCaseId!.Value))
+            .ToHashSet();
+
+        return customerCases.Select(c => new RelatedCustomerCaseDto(
+            c.Id,
+            c.CaseNumber,
+            c.CaseType,
+            c.Title,
+            c.Status.ToString(),
+            c.Severity,
+            c.CreatedAt,
+            linkedTargetIds.Contains(c.Id)
+        )).ToList();
     }
 
     public async Task ResolveCaseAsync(Guid caseId, ResolveCaseDto dto)
@@ -653,6 +733,369 @@ public class CaseService : ICaseService
     public async Task<PagedResponseDto<CaseAuditEventDto>> GetCaseAuditEventsAsync(int page = 1, int pageSize = 10, string? actionType = null, string? search = null, CancellationToken ct = default)
     {
         return await _caseRepository.GetCaseAuditEventsAsync(page, pageSize, actionType, search, ct);
+    }
+
+    public async Task AddTimelineInteractionAsync(Guid caseId, AddTimelineInteractionDto dto, Guid userId)
+    {
+        var existingCase = await _caseRepository.GetByIdAsync(caseId);
+        if (existingCase == null) throw new ArgumentException("Case not found");
+
+        if (string.IsNullOrWhiteSpace(dto.Message))
+            throw new ArgumentException("Message cannot be empty.");
+
+        var sender = await _context.Users.FindAsync(userId);
+        var channel = dto.IsInternal ? null : (dto.Channel ?? existingCase.SourceChannel ?? existingCase.CommunicationChannel ?? "Voice");
+
+        var caseEvent = new CaseEvent
+        {
+            CaseId = caseId,
+            EventType = dto.IsInternal ? EventType.Note : EventType.Comment,
+            Message = dto.Message.Trim(),
+            IsInternal = dto.IsInternal,
+            Channel = channel,
+            CreatedAt = DateTime.UtcNow,
+            UserId = userId
+        };
+        await _caseRepository.AddEventAsync(caseEvent);
+
+        // Check for @mentions in internal notes
+        if (dto.IsInternal)
+        {
+            try
+            {
+                var mentionMatches = System.Text.RegularExpressions.Regex.Matches(dto.Message, @"@([a-zA-Z0-9_\.\-]+)");
+                var mentionedTokens = mentionMatches.Select(m => m.Groups[1].Value.ToLowerInvariant()).Distinct().ToList();
+
+                if (mentionedTokens.Count > 0)
+                {
+                    var allUsers = await _context.Users.ToListAsync();
+                    var matchedUsers = allUsers.Where(u =>
+                        u.Id != userId &&
+                        mentionedTokens.Any(token =>
+                            u.Name.ToLowerInvariant().Contains(token) ||
+                            u.Email.ToLowerInvariant().StartsWith(token)
+                        )
+                    ).ToList();
+
+                    foreach (var mentionedUser in matchedUsers)
+                    {
+                        await _notificationService.CreateNotificationAsync(
+                            mentionedUser.Id,
+                            "USER_MENTIONED",
+                            "Mentioned in Case",
+                            $"{sender?.Name ?? "A colleague"} mentioned you in Case {existingCase.CaseNumber}: \"{dto.Message.Trim()}\"",
+                            existingCase.Id,
+                            existingCase.CaseNumber,
+                            "High"
+                        );
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Mention Notification Error] {ex.Message}");
+            }
+        }
+        else
+        {
+            // Customer Reply: notify case owner if different from replying agent
+            if (existingCase.OwnerId != userId)
+            {
+                try
+                {
+                    await _notificationService.CreateNotificationAsync(
+                        existingCase.OwnerId,
+                        "CUSTOMER_REPLY_SENT",
+                        "Reply Sent to Customer",
+                        $"Reply sent to customer via {channel} on Case {existingCase.CaseNumber} by {sender?.Name ?? "Agent"}.",
+                        existingCase.Id,
+                        existingCase.CaseNumber,
+                        "Medium"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Customer Reply Notification Error] {ex.Message}");
+                }
+            }
+        }
+    }
+
+    public async Task RequestSwarmAsync(Guid caseId, RequestSwarmDto dto, Guid userId)
+    {
+        var existingCase = await _context.Cases
+            .Include(c => c.Department)
+            .Include(c => c.Participants)
+            .FirstOrDefaultAsync(c => c.Id == caseId);
+
+        if (existingCase == null) throw new ArgumentException("Case not found");
+
+        if (existingCase.Status == CaseStatus.Resolved)
+            throw new InvalidOperationException("Cannot request a swarm on a resolved case.");
+
+        var requestingUser = await _context.Users.FindAsync(userId);
+
+        // 1. Resolve Team Lead dynamically from department and role architecture
+        var deptUsers = await _context.Users
+            .Where(u => u.DepartmentId == existingCase.DepartmentId)
+            .ToListAsync();
+
+        User? teamLead = null;
+        if (existingCase.Department != null && existingCase.Department.OwnerId.HasValue)
+        {
+            teamLead = await _context.Users.FindAsync(existingCase.Department.OwnerId.Value);
+        }
+
+        if (teamLead == null)
+        {
+            teamLead = deptUsers.FirstOrDefault(u =>
+                u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase) ||
+                u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase) ||
+                u.Role.Contains("Manager", StringComparison.OrdinalIgnoreCase)
+            );
+        }
+
+        if (teamLead == null)
+        {
+            teamLead = await _context.Users.FirstOrDefaultAsync(u =>
+                u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase) ||
+                u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase) ||
+                u.Role.Contains("Manager", StringComparison.OrdinalIgnoreCase)
+            );
+        }
+
+        // 2. Resolve Subject Matter Experts (SMEs) dynamically
+        var smes = deptUsers.Where(u =>
+            (teamLead == null || u.Id != teamLead.Id) &&
+            u.Id != existingCase.OwnerId &&
+            (u.Role.Contains("Senior", StringComparison.OrdinalIgnoreCase) ||
+             u.Role.Contains("Sr.", StringComparison.OrdinalIgnoreCase) ||
+             u.Role.Contains("Specialist", StringComparison.OrdinalIgnoreCase) ||
+             u.Role.Contains("Expert", StringComparison.OrdinalIgnoreCase) ||
+             u.Role.Contains("Officer", StringComparison.OrdinalIgnoreCase))
+        ).Take(2).ToList();
+
+        if (smes.Count == 0)
+        {
+            smes = deptUsers.Where(u =>
+                (teamLead == null || u.Id != teamLead.Id) &&
+                u.Id != existingCase.OwnerId
+            ).Take(1).ToList();
+        }
+
+        if (smes.Count == 0)
+        {
+            smes = await _context.Users.Where(u =>
+                (teamLead == null || u.Id != teamLead.Id) &&
+                u.Id != existingCase.OwnerId &&
+                (u.Role.Contains("Senior", StringComparison.OrdinalIgnoreCase) ||
+                 u.Role.Contains("Sr.", StringComparison.OrdinalIgnoreCase) ||
+                 u.Role.Contains("Specialist", StringComparison.OrdinalIgnoreCase) ||
+                 u.Role.Contains("Expert", StringComparison.OrdinalIgnoreCase) ||
+                 u.Role.Contains("Officer", StringComparison.OrdinalIgnoreCase))
+            ).Take(2).ToListAsync();
+        }
+
+        if (smes.Count == 0)
+        {
+            smes = await _context.Users.Where(u =>
+                (teamLead == null || u.Id != teamLead.Id) &&
+                u.Id != existingCase.OwnerId
+            ).Take(1).ToListAsync();
+        }
+
+        // 3. Add Team Lead and SMEs as case participants if not already added
+        var addedUsers = new List<User>();
+
+        if (teamLead != null && !existingCase.Participants.Any(p => p.UserId == teamLead.Id))
+        {
+            var p = new CaseParticipant
+            {
+                CaseId = caseId,
+                UserId = teamLead.Id,
+                Role = ParticipantRole.CoWorker
+            };
+            _context.CaseParticipants.Add(p);
+            addedUsers.Add(teamLead);
+        }
+
+        foreach (var sme in smes)
+        {
+            if (!existingCase.Participants.Any(p => p.UserId == sme.Id))
+            {
+                var p = new CaseParticipant
+                {
+                    CaseId = caseId,
+                    UserId = sme.Id,
+                    Role = ParticipantRole.CoWorker
+                };
+                _context.CaseParticipants.Add(p);
+                addedUsers.Add(sme);
+            }
+        }
+
+        // 4. Increase case attention / severity if not already Critical
+        if (!string.Equals(existingCase.Severity, "Critical", StringComparison.OrdinalIgnoreCase))
+        {
+            existingCase.Severity = string.Equals(existingCase.Severity, "High", StringComparison.OrdinalIgnoreCase)
+                ? "Critical"
+                : "High";
+            existingCase.SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity);
+        }
+
+        await _context.SaveChangesAsync();
+
+        // 5. Add Timeline Event matching Screenshot 1, 2, 3
+        var swarmEvent = new CaseEvent
+        {
+            CaseId = caseId,
+            EventType = EventType.Cowork,
+            Message = "⚡ Swarm requested — pulling in team lead and subject-matter experts. Priority attention needed.",
+            IsInternal = true,
+            CreatedAt = DateTime.UtcNow,
+            UserId = userId
+        };
+        await _caseRepository.AddEventAsync(swarmEvent);
+
+        // 6. Notify Team Lead and SMEs
+        foreach (var u in addedUsers)
+        {
+            try
+            {
+                await _notificationService.CreateNotificationAsync(
+                    u.Id,
+                    "CASE_SWARM_REQUESTED",
+                    "⚡ Swarm Requested",
+                    $"Swarm requested on Case {existingCase.CaseNumber} ({existingCase.Title}) by {requestingUser?.Name ?? "Agent"}. You have been added to assist.",
+                    existingCase.Id,
+                    existingCase.CaseNumber,
+                    "Critical"
+                );
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Swarm Notification Error] {ex.Message}");
+            }
+        }
+    }
+
+    public async Task<IEnumerable<CaseAttachmentDto>> GetAttachmentsAsync(Guid caseId, CancellationToken ct = default)
+    {
+        return await _context.CaseAttachments
+            .AsNoTracking()
+            .Where(a => a.CaseId == caseId)
+            .OrderByDescending(a => a.CreatedAt)
+            .Select(a => new CaseAttachmentDto
+            {
+                Id = a.Id,
+                CaseId = a.CaseId,
+                FileName = a.FileName,
+                FileType = a.FileType,
+                FileSizeBytes = a.FileSizeBytes,
+                Note = a.Note,
+                UploadedByUserId = a.UploadedByUserId,
+                UploadedByUserName = a.UploadedByUser != null ? a.UploadedByUser.Name : string.Empty,
+                CreatedAt = a.CreatedAt
+            })
+            .ToListAsync(ct);
+    }
+
+    public async Task<CaseAttachmentDto> UploadAttachmentAsync(Guid caseId, Microsoft.AspNetCore.Http.IFormFile file, string? note, Guid userId)
+    {
+        var existingCase = await _caseRepository.GetByIdAsync(caseId);
+        if (existingCase == null) throw new ArgumentException("Case not found");
+
+        if (file == null || file.Length == 0)
+            throw new ArgumentException("Please select a valid file to upload.");
+
+        if (file.Length > 25 * 1024 * 1024)
+            throw new ArgumentException("File size exceeds 25 MB limit.");
+
+        var rawFileName = System.IO.Path.GetFileName(file.FileName);
+        var ext = System.IO.Path.GetExtension(rawFileName).ToLowerInvariant();
+        var safeStoredFileName = $"{Guid.NewGuid()}_{rawFileName}";
+
+        var uploadsDir = System.IO.Path.Combine(_env.ContentRootPath, "Uploads", "Attachments");
+        if (!System.IO.Directory.Exists(uploadsDir))
+        {
+            System.IO.Directory.CreateDirectory(uploadsDir);
+        }
+
+        var fullPath = System.IO.Path.Combine(uploadsDir, safeStoredFileName);
+        using (var stream = new System.IO.FileStream(fullPath, System.IO.FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        var attachment = new CaseAttachment
+        {
+            Id = Guid.NewGuid(),
+            CaseId = caseId,
+            FileName = rawFileName,
+            FileType = string.IsNullOrWhiteSpace(file.ContentType) ? ext : file.ContentType,
+            ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+            FileSizeBytes = file.Length,
+            FileSize = file.Length,
+            StoragePath = safeStoredFileName,
+
+            Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
+            UploadedByUserId = userId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+
+        _context.CaseAttachments.Add(attachment);
+        await _context.SaveChangesAsync();
+
+        // Add timeline event
+        var sizeDisplay = file.Length >= 1024 * 1024
+            ? $"{(file.Length / (1024.0 * 1024.0)):F1} MB"
+            : $"{(file.Length / 1024.0):F0} KB";
+
+        var timelineEvent = new CaseEvent
+        {
+            CaseId = caseId,
+            EventType = EventType.Other,
+            Message = $"Attached file: {rawFileName} ({sizeDisplay}).{(string.IsNullOrWhiteSpace(note) ? "" : $" Note: {note.Trim()}")}",
+            IsInternal = true,
+            CreatedAt = DateTime.UtcNow,
+            UserId = userId
+        };
+        await _caseRepository.AddEventAsync(timelineEvent);
+
+        var user = await _context.Users.FindAsync(userId);
+
+        return new CaseAttachmentDto
+        {
+            Id = attachment.Id,
+            CaseId = caseId,
+            FileName = attachment.FileName,
+            FileType = attachment.FileType,
+            FileSizeBytes = attachment.FileSizeBytes,
+            Note = attachment.Note,
+            UploadedByUserId = userId,
+            UploadedByUserName = user?.Name ?? string.Empty,
+            CreatedAt = attachment.CreatedAt
+        };
+    }
+
+    public async Task<(byte[] fileBytes, string contentType, string fileName)> GetAttachmentDownloadAsync(Guid caseId, Guid attachmentId)
+    {
+        var attachment = await _context.CaseAttachments
+            .FirstOrDefaultAsync(a => a.Id == attachmentId && a.CaseId == caseId);
+
+        if (attachment == null) throw new ArgumentException("Attachment not found.");
+
+        var uploadsDir = System.IO.Path.Combine(_env.ContentRootPath, "Uploads", "Attachments");
+        var fullPath = System.IO.Path.Combine(uploadsDir, attachment.StoragePath);
+
+        if (!System.IO.File.Exists(fullPath))
+            throw new System.IO.FileNotFoundException("Physical file not found on server.");
+
+        var bytes = await System.IO.File.ReadAllBytesAsync(fullPath);
+        var contentType = string.IsNullOrWhiteSpace(attachment.FileType) ? "application/octet-stream" : attachment.FileType;
+
+        return (bytes, contentType, attachment.FileName);
     }
 
     /// <summary>

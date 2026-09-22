@@ -9,6 +9,7 @@ public static class DbSeeder
     {
         SeedConfigurableSettings(context);
         SeedCaseManagementSettings(context);
+        SeedDevUsers(context);
 
         // Check if database is already seeded
         if (context.Users.Any())
@@ -67,6 +68,122 @@ public static class DbSeeder
         context.SaveChanges();
 
         SeedEscalationTemplates(context);
+    }
+
+    private static void SeedDevUsers(AppDbContext context)
+    {
+        try
+        {
+            var ccDept = context.Departments.FirstOrDefault(d => d.Code == "CC") ?? context.Departments.FirstOrDefault(d => d.Name.Contains("Contact"));
+            if (ccDept == null)
+            {
+                ccDept = new Department { Id = Guid.NewGuid(), Name = "Contact Center", Code = "CC", CreatedAt = DateTime.UtcNow };
+                context.Departments.Add(ccDept);
+                context.SaveChanges();
+            }
+
+            var mfDept = context.Departments.FirstOrDefault(d => d.Code == "MF") ?? context.Departments.FirstOrDefault(d => d.Name.Contains("Micro"));
+            if (mfDept == null)
+            {
+                mfDept = new Department { Id = Guid.NewGuid(), Name = "Micro Finance", Code = "MF", CreatedAt = DateTime.UtcNow };
+                context.Departments.Add(mfDept);
+                context.SaveChanges();
+            }
+
+            var fiDept = context.Departments.FirstOrDefault(d => d.Code == "FI") ?? context.Departments.FirstOrDefault(d => d.Name.Contains("Fraud"));
+            if (fiDept == null)
+            {
+                fiDept = new Department { Id = Guid.NewGuid(), Name = "Fraud Operations", Code = "FI", CreatedAt = DateTime.UtcNow };
+                context.Departments.Add(fiDept);
+                context.SaveChanges();
+            }
+
+            // Update existing Siti and Aisha with teams and queues
+            var siti = context.Users.FirstOrDefault(u => u.Email == "siti@bank.com");
+            if (siti != null)
+            {
+                if (string.IsNullOrEmpty(siti.Team)) siti.Team = "Contact Centre";
+                if (string.IsNullOrEmpty(siti.Queue)) siti.Queue = "General Support";
+                siti.Role = "Sr. CC Agent";
+                siti.Status = UserStatus.Available;
+            }
+
+            var aisha = context.Users.FirstOrDefault(u => u.Email == "aisha@bank.com");
+            if (aisha != null)
+            {
+                if (string.IsNullOrEmpty(aisha.Team)) aisha.Team = "Lending Operations";
+                if (string.IsNullOrEmpty(aisha.Queue)) aisha.Queue = "MicroFinance Tier 1";
+                aisha.Role = "MicroFinance Officer";
+                aisha.Status = UserStatus.Available;
+            }
+
+            // Seed realistic team leads, SMEs, and agents
+            var devUsers = new (string Name, string Email, string Role, string Team, string Queue, UserStatus Status, Guid DeptId)[]
+            {
+                ("Mei Ling Tan", "meiling@bank.com", "CC Team Lead", "Contact Centre", "Escalations", UserStatus.Available, ccDept.Id),
+                ("Kavitha Raj", "kavitha@bank.com", "Fraud Investigation Lead", "Fraud Operations", "Disputes Escalation", UserStatus.Available, fiDept.Id),
+                ("Hafiz Osman", "hafiz@bank.com", "MicroFinance Team Lead", "Lending Operations", "MicroFinance Tier 2", UserStatus.Available, mfDept.Id),
+                ("Farhan Lee", "farhan@bank.com", "Senior Dispute Specialist", "Card Disputes", "Dispute Resolution", UserStatus.Available, ccDept.Id),
+                ("Nurul Huda", "nurul@bank.com", "Service Agent", "Digital Banking", "Digital Support", UserStatus.Busy, ccDept.Id),
+                ("Zulkhairi Ahmad", "zulkhairi@bank.com", "Senior Fraud SME", "Fraud Risk", "AML & Fraud Risk", UserStatus.Available, fiDept.Id),
+                ("Daniel Chong", "daniel@bank.com", "Loan Specialist", "Loan Processing", "Underwriting", UserStatus.Away, mfDept.Id)
+            };
+
+            foreach (var (name, email, role, team, queue, status, deptId) in devUsers)
+            {
+                var user = context.Users.FirstOrDefault(u => u.Email == email);
+                if (user == null)
+                {
+                    context.Users.Add(new User
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = name,
+                        Email = email,
+                        Role = role,
+                        Team = team,
+                        Queue = queue,
+                        Status = status,
+                        DepartmentId = deptId,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+                else
+                {
+                    user.Name = name;
+                    user.Role = role;
+                    user.Team = team;
+                    user.Queue = queue;
+                    user.Status = status;
+                }
+            }
+
+            context.SaveChanges();
+
+            // Ensure department owners are set
+            var ccLead = context.Users.FirstOrDefault(u => u.Email == "meiling@bank.com");
+            if (ccLead != null && (ccDept.OwnerId == null || ccDept.OwnerId == Guid.Empty))
+            {
+                ccDept.OwnerId = ccLead.Id;
+            }
+
+            var fiLead = context.Users.FirstOrDefault(u => u.Email == "kavitha@bank.com");
+            if (fiLead != null && (fiDept.OwnerId == null || fiDept.OwnerId == Guid.Empty))
+            {
+                fiDept.OwnerId = fiLead.Id;
+            }
+
+            var mfLead = context.Users.FirstOrDefault(u => u.Email == "hafiz@bank.com");
+            if (mfLead != null && (mfDept.OwnerId == null || mfDept.OwnerId == Guid.Empty))
+            {
+                mfDept.OwnerId = mfLead.Id;
+            }
+
+            context.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SeedDevUsers Error] {ex.Message}");
+        }
     }
 
     /// <summary>
