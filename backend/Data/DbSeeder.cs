@@ -15,8 +15,6 @@ public static class DbSeeder
         if (context.Users.Any())
         {
             FixInfinityDates(context);
-            FixPreExistingReopenedSubcases(context);
-            SeedEscalationTemplates(context);
             SeedPassportCustomer(context);
             EnsureCaseChannelsAndStatuses(context);
             EnsureFirstResponseAndEscalationMatrix(context);
@@ -68,7 +66,6 @@ public static class DbSeeder
 
         context.SaveChanges();
 
-        SeedEscalationTemplates(context);
     }
 
     private static void SeedDevUsers(AppDbContext context)
@@ -105,8 +102,6 @@ public static class DbSeeder
             {
                 if (string.IsNullOrEmpty(siti.Team)) siti.Team = "Contact Centre";
                 if (string.IsNullOrEmpty(siti.Queue)) siti.Queue = "General Support";
-                siti.Role = "Sr. CC Agent";
-                siti.Status = UserStatus.Available;
             }
 
             var aisha = context.Users.FirstOrDefault(u => u.Email == "aisha@bank.com");
@@ -114,8 +109,6 @@ public static class DbSeeder
             {
                 if (string.IsNullOrEmpty(aisha.Team)) aisha.Team = "Lending Operations";
                 if (string.IsNullOrEmpty(aisha.Queue)) aisha.Queue = "MicroFinance Tier 1";
-                aisha.Role = "MicroFinance Officer";
-                aisha.Status = UserStatus.Available;
             }
 
             // Seed realistic team leads, SMEs, and agents
@@ -152,11 +145,10 @@ public static class DbSeeder
                 }
                 else
                 {
-                    user.Name = name;
-                    user.Role = role;
-                    user.Team = team;
-                    user.Queue = queue;
-                    user.Status = status;
+                    // Existing users keep whatever name, role and status they have now;
+                    // only blanks are filled in.
+                    if (string.IsNullOrEmpty(user.Team)) user.Team = team;
+                    if (string.IsNullOrEmpty(user.Queue)) user.Queue = queue;
                 }
             }
 
@@ -194,66 +186,6 @@ public static class DbSeeder
     /// exactly how the feature behaves (and how the placeholders are substituted) instead of
     /// starting from an empty screen. Only inserted where the department has none.
     /// </summary>
-    private static void SeedEscalationTemplates(AppDbContext context)
-    {
-        try
-        {
-            const string reason = "SLA Breach";
-            const string subject = "[Escalation Required] Case {caseNumber} - {severity} Priority";
-            const string body =
-@"Dear {departmentName} Team,
-
-This is to notify you that Case {caseNumber} for customer {customerName} has been escalated and requires your attention.
-
-Case Details
-------------------------------
-Case Number: {caseNumber}
-Customer Name: {customerName}
-Severity: {severity}
-Target Department: {departmentName}
-------------------------------
-
-Please review the case details and take the necessary action at the earliest opportunity.
-
-If additional information is required, please refer to the case record in the Case Management system.
-
-Regards,
-Omni Suite
-Customer Experience Team";
-
-            var departments = context.Departments.ToList();
-            if (departments.Count == 0) return;
-
-            var now = DateTime.UtcNow;
-            var added = false;
-
-            foreach (var department in departments)
-            {
-                var exists = context.DepartmentEscalationTemplates
-                    .Any(t => t.DepartmentId == department.Id && t.EscalationReason == reason);
-                if (exists) continue;
-
-                context.DepartmentEscalationTemplates.Add(new DepartmentEscalationTemplate
-                {
-                    Id = Guid.NewGuid(),
-                    DepartmentId = department.Id,
-                    EscalationReason = reason,
-                    SubjectTemplate = subject,
-                    BodyTemplate = body,
-                    IsActive = true,
-                    CreatedAt = now
-                });
-                added = true;
-            }
-
-            if (added) context.SaveChanges();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SeedEscalationTemplates Error] {ex.Message}");
-        }
-    }
-
     private static void SeedPassportCustomer(AppDbContext context)
     {
         try
@@ -309,64 +241,6 @@ Customer Experience Team";
         if (users.Any() || depts.Any() || customers.Any())
         {
             context.SaveChanges();
-        }
-    }
-
-    private static void FixPreExistingReopenedSubcases(AppDbContext context)
-    {
-        try
-        {
-            var reopenedChildRels = Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.Include(
-                context.CaseChildRelations, cr => cr.ParentCase)
-                .Where(cr => cr.RelationType == ChildRelationType.Reopen)
-                .ToList();
-
-            bool changed = false;
-            foreach (var cr in reopenedChildRels)
-            {
-                if (cr.ParentCase != null)
-                {
-                    if (cr.ParentCase.Status != CaseStatus.Resolved)
-                    {
-                        cr.ParentCase.Status = CaseStatus.Resolved;
-                        changed = true;
-                    }
-
-                    var subcaseExists = context.Cases.Any(c => c.CaseNumber == cr.ChildId);
-                    if (!subcaseExists)
-                    {
-                        var subcase = new Case
-                        {
-                            Id = Guid.NewGuid(),
-                            CaseNumber = cr.ChildId,
-                            CaseType = cr.ParentCase.CaseType,
-                            Title = cr.ParentCase.Title.StartsWith("[Reopened]") ? cr.ParentCase.Title : $"[Reopened] {cr.ParentCase.Title}",
-                            Description = $"Reopened Subcase from Parent {cr.ParentCase.CaseNumber}. Reason: {cr.Reason}",
-                            Status = CaseStatus.Open,
-                            Severity = cr.ParentCase.Severity,
-                            SlaStartTime = cr.CreatedAt,
-                            SlaTargetHours = cr.ParentCase.SlaTargetHours > 0 ? cr.ParentCase.SlaTargetHours : 24,
-                            DepartmentId = cr.ParentCase.DepartmentId,
-                            CustomerId = cr.ParentCase.CustomerId,
-                            OwnerId = cr.ParentCase.OwnerId,
-                            ParentCaseId = cr.ParentCaseId,
-                            SubcaseType = "ReopenedSubcase",
-                            CreatedAt = cr.CreatedAt
-                        };
-                        context.Cases.Add(subcase);
-                        changed = true;
-                    }
-                }
-            }
-
-            if (changed)
-            {
-                context.SaveChanges();
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[FixPreExistingReopenedSubcases Error] {ex.Message}");
         }
     }
 
@@ -477,96 +351,10 @@ Customer Experience Team";
                 ");
             }
 
-            SeedNotificationRules(context);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[SeedConfigurableSettings Error] {ex.Message}");
-        }
-    }
-
-    private static void SeedNotificationRules(AppDbContext context)
-    {
-        try
-        {
-            if (context.NotificationRules.Any()) return;
-
-            var now = DateTime.UtcNow;
-            var defaultRules = new List<NotificationRule>
-            {
-                new NotificationRule
-                {
-                    Id = Guid.NewGuid(),
-                    EventType = "SLA_BREACHED",
-                    Name = "SLA Breach Notification",
-                    IsEnabled = true,
-                    Priority = "High",
-                    CooldownMinutes = 60,
-                    MaxReminders = 3,
-                    EnableAggregation = true,
-                    AggregationThreshold = 3,
-                    CreatedAt = now
-                },
-                new NotificationRule
-                {
-                    Id = Guid.NewGuid(),
-                    EventType = "SLA_APPROACHING",
-                    Name = "SLA Approaching Warning",
-                    IsEnabled = true,
-                    Priority = "Medium",
-                    CooldownMinutes = 120,
-                    MaxReminders = 2,
-                    EnableAggregation = true,
-                    AggregationThreshold = 3,
-                    CreatedAt = now
-                },
-                new NotificationRule
-                {
-                    Id = Guid.NewGuid(),
-                    EventType = "CASE_ASSIGNED",
-                    Name = "Case Assignment Alert",
-                    IsEnabled = true,
-                    Priority = "Medium",
-                    CooldownMinutes = 0,
-                    MaxReminders = 0,
-                    EnableAggregation = false,
-                    AggregationThreshold = 5,
-                    CreatedAt = now
-                },
-                new NotificationRule
-                {
-                    Id = Guid.NewGuid(),
-                    EventType = "CASE_ESCALATED",
-                    Name = "Case Escalation Alert",
-                    IsEnabled = true,
-                    Priority = "Critical",
-                    CooldownMinutes = 30,
-                    MaxReminders = 3,
-                    EnableAggregation = true,
-                    AggregationThreshold = 2,
-                    CreatedAt = now
-                },
-                new NotificationRule
-                {
-                    Id = Guid.NewGuid(),
-                    EventType = "CONFIG_CHANGED",
-                    Name = "System Configuration Change",
-                    IsEnabled = true,
-                    Priority = "Info",
-                    CooldownMinutes = 0,
-                    MaxReminders = 0,
-                    EnableAggregation = false,
-                    AggregationThreshold = 5,
-                    CreatedAt = now
-                }
-            };
-
-            context.NotificationRules.AddRange(defaultRules);
-            context.SaveChanges();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SeedNotificationRules Error] {ex.Message}");
         }
     }
 
@@ -920,62 +708,7 @@ Customer Experience Team";
                 }
             }
 
-            // 3. Update existing cases to have realistic channels and status distribution if needed
-            var cases = context.Cases.OrderBy(c => c.CreatedAt).ToList();
-            if (cases.Count > 0)
-            {
-                foreach (var c in cases)
-                {
-                    if (c.CaseNumber == "C-00001")
-                    {
-                        c.SourceChannel = "Voice";
-                        c.PreferredCommunicationChannel = "Phone";
-                        c.CommunicationChannel = "Voice";
-                    }
-                    else if (c.CaseNumber == "C-00001-R01")
-                    {
-                        c.SourceChannel = "WhatsApp";
-                        c.PreferredCommunicationChannel = "Phone";
-                        c.CommunicationChannel = "WhatsApp";
-                    }
-                    else if (c.CaseNumber == "C-00001-L01")
-                    {
-                        c.SourceChannel = "Email";
-                        c.PreferredCommunicationChannel = "Email";
-                        c.CommunicationChannel = "Email";
-                        c.Status = CaseStatus.Escalated;
-                        c.Severity = "High";
-                    }
-                    else if (c.CaseNumber == "S-00003")
-                    {
-                        c.SourceChannel = "Branch";
-                        c.PreferredCommunicationChannel = "SMS";
-                        c.CommunicationChannel = "Branch";
-                    }
-                    else if (c.CaseNumber == "I-00002")
-                    {
-                        c.SourceChannel = "Web Chat";
-                        c.PreferredCommunicationChannel = "Email";
-                        c.CommunicationChannel = "Web Chat";
-                        c.Status = CaseStatus.WaitingOnCustomer;
-                        c.SlaPausedAt ??= now.AddHours(-1);
-                    }
-                    else
-                    {
-                        if (string.IsNullOrWhiteSpace(c.SourceChannel)) c.SourceChannel = c.CommunicationChannel ?? "Voice";
-                        if (string.IsNullOrWhiteSpace(c.PreferredCommunicationChannel)) c.PreferredCommunicationChannel = "Phone";
-                        c.CommunicationChannel = c.SourceChannel;
-                    }
-                }
-
-                // Ensure at least one Critical priority case exists
-                if (!cases.Any(c => c.Severity == "Critical") && cases.Count > 0)
-                {
-                    cases[0].Severity = "Critical";
-                }
-
-                context.SaveChanges();
-            }
+            // (Existing cases are never modified here: the seeder only fills in missing master data.)
 
             // 4. Ensure FieldConfigurations for CreateCase has both SourceChannel and PreferredCommunicationChannel
             var existingCreateCaseFields = context.FieldConfigurations.Where(f => f.ModuleKey == "CaseManagement" && f.SectionKey == "CreateCase").ToList();
@@ -1038,7 +771,7 @@ Customer Experience Team";
                     _ => 240
                 };
 
-                if (sla.FirstResponseMinutes == 0 || sla.FirstResponseMinutes == 240 && (sla.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) || sla.Severity.Equals("High", StringComparison.OrdinalIgnoreCase)))
+                if (sla.FirstResponseMinutes <= 0)
                 {
                     sla.FirstResponseMinutes = expectedFrMinutes;
                     slasUpdated = true;
@@ -1046,56 +779,15 @@ Customer Experience Team";
             }
             if (slasUpdated) context.SaveChanges();
 
-            // 2. Backfill Cases with FirstResponse details and EscalationLevel
-            var cases = context.Cases.ToList();
-            if (cases.Count > 0)
+            // 2. Only cases that never had a first-response due date get one. Existing SLA data
+            //    (targets, actual response times, statuses) is never rewritten.
+            var casesWithoutDue = context.Cases.Where(c => c.FirstResponseDueAt == null).ToList();
+            foreach (var c in casesWithoutDue)
             {
-                bool casesUpdated = false;
-                foreach (var c in cases)
-                {
-                    int frMinutes = c.Severity.ToLower() switch
-                    {
-                        "critical" => 30,
-                        "high" => 60,
-                        "medium" => 240,
-                        "low" => 480,
-                        _ => 240
-                    };
-
-                    c.FirstResponseTargetMinutes = frMinutes;
-
-                    if (!c.FirstResponseDueAt.HasValue)
-                    {
-                        c.FirstResponseDueAt = c.SlaStartTime.AddMinutes(frMinutes).AddMinutes(c.SlaTotalPausedMinutes);
-                        casesUpdated = true;
-                    }
-
-                    if (c.Status == CaseStatus.Resolved)
-                    {
-                        c.FirstResponseActualAt ??= c.SlaStartTime.AddMinutes(Math.Min(15, frMinutes - 5));
-                        c.FirstResponseStatus = "Met";
-                        casesUpdated = true;
-                    }
-                    else if (c.FirstResponseActualAt.HasValue)
-                    {
-                        c.FirstResponseStatus = c.FirstResponseActualAt.Value <= c.FirstResponseDueAt.Value ? "Met" : "Breached";
-                        casesUpdated = true;
-                    }
-                    else
-                    {
-                        c.FirstResponseStatus = now > c.FirstResponseDueAt.Value ? "Breached" : "Pending";
-                        casesUpdated = true;
-                    }
-
-                    if (c.EscalationLevel <= 0)
-                    {
-                        c.EscalationLevel = c.Status == CaseStatus.Escalated ? 2 : 1;
-                        casesUpdated = true;
-                    }
-                }
-
-                if (casesUpdated) context.SaveChanges();
+                var frMinutes = c.FirstResponseTargetMinutes > 0 ? c.FirstResponseTargetMinutes : 240;
+                c.FirstResponseDueAt = c.SlaStartTime.AddMinutes(frMinutes).AddMinutes(c.SlaTotalPausedMinutes);
             }
+            if (casesWithoutDue.Count > 0) context.SaveChanges();
         }
         catch (Exception ex)
         {

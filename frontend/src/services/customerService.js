@@ -14,7 +14,16 @@ export const customerService = {
   },
   
   /**
-   * Get all customers (for list / search)
+   * Get server-side paginated and searched customers
+   */
+  getPaginatedCustomers({ search, page = 1, pageSize = 20, signal } = {}) {
+    const params = { page, pageSize };
+    if (search && search.trim() !== '') params.search = search.trim();
+    return api.get('/api/customers', { params, signal }).then((r) => r.data);
+  },
+
+  /**
+   * Get all customers (for list / search - legacy)
    */
   getAllCustomers(forceRefresh = false) {
     if (!forceRefresh && allCustomersCache) {

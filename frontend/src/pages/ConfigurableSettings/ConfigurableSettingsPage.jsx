@@ -9,13 +9,10 @@ import {
   Trash2,
   Pencil,
   Sparkles,
-  Clock,
-  FileText,
   CheckCircle2,
   AlertCircle,
   Building2,
   ShieldAlert,
-  Bell,
   Sliders,
   Filter,
   Search,
@@ -23,7 +20,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/common/Button/Button.jsx';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
-import { Input, Select, Textarea } from '../../components/common/Input/Input.jsx';
+import { Input, Select } from '../../components/common/Input/Input.jsx';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
 import { departmentService } from '../../services/departmentService.js';
 import { useToast } from '../../hooks/useToast.js';
@@ -41,14 +38,6 @@ const MASKING_OPTIONS = [
   { value: 'HideFirstShowLast', label: 'Hide first, show last' },
 ];
 
-const ESCALATION_REASONS = [
-  'SLA Breach',
-  'Customer Complaint Repeat',
-  'Regulatory / BNM',
-  'Sharia Concern',
-  'Fraud Risk',
-];
-
 const SEVERITY_BADGES = {
   Critical: { bg: '#fee2e2', text: '#dc2626', border: '#fca5a5', desc: 'System outages, severe financial risk, urgent regulatory breaches' },
   High: { bg: '#fef3c7', text: '#b45309', border: '#fde68a', desc: 'Major account issues, high priority customer complaints' },
@@ -62,27 +51,6 @@ const SEVERITY_BADGE_FALLBACK = {
   border: '#ddd6fe',
   desc: 'Custom severity level configured by an administrator',
 };
-
-const DEFAULT_TEMPLATE_SUBJECT = '[Escalation Required] Case {caseNumber} - {severity} Priority';
-const DEFAULT_TEMPLATE_BODY = `Dear {departmentName} Team,
-
-This is to notify you that Case {caseNumber} for customer {customerName} has been escalated and requires your attention.
-
-Case Details
-------------------------------
-Case Number: {caseNumber}
-Customer Name: {customerName}
-Severity: {severity}
-Target Department: {departmentName}
-------------------------------
-
-Please review the case details and take the necessary action at the earliest opportunity.
-
-If additional information is required, please refer to the case record in the Case Management system.
-
-Regards,
-Omni Suite
-Customer Experience Team`;
 
 /** Tabs whose contents are a field-configuration table saved by the header Save button. */
 const FIELD_SECTIONS = ['AddNewCustomer', 'ExistingCustomer', 'Filters', 'CreateCase'];
@@ -101,42 +69,6 @@ export function ConfigurableSettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
-
-  // Notification Rules state
-  const [notificationRules, setNotificationRules] = useState([]);
-  const [isLoadingRules, setIsLoadingRules] = useState(false);
-
-  const loadNotificationRules = useCallback(async () => {
-    setIsLoadingRules(true);
-    try {
-      const data = await configurableSettingsService.getNotificationRules();
-      setNotificationRules(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load notification rules:', err);
-    } finally {
-      setIsLoadingRules(false);
-    }
-  }, []);
-
-  const handleToggleRule = async (ruleId) => {
-    try {
-      const updated = await configurableSettingsService.toggleNotificationRule(ruleId);
-      setNotificationRules((prev) => prev.map((r) => (r.id === ruleId ? updated : r)));
-      toast.success(`Rule '${updated.name}' is now ${updated.isEnabled ? 'Active' : 'Disabled'}`);
-    } catch (err) {
-      toast.error('Failed to toggle notification rule');
-    }
-  };
-
-  const handleSaveRule = async (ruleId, formData) => {
-    try {
-      const updated = await configurableSettingsService.updateNotificationRule(ruleId, formData);
-      setNotificationRules((prev) => prev.map((r) => (r.id === ruleId ? updated : r)));
-      toast.success(`Notification rule '${updated.name}' updated successfully!`);
-    } catch (err) {
-      toast.error('Failed to update notification rule');
-    }
-  };
 
   // Add / Edit field drawer
   const [isFieldDrawerOpen, setIsFieldDrawerOpen] = useState(false);
@@ -183,7 +115,6 @@ export function ConfigurableSettingsPage() {
   const [subCategories, setSubCategories] = useState([]);
   const [severities, setSeverities] = useState([]);
   const [channels, setChannels] = useState([]);
-  const [escalationTemplates, setEscalationTemplates] = useState([]);
   const [quickActions, setQuickActions] = useState([]);
   const [dateRanges, setDateRanges] = useState([]);
   const [caseStatuses, setCaseStatuses] = useState([]);
@@ -215,17 +146,6 @@ export function ConfigurableSettingsPage() {
   const [dashSeveritySearch, setDashSeveritySearch] = useState('');
   const [dashSlaStatusSearch, setDashSlaStatusSearch] = useState('');
 
-  // SLA drafts keyed by severity name so the inputs stay controlled and only changed rows save
-  const [slaDrafts, setSlaDrafts] = useState({});
-  const [isSavingSla, setIsSavingSla] = useState(false);
-
-  // Escalation template form
-  const [selectedDeptForTemplate, setSelectedDeptForTemplate] = useState('');
-  const [selectedReasonForTemplate, setSelectedReasonForTemplate] = useState(ESCALATION_REASONS[0]);
-  const [templateSubject, setTemplateSubject] = useState('');
-  const [templateBody, setTemplateBody] = useState('');
-  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
-
   // Per-action busy flags so buttons cannot be double-submitted
   const [pending, setPending] = useState({});
   const isPending = (key) => Boolean(pending[key]);
@@ -241,21 +161,6 @@ export function ConfigurableSettingsPage() {
   const currentSectionKey = topSelector === 'Customer360' ? activeSection : caseSection;
   const isFieldTab = FIELD_SECTIONS.includes(currentSectionKey) || (topSelector === 'CaseManagement' && caseSection === 'Filters');
 
-  // SLA dirty detection: compare current drafts against severities returned from backend
-  const slaDirtyRows = useMemo(
-    () =>
-      severities.filter((s) => {
-        const draft = slaDrafts[s.name];
-        if (!draft) return false;
-        return (
-          Number(draft.internal) !== s.internalHours ||
-          Number(draft.external) !== s.externalHours ||
-          Number(draft.firstResponse) !== (s.firstResponseMinutes ?? 240)
-        );
-      }),
-    [severities, slaDrafts]
-  );
-
   // Unsaved changes dirty state calculation across all modules
   const hasUnsavedChanges = useMemo(() => {
     // 1. Field configuration tabs (Customer 360: AddNewCustomer, ExistingCustomer, Filters; Case Management: CreateCase, Filters)
@@ -268,10 +173,6 @@ export function ConfigurableSettingsPage() {
       const branchDirty = JSON.stringify(branches) !== JSON.stringify(savedBranches);
       const idTypeDirty = JSON.stringify(idTypes) !== JSON.stringify(savedIdTypes);
       return langDirty || branchDirty || idTypeDirty;
-    }
-    // 3. Case Management SLA Configuration drafts
-    if (topSelector === 'CaseManagement' && caseSection === 'SlaConfiguration') {
-      return slaDirtyRows.length > 0;
     }
     return false;
   }, [
@@ -287,7 +188,6 @@ export function ConfigurableSettingsPage() {
     savedBranches,
     idTypes,
     savedIdTypes,
-    slaDirtyRows,
   ]);
 
   // Dynamic Changes Summary calculation: compares draft states with saved snapshots
@@ -364,30 +264,6 @@ export function ConfigurableSettingsPage() {
           }
         }
       });
-    } else if (topSelector === 'CaseManagement' && caseSection === 'SlaConfiguration') {
-      slaDirtyRows.forEach((row) => {
-        const draft = slaDrafts[row.name];
-        if (!draft) return;
-        const props = [];
-        if (draft.internal !== '' && Number(draft.internal) !== row.internalHours) {
-          props.push({ label: 'Internal SLA', oldVal: `${row.internalHours} hrs`, newVal: `${draft.internal} hrs` });
-        }
-        if (draft.external !== '' && Number(draft.external) !== row.externalHours) {
-          props.push({ label: 'External SLA', oldVal: `${row.externalHours} hrs`, newVal: `${draft.external} hrs` });
-        }
-        if (draft.firstResponse !== '' && Number(draft.firstResponse) !== (row.firstResponseMinutes ?? 240)) {
-          props.push({ label: 'First Response Target', oldVal: `${row.firstResponseMinutes ?? 240} min`, newVal: `${draft.firstResponse} min` });
-        }
-        if (props.length > 0) {
-          list.push({
-            id: row.name,
-            title: row.name,
-            type: 'modified',
-            badgeLabel: 'Modified',
-            properties: props,
-          });
-        }
-      });
     } else if (topSelector === 'Customer360' && activeSection === 'MasterLookups') {
       languages.forEach((l) => {
         const orig = savedLanguages.find((sl) => sl.id === l.id);
@@ -459,8 +335,6 @@ export function ConfigurableSettingsPage() {
     topSelector,
     caseSection,
     activeSection,
-    slaDirtyRows,
-    slaDrafts,
     languages,
     savedLanguages,
     branches,
@@ -473,7 +347,6 @@ export function ConfigurableSettingsPage() {
     if (topSelector === 'CaseManagement') {
       if (caseSection === 'CreateCase') return 'Create Case Form';
       if (caseSection === 'Filters') return 'Case Filters';
-      if (caseSection === 'SlaConfiguration') return 'SLA Configuration';
     } else if (topSelector === 'Customer360') {
       if (activeSection === 'AddNewCustomer') return 'Add New Customer Form';
       if (activeSection === 'ExistingCustomer') return 'Existing Customer Details';
@@ -546,18 +419,6 @@ export function ConfigurableSettingsPage() {
     setLanguages(JSON.parse(JSON.stringify(savedLanguages)));
     setBranches(JSON.parse(JSON.stringify(savedBranches)));
     setIdTypes(JSON.parse(JSON.stringify(savedIdTypes)));
-    setSlaDrafts(
-      Object.fromEntries(
-        severities.map((s) => [
-          s.name,
-          {
-            internal: String(s.internalHours),
-            external: String(s.externalHours),
-            firstResponse: String(s.firstResponseMinutes ?? 240),
-          },
-        ])
-      )
-    );
 
     const action = unsavedModal.pendingAction;
     setUnsavedModal({ isOpen: false, message: null, pendingAction: null });
@@ -720,12 +581,11 @@ export function ConfigurableSettingsPage() {
     const depts = await loadDepartments();
 
     try {
-      const [cts, subs, slaList, chns, tmpls, qaList, drList, csList, ssList] = await Promise.all([
+      const [cts, subs, slaList, chns, qaList, drList, csList, ssList] = await Promise.all([
         configurableSettingsService.getCaseTypes(false),
         configurableSettingsService.getSubCategories(null, false),
         configurableSettingsService.getSeverities(),
         configurableSettingsService.getLookupValues('COMMUNICATION_CHANNEL', true, false),
-        configurableSettingsService.getEscalationTemplates(),
         configurableSettingsService.getLookupValues('DASHBOARD_QUICK_ACTION', true, false),
         configurableSettingsService.getLookupValues('DASHBOARD_DATE_RANGE', true, false),
         configurableSettingsService.getLookupValues('CASE_STATUS', true, false),
@@ -735,23 +595,10 @@ export function ConfigurableSettingsPage() {
       setSubCategories(subs || []);
       setSeverities(slaList || []);
       setChannels(chns || []);
-      setEscalationTemplates(tmpls || []);
       setQuickActions(qaList || []);
       setDateRanges(drList || []);
       setCaseStatuses(csList || []);
       setSlaStatuses(ssList || []);
-      setSlaDrafts(
-        Object.fromEntries(
-          (slaList || []).map((s) => [
-            s.name,
-            {
-              internal: String(s.internalHours),
-              external: String(s.externalHours),
-              firstResponse: String(s.firstResponseMinutes ?? 240),
-            },
-          ])
-        )
-      );
     } catch (err) {
       console.error('Failed to load case metadata:', err);
       setLoadError(err.message || 'Unable to load case management configuration.');
@@ -761,13 +608,10 @@ export function ConfigurableSettingsPage() {
     }
 
     setSelectedDeptForSub((prev) => (prev && depts.some((d) => d.id === prev) ? prev : depts[0]?.id || ''));
-    setSelectedDeptForTemplate((prev) => (prev && depts.some((d) => d.id === prev) ? prev : depts[0]?.id || ''));
   }, [loadDepartments, toast]);
 
   useEffect(() => {
-    if (topSelector === 'NotificationRules') {
-      loadNotificationRules();
-    } else if (topSelector === 'Customer360') {
+    if (topSelector === 'Customer360') {
       if (activeSection === 'MasterLookups') loadLookups();
       else loadFields('Customer360', activeSection);
     } else if (topSelector === 'Dashboard') {
@@ -777,19 +621,7 @@ export function ConfigurableSettingsPage() {
     } else {
       loadCaseMetadata();
     }
-  }, [topSelector, activeSection, caseSection, loadFields, loadLookups, loadCaseMetadata, loadNotificationRules]);
-
-  // Pre-fill the escalation form from the saved template for the selected department + reason.
-  useEffect(() => {
-    if (!selectedDeptForTemplate || !selectedReasonForTemplate) return;
-    const match = escalationTemplates.find(
-      (t) =>
-        t.departmentId === selectedDeptForTemplate &&
-        t.escalationReason?.toLowerCase() === selectedReasonForTemplate?.toLowerCase()
-    );
-    setTemplateSubject(match ? match.subjectTemplate || '' : DEFAULT_TEMPLATE_SUBJECT);
-    setTemplateBody(match ? match.bodyTemplate || '' : DEFAULT_TEMPLATE_BODY);
-  }, [selectedDeptForTemplate, selectedReasonForTemplate, escalationTemplates]);
+  }, [topSelector, activeSection, caseSection, loadFields, loadLookups, loadCaseMetadata]);
 
   // ===== FIELD CONFIGURATION =====
   // ===== FIELD CONFIGURATION =====
@@ -863,8 +695,6 @@ export function ConfigurableSettingsPage() {
           setSavedFields(JSON.parse(JSON.stringify(sorted)));
           toast.success('Field settings saved successfully. Changes apply immediately.');
         }
-      } else if (topSelector === 'CaseManagement' && caseSection === 'SlaConfiguration') {
-        return await handleSaveSla();
       } else if (isFieldTab) {
         await configurableSettingsService.saveFields(topSelector, currentSectionKey, fields);
         const data = await configurableSettingsService.getFields(topSelector, currentSectionKey, true);
@@ -1090,8 +920,6 @@ export function ConfigurableSettingsPage() {
       await loadDepartments();
       const subs = await configurableSettingsService.getSubCategories(null, false);
       setSubCategories(subs || []);
-      const tmpls = await configurableSettingsService.getEscalationTemplates();
-      setEscalationTemplates(tmpls || []);
       toast.success(`Department updated to "${name}".`);
     } catch (err) {
       toast.error(err.message || 'Failed to update department.');
@@ -1288,18 +1116,6 @@ export function ConfigurableSettingsPage() {
   const refreshSeverities = useCallback(async () => {
     const list = await configurableSettingsService.getSeverities();
     setSeverities(list || []);
-    setSlaDrafts(
-      Object.fromEntries(
-        (list || []).map((s) => [
-          s.name,
-          {
-            internal: String(s.internalHours),
-            external: String(s.externalHours),
-            firstResponse: String(s.firstResponseMinutes ?? 240),
-          },
-        ])
-      )
-    );
     return list || [];
   }, []);
 
@@ -1377,65 +1193,8 @@ export function ConfigurableSettingsPage() {
     );
   };
 
-  // ===== SLA CONFIGURATION =====
-  const handleSaveSla = async () => {
-    if (slaDirtyRows.length === 0) {
-      toast.info('No SLA changes to save.');
-      return true;
-    }
-
-    for (const row of slaDirtyRows) {
-      const draft = slaDrafts[row.name];
-      const internal = Number(draft.internal);
-      const external = Number(draft.external);
-      const firstResponse = Number(draft.firstResponse);
-      if (draft.internal === '' || draft.external === '' || draft.firstResponse === '') {
-        toast.error(`SLA values for "${row.name}" cannot be empty.`);
-        return false;
-      }
-      if (!Number.isInteger(internal) || internal <= 0) {
-        toast.error(`Internal SLA for "${row.name}" must be a whole number of hours greater than 0.`);
-        return false;
-      }
-      if (!Number.isInteger(external) || external <= 0) {
-        toast.error(`External SLA for "${row.name}" must be a whole number of hours greater than 0.`);
-        return false;
-      }
-      if (!Number.isInteger(firstResponse) || firstResponse <= 0) {
-        toast.error(`First Response Target for "${row.name}" must be a whole number of minutes greater than 0.`);
-        return false;
-      }
-    }
-
-    setIsSavingSla(true);
-    try {
-      for (const row of slaDirtyRows) {
-        const draft = slaDrafts[row.name];
-        await configurableSettingsService.saveSlaConfiguration(
-          row.name,
-          Number(draft.internal),
-          Number(draft.external),
-          Number(draft.firstResponse)
-        );
-      }
-      await refreshSeverities();
-      toast.success(`SLA configuration saved for ${slaDirtyRows.length} severity level(s).`);
-      return true;
-    } catch (err) {
-      toast.error(err.message || 'Failed to save SLA configuration.');
-      return false;
-    } finally {
-      setIsSavingSla(false);
-    }
-  };
-
   const handleSaveAndLeave = async () => {
-    let success = false;
-    if (topSelector === 'CaseManagement' && caseSection === 'SlaConfiguration') {
-      success = await handleSaveSla();
-    } else {
-      success = await handleSaveAllChanges();
-    }
+    const success = await handleSaveAllChanges();
 
     if (success) {
       isLeavingRef.current = true;
@@ -1445,54 +1204,6 @@ export function ConfigurableSettingsPage() {
         action();
       }
     }
-  };
-
-  // ===== ESCALATION TEMPLATES =====
-  const handleSaveEscalationTemplate = async () => {
-    if (!selectedDeptForTemplate) return toast.error('Please select a target department.');
-    if (!selectedReasonForTemplate) return toast.error('Please select an escalation reason.');
-    if (!templateSubject.trim()) return toast.error('Email subject template is required.');
-    if (!templateBody.trim()) return toast.error('Email body template is required.');
-
-    setIsSavingTemplate(true);
-    try {
-      await configurableSettingsService.saveEscalationTemplate(
-        selectedDeptForTemplate,
-        selectedReasonForTemplate,
-        templateSubject.trim(),
-        templateBody.trim()
-      );
-      setEscalationTemplates(await configurableSettingsService.getEscalationTemplates());
-      toast.success('Escalation template saved. The Escalate drawer will load it automatically.');
-    } catch (err) {
-      toast.error(err.message || 'Failed to save escalation template.');
-    } finally {
-      setIsSavingTemplate(false);
-    }
-  };
-
-  const handleEditTemplate = (template) => {
-    setSelectedDeptForTemplate(template.departmentId);
-    setSelectedReasonForTemplate(template.escalationReason);
-    setTemplateSubject(template.subjectTemplate || '');
-    setTemplateBody(template.bodyTemplate || '');
-    document.getElementById('escalation-template-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-  const handleDeleteTemplate = (template) => {
-    openConfirm(
-      'Delete Escalation Template',
-      `Are you sure you want to delete the "${template.escalationReason}" template for ${template.departmentName}? This action cannot be undone.`,
-      async () => {
-        await configurableSettingsService.deleteEscalationTemplate(template.id);
-        setEscalationTemplates(await configurableSettingsService.getEscalationTemplates());
-        toast.success('Escalation template deleted successfully.');
-      }
-    );
-  };
-
-  const handleInsertPlaceholder = (placeholderTag) => {
-    setTemplateBody((prev) => (prev ? `${prev} ${placeholderTag}` : placeholderTag));
   };
 
   // ===== RENDER HELPERS =====
@@ -2072,44 +1783,6 @@ export function ConfigurableSettingsPage() {
     );
   };
 
-  const renderNotificationRulesConfig = () => (
-    <div className="config-settings-body">
-      <div className="config-card" style={{ marginBottom: 20 }}>
-        <div className="config-card__header">
-          <div>
-            <h2 className="config-card__title">Notification Rules &amp; Deduplication Engine</h2>
-            <p className="config-card__desc">
-              Manage rule priorities, cooldown intervals, duplicate suppression, SLA breach reminders, and notification aggregation.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {isLoadingRules ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
-          <Loader text="Loading notification rules..." />
-        </div>
-      ) : notificationRules.length === 0 ? (
-        <div className="config-card" style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
-          <Bell size={32} color="#94a3b8" style={{ marginBottom: 12 }} />
-          <h3>No notification rules defined</h3>
-          <p>Default notification rules will be initialized automatically on server restart.</p>
-        </div>
-      ) : (
-        <div className="rule-cards-grid">
-          {notificationRules.map((rule) => (
-            <NotificationRuleCard
-              key={rule.id}
-              rule={rule}
-              onToggle={() => handleToggleRule(rule.id)}
-              onSave={(formData) => handleSaveRule(rule.id, formData)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
   const filteredPredefinedLangs = useMemo(() => {
     if (!langSearch.trim()) return languages;
     return languages.filter((l) =>
@@ -2138,7 +1811,7 @@ export function ConfigurableSettingsPage() {
     );
   }, [branches, branchSearch]);
 
-  const showHeaderSave = isFieldTab || (topSelector === 'CaseManagement' && caseSection === 'SlaConfiguration');
+  const showHeaderSave = isFieldTab;
 
   return (
     <div className="config-settings-page scrollbar-thin">
@@ -2163,19 +1836,17 @@ export function ConfigurableSettingsPage() {
           {showHeaderSave ? (
             <button
               className="btn-save-changes"
-              onClick={caseSection === 'SlaConfiguration' && topSelector === 'CaseManagement' ? handleSaveSla : handleSaveFields}
-              disabled={isSaving || isSavingSla || isLoading}
+              onClick={handleSaveFields}
+              disabled={isSaving || isLoading}
               id="btn-save-field-changes"
             >
               <Save size={15} />
-              <span>{isSaving || isSavingSla ? 'Saving…' : 'Save Changes'}</span>
+              <span>{isSaving ? 'Saving…' : 'Save Changes'}</span>
             </button>
           ) : (
             <span className="config-settings-banner__note">
               <CheckCircle2 size={13} />
-              {caseSection === 'EscalationTemplates' && topSelector === 'CaseManagement'
-                ? 'Use “Save Escalation Template” to persist this template'
-                : 'Every change on this tab saves immediately'}
+              Every change on this tab saves immediately
             </span>
           )}
         </div>
@@ -2206,20 +1877,11 @@ export function ConfigurableSettingsPage() {
             >
               Case Management
             </button>
-            <button
-              className={`top-level-btn ${topSelector === 'NotificationRules' ? 'top-level-btn--active' : ''}`}
-              onClick={() => handleTopSelectorClick('NotificationRules')}
-              id="btn-top-selector-notification-rules"
-            >
-              Notification Rules
-            </button>
           </div>
         </div>
       </div>
 
-      {topSelector === 'NotificationRules' ? (
-        renderNotificationRulesConfig()
-      ) : topSelector === 'Dashboard' ? (
+      {topSelector === 'Dashboard' ? (
         renderDashboardConfig()
       ) : topSelector === 'CaseManagement' ? (
         <>
@@ -2227,8 +1889,6 @@ export function ConfigurableSettingsPage() {
             <button className={`config-section-tab ${caseSection === 'CreateCase' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('CreateCase')} id="tab-case-create">Create Case Form</button>
             <button className={`config-section-tab ${caseSection === 'Filters' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('Filters')} id="tab-case-filters">Case Filters</button>
             <button className={`config-section-tab ${caseSection === 'MasterData' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('MasterData')} id="tab-case-master-data">Master Data &amp; Dropdowns</button>
-            <button className={`config-section-tab ${caseSection === 'SlaConfiguration' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('SlaConfiguration')} id="tab-case-sla">SLA Configuration</button>
-            <button className={`config-section-tab ${caseSection === 'EscalationTemplates' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('EscalationTemplates')} id="tab-case-templates">Escalation Templates</button>
           </div>
 
           <div className="config-settings-body">
@@ -2440,7 +2100,7 @@ export function ConfigurableSettingsPage() {
                   <div>
                     <h3 className="master-card__title"><ShieldAlert size={15} /> Severity Management</h3>
                     <p className="master-card__desc">
-                      Severity levels used by Create Case and SLA Configuration. Adding one creates its SLA row automatically.
+                      Severity levels used by Create Case and the SLA timers. Set the internal and external SLA hours when adding a severity.
                     </p>
                   </div>
                   <div className="master-card__form">
@@ -2498,258 +2158,6 @@ export function ConfigurableSettingsPage() {
                         </MasterItem>
                       ))}
                   </div>
-                </div>
-              </div>
-            ) : caseSection === 'SlaConfiguration' ? (
-              /* SLA CONFIGURATION TAB */
-              <div className="config-card sla-config-card">
-                <div className="config-card__header">
-                  <div className="config-card__header-left">
-                    <div className="sla-card__icon-box">
-                      <Clock size={22} color="#1d4ed8" />
-                    </div>
-                    <div>
-                      <h2 className="config-card__title">SLA Configuration (Internal vs External Hours)</h2>
-                      <p className="config-card__desc">
-                        Target Internal SLA (agent response) and External SLA (customer resolution deadline) per configured severity.
-                        Severities are managed under Master Data &amp; Dropdowns.
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    variant="primary"
-                    onClick={handleSaveSla}
-                    isLoading={isSavingSla}
-                    disabled={slaDirtyRows.length === 0}
-                    leftIcon={<Save size={15} />}
-                    id="btn-save-sla"
-                  >
-                    {slaDirtyRows.length > 0 ? `Save ${slaDirtyRows.length} Change(s)` : 'Save SLA'}
-                  </Button>
-                </div>
-
-                <div className="sla-table-container">
-                  {isLoading ? (
-                    <div className="config-card__loading"><Loader /></div>
-                  ) : severities.length === 0 ? (
-                    <div className="master-card__empty">
-                      No severities configured yet. Add one under Master Data &amp; Dropdowns → Severity Management.
-                    </div>
-                  ) : (
-                    <div className="sla-table">
-                      <div className="sla-table__head">
-                        <div className="sla-col-sev">Severity Level</div>
-                        <div className="sla-col-desc">Description &amp; Guidelines</div>
-                        <div className="sla-col-input">Internal SLA (Agent)</div>
-                        <div className="sla-col-input">External SLA (Customer)</div>
-                        <div className="sla-col-input">First Response Target</div>
-                      </div>
-                      <div className="sla-table__body">
-                        {severities.map((sev) => {
-                          const badge = SEVERITY_BADGES[sev.name] || SEVERITY_BADGE_FALLBACK;
-                          const draft = slaDrafts[sev.name] || { internal: '', external: '', firstResponse: '' };
-                          return (
-                            <div key={sev.id} className="sla-row">
-                              <div className="sla-col-sev">
-                                <span
-                                  className="severity-pill-badge"
-                                  style={{ backgroundColor: badge.bg, color: badge.text, borderColor: badge.border }}
-                                >
-                                  {sev.name} Severity
-                                </span>
-                              </div>
-                              <div className="sla-col-desc">
-                                <span className="sla-row__desc-text">{badge.desc}</span>
-                              </div>
-                              <div className="sla-col-input">
-                                <div className="input-unit-wrapper">
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    className="sla-input-number"
-                                    value={draft.internal}
-                                    onChange={(e) =>
-                                      setSlaDrafts((prev) => ({
-                                        ...prev,
-                                        [sev.name]: { ...prev[sev.name], internal: e.target.value },
-                                      }))
-                                    }
-                                    aria-label={`Internal SLA hours for ${sev.name}`}
-                                  />
-                                  <span className="input-unit-tag">hrs</span>
-                                </div>
-                              </div>
-                              <div className="sla-col-input">
-                                <div className="input-unit-wrapper">
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    className="sla-input-number"
-                                    value={draft.external}
-                                    onChange={(e) =>
-                                      setSlaDrafts((prev) => ({
-                                        ...prev,
-                                        [sev.name]: { ...prev[sev.name], external: e.target.value },
-                                      }))
-                                    }
-                                    aria-label={`External SLA hours for ${sev.name}`}
-                                  />
-                                  <span className="input-unit-tag">hrs</span>
-                                </div>
-                              </div>
-                              <div className="sla-col-input">
-                                <div className="input-unit-wrapper">
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    className="sla-input-number"
-                                    value={draft.firstResponse ?? ''}
-                                    onChange={(e) =>
-                                      setSlaDrafts((prev) => ({
-                                        ...prev,
-                                        [sev.name]: { ...prev[sev.name], firstResponse: e.target.value },
-                                      }))
-                                    }
-                                    aria-label={`First response target minutes for ${sev.name}`}
-                                  />
-                                  <span className="input-unit-tag">min</span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : caseSection === 'EscalationTemplates' ? (
-              /* ESCALATION TEMPLATES TAB */
-              <div className="config-card escalation-card">
-                <div className="config-card__header">
-                  <div className="config-card__header-left">
-                    <div className="escalation-card__icon-box">
-                      <FileText size={22} color="#dc2626" />
-                    </div>
-                    <div>
-                      <h2 className="config-card__title">Escalation Templates Configuration</h2>
-                      <p className="config-card__desc">
-                        One template per Department + Escalation Reason. The Escalate drawer loads the matching
-                        template and substitutes the placeholders with live case data.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="escalation-form-wrapper" id="escalation-template-form">
-                  <div className="escalation-form-grid">
-                    {departmentsError ? (
-                      <div className="master-card__error"><AlertCircle size={14} /> {departmentsError}</div>
-                    ) : (
-                      <Select
-                        label="Target Department"
-                        required
-                        value={selectedDeptForTemplate}
-                        onChange={(e) => setSelectedDeptForTemplate(e.target.value)}
-                        placeholder={isLoading ? 'Loading departments…' : 'Select department...'}
-                      >
-                        {departmentOptions}
-                      </Select>
-                    )}
-
-                    <Select
-                      label="Escalation Reason"
-                      required
-                      value={selectedReasonForTemplate}
-                      onChange={(e) => setSelectedReasonForTemplate(e.target.value)}
-                    >
-                      {ESCALATION_REASONS.map((r) => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </Select>
-                  </div>
-
-                  <Input
-                    label="Email Subject Template"
-                    required
-                    placeholder="e.g. [URGENT ESCALATION] Case {caseNumber} - Regulatory Review"
-                    value={templateSubject}
-                    onChange={(e) => setTemplateSubject(e.target.value)}
-                    id="input-template-subject"
-                  />
-
-                  <div className="form-group">
-                    <label className="form-label form-label--required">Email Body Template</label>
-                    <Textarea
-                      rows={12}
-                      className="escalation-textarea"
-                      placeholder="Dear Team, please investigate case {caseNumber} immediately…"
-                      value={templateBody}
-                      onChange={(e) => setTemplateBody(e.target.value)}
-                      id="input-template-body"
-                    />
-                    <div className="template-placeholders-hint">
-                      <span>Supported placeholders (click to insert):</span>
-                      {['{caseNumber}', '{customerName}', '{departmentName}', '{severity}'].map((tag) => (
-                        <code key={tag} style={{ cursor: 'pointer' }} onClick={() => handleInsertPlaceholder(tag)} title={`Click to insert ${tag}`}>
-                          {tag}
-                        </code>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="escalation-actions">
-                    <Button
-                      variant="primary"
-                      isLoading={isSavingTemplate}
-                      leftIcon={<CheckCircle2 size={15} />}
-                      onClick={handleSaveEscalationTemplate}
-                      id="btn-save-template"
-                    >
-                      Save Escalation Template
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="template-list-wrapper">
-                  <h3 className="template-list__title">Saved Templates</h3>
-                  {isLoading ? (
-                    <div className="config-card__loading"><Loader /></div>
-                  ) : escalationTemplates.length === 0 ? (
-                    <div className="master-card__empty">No escalation templates configured yet.</div>
-                  ) : (
-                    <div className="table-responsive">
-                      <table className="field-table">
-                        <thead>
-                          <tr>
-                            <th>DEPARTMENT</th>
-                            <th>REASON</th>
-                            <th>SUBJECT</th>
-                            <th style={{ width: 110, textAlign: 'center' }}>ACTIONS</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {escalationTemplates.map((t) => (
-                            <tr key={t.id}>
-                              <td>{t.departmentName}</td>
-                              <td>{t.escalationReason}</td>
-                              <td className="template-subject-cell">{t.subjectTemplate}</td>
-                              <td>
-                                <div className="field-table__actions">
-                                  <button className="btn-icon-neutral" onClick={() => handleEditTemplate(t)} title="Edit template" aria-label="Edit template">
-                                    <Pencil size={14} />
-                                  </button>
-                                  <button className="btn-icon-danger" onClick={() => handleDeleteTemplate(t)} title="Delete template" aria-label="Delete template">
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
                 </div>
               </div>
             ) : (
@@ -3031,152 +2439,8 @@ export function ConfigurableSettingsPage() {
         onLeave={handleLeaveWithoutSaving}
         onSave={handleSaveAndLeave}
         changes={unsavedChangesList}
-        isSaving={isSaving || isSavingSla}
+        isSaving={isSaving}
       />
-    </div>
-  );
-}
-
-function NotificationRuleCard({ rule, onToggle, onSave }) {
-  const [formData, setFormData] = useState({
-    isEnabled: rule.isEnabled,
-    priority: rule.priority || 'High',
-    cooldownMinutes: rule.cooldownMinutes ?? 60,
-    maxReminders: rule.maxReminders ?? 3,
-    enableAggregation: rule.enableAggregation ?? true,
-    aggregationThreshold: rule.aggregationThreshold ?? 3,
-  });
-
-  useEffect(() => {
-    setFormData({
-      isEnabled: rule.isEnabled,
-      priority: rule.priority || 'High',
-      cooldownMinutes: rule.cooldownMinutes ?? 60,
-      maxReminders: rule.maxReminders ?? 3,
-      enableAggregation: rule.enableAggregation ?? true,
-      aggregationThreshold: rule.aggregationThreshold ?? 3,
-    });
-  }, [rule]);
-
-  const handleChange = (field, val) => {
-    setFormData((prev) => ({ ...prev, [field]: val }));
-  };
-
-  const getPriorityBadgeClass = (p) => {
-    const prio = (p || 'High').toLowerCase();
-    return `priority-pill priority-pill--${prio}`;
-  };
-
-  return (
-    <div className="rule-card">
-      <div>
-        <div className="rule-card__header">
-          <div className="rule-card__title-area">
-            <Bell size={18} color={formData.isEnabled ? '#1d4ed8' : '#94a3b8'} />
-            <div>
-              <h3 className="rule-card__title">{rule.name}</h3>
-              <span className="rule-card__badge">{rule.eventType}</span>
-            </div>
-          </div>
-
-          <div className="rule-card__toggle-wrapper">
-            <label className="toggle-switch" title="Enable or disable this rule" style={{ position: 'relative', display: 'inline-block', width: 36, height: 20 }}>
-              <input
-                type="checkbox"
-                checked={formData.isEnabled}
-                onChange={onToggle}
-                style={{ opacity: 0, width: 0, height: 0 }}
-              />
-              <span className="toggle-slider" style={{
-                position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
-                backgroundColor: formData.isEnabled ? '#2563eb' : '#cbd5e1', transition: '0.2s', borderRadius: 20
-              }} />
-            </label>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: formData.isEnabled ? '#16a34a' : '#94a3b8' }}>
-              {formData.isEnabled ? 'Active' : 'Disabled'}
-            </span>
-          </div>
-        </div>
-
-        <div className="rule-card__body-grid">
-          <div className="rule-card__field">
-            <span className="rule-card__field-label">Priority Level</span>
-            <select
-              className="rule-card__select"
-              value={formData.priority}
-              onChange={(e) => handleChange('priority', e.target.value)}
-            >
-              <option value="Critical">Critical</option>
-              <option value="High">High</option>
-              <option value="Medium">Medium</option>
-              <option value="Low">Low</option>
-              <option value="Info">Info</option>
-            </select>
-          </div>
-
-          <div className="rule-card__field">
-            <span className="rule-card__field-label">
-              <Clock size={11} /> Cooldown (Mins)
-            </span>
-            <input
-              type="number"
-              className="rule-card__input"
-              value={formData.cooldownMinutes}
-              min="0"
-              max="1440"
-              onChange={(e) => handleChange('cooldownMinutes', Number(e.target.value))}
-            />
-          </div>
-
-          <div className="rule-card__field">
-            <span className="rule-card__field-label">Max Reminders</span>
-            <input
-              type="number"
-              className="rule-card__input"
-              value={formData.maxReminders}
-              min="0"
-              max="10"
-              onChange={(e) => handleChange('maxReminders', Number(e.target.value))}
-            />
-            <span style={{ fontSize: '10.5px', color: '#64748b', marginTop: '2px', display: 'block' }}>
-              Follow-up reminder alerts after initial breach
-            </span>
-          </div>
-
-          <div className="rule-card__field">
-            <span className="rule-card__field-label">Group Aggregation</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-              <input
-                type="checkbox"
-                id={`agg-${rule.id}`}
-                checked={formData.enableAggregation}
-                onChange={(e) => handleChange('enableAggregation', e.target.checked)}
-              />
-              <label htmlFor={`agg-${rule.id}`} style={{ fontSize: '11.5px', color: '#475569' }}>
-                Thresh:
-              </label>
-              <input
-                type="number"
-                className="rule-card__input"
-                style={{ width: 46, padding: '2px 4px', fontSize: '12px' }}
-                value={formData.aggregationThreshold}
-                min="1"
-                max="50"
-                onChange={(e) => handleChange('aggregationThreshold', Number(e.target.value))}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="rule-card__footer">
-        <span className={getPriorityBadgeClass(formData.priority)}>
-          Priority: {formData.priority}
-        </span>
-        <Button variant="primary" size="sm" onClick={() => onSave(formData)}>
-          <Save size={13} /> Save Rule
-        </Button>
-      </div>
     </div>
   );
 }

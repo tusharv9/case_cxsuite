@@ -9,6 +9,7 @@ public interface ICaseService
     Task<CaseDetailDto?> GetCaseDetailsAsync(Guid caseId, CancellationToken ct = default);
     Task<IEnumerable<SearchCaseHitDto>> SearchCasesAsync(string query, int limit, CancellationToken ct = default);
     Task<IEnumerable<CaseSummaryDto>> GetBoardCasesAsync(Guid? departmentId = null, string? caseType = null, CancellationToken ct = default);
+    Task<PagedResponseDto<CaseSummaryDto>> GetPaginatedBoardCasesAsync(string? status = null, int page = 1, int pageSize = 30, Guid? departmentId = null, string? caseType = null, string? search = null, string? priority = null, string? channel = null, CancellationToken ct = default);
     Task UpdateCaseStatusAsync(Guid caseId, UpdateCaseStatusDto dto);
     Task AssignCaseAsync(Guid caseId, AssignCaseDto dto);
     Task AddNoteAsync(Guid caseId, AddNoteDto dto);
@@ -30,4 +31,21 @@ public interface ICaseService
     Task<IEnumerable<CaseAttachmentDto>> GetAttachmentsAsync(Guid caseId, CancellationToken ct = default);
     Task<CaseAttachmentDto> UploadAttachmentAsync(Guid caseId, Microsoft.AspNetCore.Http.IFormFile file, string? note, Guid userId);
     Task<(byte[] fileBytes, string contentType, string fileName)> GetAttachmentDownloadAsync(Guid caseId, Guid attachmentId);
+
+    // Case Collaboration feed (separate from the workflow timeline)
+    Task<CaseCollaborationDto> GetCollaborationAsync(Guid caseId, DateTime? before, int limit, CancellationToken ct = default);
+    Task<CollaborationActivityDto> AddCollaborationNoteAsync(Guid caseId, string content, Guid userId);
+
+    // Header counts for the Case Management page
+    Task<CaseStatsDto> GetCaseStatsAsync(Guid? departmentId, CancellationToken ct = default);
+
+    // Dashboard server-side summary
+    Task<DashboardSummaryDto> GetDashboardSummaryAsync(
+        Guid? departmentId, string? caseType, string? status, string? severity,
+        string? dateRange, string? customStartDate, string? customEndDate,
+        Guid? myCasesUserId, CancellationToken ct = default);
+
+    // Paginated case detail timeline
+    Task<PagedResponseDto<CaseEventDto>> GetCaseTimelineEventsAsync(
+        Guid caseId, DateTime? before, int limit = 50, CancellationToken ct = default);
 }

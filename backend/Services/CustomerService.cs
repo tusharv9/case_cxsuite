@@ -7,10 +7,12 @@ using CaseManagement.Api.Repositories;
 public class CustomerService : ICustomerService
 {
     private readonly ICustomerRepository _customerRepository;
+    private readonly IPiiMaskingService _piiMasking;
 
-    public CustomerService(ICustomerRepository customerRepository)
+    public CustomerService(ICustomerRepository customerRepository, IPiiMaskingService piiMasking)
     {
         _customerRepository = customerRepository;
+        _piiMasking = piiMasking;
     }
 
     public async Task<CustomerDetailDto?> GetCustomer360Async(Guid id, CancellationToken ct = default)
@@ -69,6 +71,23 @@ public class CustomerService : ICustomerService
 
     public async Task<IEnumerable<SearchCustomerHitDto>> SearchCustomersAsync(string query, int limit, CancellationToken ct = default)
     {
-        return await _customerRepository.SearchCustomersAsync(query, limit, ct);
+        var hits = (await _customerRepository.SearchCustomersAsync(query, limit, ct)).ToList();
+        foreach (var hit in hits)
+        {
+            var summary = new CustomerSummaryDto { NRIC = hit.NRIC };
+            await _piiMasking.MaskCustomerSummaryAsync(summary, ct);
+            hit.NRIC = summary.NRIC;
+        }
+        return hits;
+    }
+
+    public async Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedCustomersAsync(string? search, int page, int pageSize, CancellationToken ct = default)
+    {
+        var result = await _customerRepository.GetPaginatedAsync(search, page, pageSize, ct);
+        foreach (var item in result.Items)
+        {
+            await _piiMasking.MaskCustomerSummaryAsync(item, ct);
+        }
+        return result;
     }
 }

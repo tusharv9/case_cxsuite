@@ -7,11 +7,16 @@ import { CaseBoard } from '../../components/case/CaseBoard/CaseBoard.jsx';
 import { CaseList } from '../../components/case/CaseList/CaseList.jsx';
 import { useCase } from '../../contexts/CaseContext.jsx';
 import { useCases } from '../../hooks/useCases.js';
-import { ErrorState } from '../../components/common/Loader/Loader.jsx';
+import { useCaseListPage } from '../../hooks/useCaseListPage.js';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue.js';
+import { ErrorState, Loader } from '../../components/common/Loader/Loader.jsx';
+import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import {
   STATUS_FILTER_OPTIONS,
   PRIORITY_FILTER_OPTIONS,
   CHANNEL_FILTER_OPTIONS,
+  CASE_LIST_DEFAULT_PAGE_SIZE,
+  CASE_LIST_PAGE_SIZE_OPTIONS,
 } from '../../constants/index.js';
 import './CaseManagementPage.css';
 
@@ -83,8 +88,8 @@ function FilterDropdown({ label, value, options, onChange }) {
 }
 
 export function CaseManagementPage() {
-  const { boardCases, selectedCase, isLoadingCase, isLoadingBoard, boardError, dispatch } = useCase();
-  const { loadCaseDetails, refreshBoard } = useCases();
+  const { caseStats, selectedCase, isLoadingCase, selectedDeptId, dispatch } = useCase();
+  const { loadCaseDetails, refreshBoard } = useCases({ autoLoadStats: true });
   const { caseId } = useParams();
 
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'board'
@@ -101,71 +106,41 @@ export function CaseManagementPage() {
     if (caseId) loadCaseDetails(caseId);
   }, [caseId, loadCaseDetails]);
 
-  // Statistics derived dynamically from database
-  const stats = useMemo(() => {
-    let openCount = 0;
-    let breachedCount = 0;
-    const now = Date.now();
+  // Header counts come from GET /api/cases/stats (computed in the database), not from
+  // downloading every case.
+  const stats = {
+    openCount: caseStats?.openCount ?? 0,
+    breachedCount: caseStats?.breachedCount ?? 0,
+  };
 
-    (boardCases || []).forEach((c) => {
-      const isResolved = c.status === 'Resolved';
-      const isPaused = c.status === 'WaitingOnCustomer' || c.status === 'Waiting on Customer' || Boolean(c.slaPausedAt);
-      if (!isResolved) {
-        openCount++;
-      }
-      if (!isResolved && !isPaused) {
-        const start = new Date(c.slaStartTime || c.createdAt || now).getTime();
-        const targetMs = (c.slaTargetHours || 24) * 3600 * 1000;
-        const pausedMs = (c.slaTotalPausedMinutes || 0) * 60 * 1000;
-        if (start + targetMs + pausedMs - now <= 0) {
-          breachedCount++;
-        }
-      }
-    });
+  // ---- List View: server-side pagination ----
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(CASE_LIST_DEFAULT_PAGE_SIZE);
+  const debouncedSearch = useDebouncedValue(searchQuery.trim(), 300);
 
-    return { openCount, breachedCount };
-  }, [boardCases]);
+  // Any change to search or filters starts again from page 1.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, selectedStatusFilter, selectedPriorityFilter, selectedChannelFilter, selectedDeptId, pageSize]);
 
-  // Unified Filter Logic (Single Source of Truth for List and Board)
-  const filteredCases = useMemo(() => {
-    return (boardCases || []).filter((c) => {
-      // 1. Search Query
-      if (searchQuery && searchQuery.trim() !== '') {
-        const q = searchQuery.toLowerCase();
-        const matchesNumber = c.caseNumber?.toLowerCase().includes(q);
-        const matchesTitle = c.title?.toLowerCase().includes(q);
-        const matchesCustomer = c.customerName?.toLowerCase().includes(q);
-        const matchesAgent = c.ownerName?.toLowerCase().includes(q);
-        const matchesChildId = c.childRelations?.some((cr) => cr.childId?.toLowerCase().includes(q));
-        if (!matchesNumber && !matchesTitle && !matchesCustomer && !matchesAgent && !matchesChildId) return false;
-      }
+  const listPage = useCaseListPage({
+    page,
+    pageSize,
+    departmentId: selectedDeptId,
+    search: debouncedSearch,
+    status: selectedStatusFilter,
+    priority: selectedPriorityFilter,
+    channel: selectedChannelFilter,
+    enabled: viewMode === 'list',
+  });
 
-      // 2. Status Filter
-      if (selectedStatusFilter !== 'all') {
-        const normFilter = selectedStatusFilter.toLowerCase().replace(/[\s_]/g, '');
-        const normStatus = (c.status || '').toLowerCase().replace(/[\s_]/g, '');
-        if (normStatus !== normFilter) return false;
-      }
-
-      // 3. Priority Filter
-      if (selectedPriorityFilter !== 'all') {
-        const normFilter = selectedPriorityFilter.toLowerCase();
-        const normSeverity = (c.severity || '').toLowerCase();
-        const mapped = normSeverity === 'bad' ? 'critical' : (normSeverity === 'warn' ? 'high' : (normSeverity === 'info' ? 'medium' : (normSeverity === 'ok' ? 'low' : normSeverity)));
-        if (mapped !== normFilter) return false;
-      }
-
-      // 4. Channel Filter
-      if (selectedChannelFilter !== 'all') {
-        const normFilter = selectedChannelFilter.toLowerCase();
-        const rawChannel = (c.sourceChannel || c.communicationChannel || 'Voice').toLowerCase();
-        const mapped = rawChannel === 'phone' ? 'voice' : rawChannel;
-        if (mapped !== normFilter) return false;
-      }
-
-      return true;
-    });
-  }, [boardCases, searchQuery, selectedStatusFilter, selectedPriorityFilter, selectedChannelFilter]);
+  // If rows disappear (e.g. a case was resolved and filtered out) and the current page is now
+  // past the end, step back to the last page that exists.
+  useEffect(() => {
+    if (!listPage.isLoading && listPage.totalPages > 0 && page > listPage.totalPages) {
+      setPage(listPage.totalPages);
+    }
+  }, [listPage.isLoading, listPage.totalPages, page]);
 
   const hasActiveFilters =
     searchQuery.trim() !== '' ||
@@ -237,7 +212,7 @@ export function CaseManagementPage() {
               </button>
             </div>
 
-            {/* + New Case Button */}
+            {/* + New Case Button (Previous blue theme button) */}
             <button
               type="button"
               className="btn-create-case-banner"
@@ -318,20 +293,43 @@ export function CaseManagementPage() {
 
       {/* 3. MAIN CONTENT: LIST OR BOARD VIEW */}
       <div className="case-management-content">
-        {boardError ? (
-          <ErrorState title="Failed to load cases" message={boardError} onRetry={refreshBoard} />
-        ) : viewMode === 'list' ? (
-          <CaseList
-            cases={filteredCases}
-            selectedCaseId={selectedCase?.id}
-            onCaseClick={handleCardClick}
-          />
+        {viewMode === 'list' ? (
+          listPage.error ? (
+            <ErrorState title="Failed to load cases" message={listPage.error} onRetry={listPage.refresh} />
+          ) : (
+            <>
+              {listPage.isLoading && listPage.items.length === 0 ? (
+                <div className="case-management-list-loading">
+                  <Loader text="Loading cases…" />
+                </div>
+              ) : (
+                <CaseList
+                  cases={listPage.items}
+                  selectedCaseId={selectedCase?.id}
+                  onCaseClick={handleCardClick}
+                />
+              )}
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                totalCount={listPage.totalCount}
+                totalPages={listPage.totalPages}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+                pageSizeOptions={CASE_LIST_PAGE_SIZE_OPTIONS}
+                isLoading={listPage.isLoading}
+              />
+            </>
+          )
         ) : (
           <CaseBoard
-            cases={filteredCases}
             selectedCaseId={selectedCase?.id}
             onCardClick={handleCardClick}
-            isLoadingBoard={isLoadingBoard}
+            departmentId={selectedDeptId}
+            searchQuery={searchQuery}
+            selectedStatusFilter={selectedStatusFilter}
+            selectedPriorityFilter={selectedPriorityFilter}
+            selectedChannelFilter={selectedChannelFilter}
           />
         )}
       </div>

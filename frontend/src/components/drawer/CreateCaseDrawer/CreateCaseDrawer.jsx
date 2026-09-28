@@ -91,7 +91,6 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     setDataLoading(true);
 
     Promise.all([
-      customerService.getAllCustomers(),
       departmentService.getAllDepartments(),
       configurableSettingsService.getFields('CaseManagement', 'CreateCase', true),
       configurableSettingsService.getCaseTypes(),
@@ -100,8 +99,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       configurableSettingsService.getLookupValues('COMMUNICATION_CHANNEL', true),
       configurableSettingsService.getSeverities(),
     ])
-      .then(([c, d, fields, cts, subs, langs, chns, severityList]) => {
-        setCustomers(c || []);
+      .then(([d, fields, cts, subs, langs, chns, severityList]) => {
         setDepartments(d || []);
 
         const sortedFields = (fields || [])
@@ -182,13 +180,14 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     }
   }, [isOpen, caseTypes, languages, channels, severities]);
 
-  // Update selected customer object whenever form.customerId or customers changes
+  // Update selected customer object whenever form.customerId is set
   useEffect(() => {
-    if (form.customerId && customers.length > 0) {
-      const found = customers.find((c) => String(c.id) === String(form.customerId));
-      if (found) setSelectedCustomer(found);
+    if (form.customerId && (!selectedCustomer || String(selectedCustomer.id) !== String(form.customerId))) {
+      customerService.getCustomer360(form.customerId).then((c) => {
+        if (c) setSelectedCustomer(c);
+      }).catch(() => {});
     }
-  }, [form.customerId, customers]);
+  }, [form.customerId, selectedCustomer]);
 
   // Dynamic Available Subcategories based on selected Department
   const availableSubcategories = useMemo(() => {
@@ -255,15 +254,67 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
 
   const validate = () => {
     const e = {};
-    if (!form.caseType) e.caseType = 'Please select a Case Type.';
-    if (!form.title.trim()) e.title = 'Title is required.';
-    if (!form.customerId) e.customerId = 'Please select a customer.';
-    if (!form.departmentId) e.departmentId = 'Please select a department.';
-    if (!form.severity) e.severity = 'Please select severity.';
-    if (!form.sourceChannel) e.sourceChannel = 'Please select a source channel.';
-    if (!form.slaTargetHours || isNaN(Number(form.slaTargetHours)) || Number(form.slaTargetHours) < 1) {
+
+    // System invariants
+    if (!form.customerId) {
+      e.customerId = 'Please select a customer.';
+    }
+    if (!form.departmentId) {
+      e.departmentId = 'Please select a department.';
+    }
+
+    // Metadata-driven field validation
+    fieldConfigs.forEach((cfg) => {
+      if (cfg.isVisible === false) return;
+
+      const fieldKey = cfg.apiField;
+      const label = cfg.displayLabel || fieldKey;
+      let val = form[fieldKey];
+
+      if (fieldKey === 'selectCustomer') {
+        if (cfg.isRequired && !form.customerId) {
+          e.customerId = `${label} is required.`;
+        }
+        return;
+      }
+      if (fieldKey === 'subCategory') {
+        val = form.subcategory;
+      }
+
+      const strVal = typeof val === 'string' ? val.trim() : (val != null ? String(val) : '');
+
+      if (cfg.isRequired && !strVal) {
+        e[fieldKey] = `${label} is required.`;
+        return;
+      }
+
+      if (strVal) {
+        if (cfg.minLength && strVal.length < cfg.minLength) {
+          e[fieldKey] = `${label} must be at least ${cfg.minLength} characters.`;
+          return;
+        }
+        if (cfg.maxLength && strVal.length > cfg.maxLength) {
+          e[fieldKey] = `${label} cannot exceed ${cfg.maxLength} characters.`;
+          return;
+        }
+        if (cfg.validationRegex) {
+          try {
+            const rx = new RegExp(cfg.validationRegex);
+            if (!rx.test(strVal)) {
+              e[fieldKey] = `${label} format is invalid.`;
+              return;
+            }
+          } catch (regexErr) {
+            console.warn(`Invalid regex on field ${fieldKey}:`, regexErr);
+          }
+        }
+      }
+    });
+
+    if (form.slaTargetHours && (isNaN(Number(form.slaTargetHours)) || Number(form.slaTargetHours) < 1)) {
       e.slaTargetHours = 'Please enter a valid SLA target (hours).';
     }
+
     return e;
   };
 

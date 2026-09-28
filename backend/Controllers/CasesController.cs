@@ -16,10 +16,42 @@ public class CasesController : BaseApiController
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetBoardCases([FromQuery] Guid? departmentId, [FromQuery] string? caseType, CancellationToken ct)
+    public async Task<IActionResult> GetBoardCases(
+        [FromQuery] Guid? departmentId,
+        [FromQuery] string? caseType,
+        [FromQuery] string? status,
+        [FromQuery] int? page,
+        [FromQuery] int? pageSize,
+        [FromQuery] string? search,
+        [FromQuery] string? priority,
+        [FromQuery] string? channel,
+        CancellationToken ct)
     {
+        if (page.HasValue)
+        {
+            var paged = await _caseService.GetPaginatedBoardCasesAsync(
+                status,
+                page.Value,
+                pageSize ?? 30,
+                departmentId,
+                caseType,
+                search,
+                priority,
+                channel,
+                ct);
+            return Ok(paged);
+        }
+
         var cases = await _caseService.GetBoardCasesAsync(departmentId, caseType, ct);
         return Ok(cases);
+    }
+
+    /// <summary>Open / SLA-breached counts for the Case Management header.</summary>
+    [HttpGet("stats")]
+    public async Task<IActionResult> GetCaseStats([FromQuery] Guid? departmentId, CancellationToken ct)
+    {
+        var stats = await _caseService.GetCaseStatsAsync(departmentId, ct);
+        return Ok(stats);
     }
 
     [HttpGet("{id:guid}")]
@@ -112,6 +144,21 @@ public class CasesController : BaseApiController
         return Ok(new { message = "Coworker removed successfully." });
     }
 
+    /// <summary>Case Collaboration feed: collaborators plus collaboration-only activity, newest first.</summary>
+    [HttpGet("{id:guid}/collaboration")]
+    public async Task<IActionResult> GetCollaboration(Guid id, [FromQuery] DateTime? before, [FromQuery] int limit = 50, CancellationToken ct = default)
+    {
+        var result = await _caseService.GetCollaborationAsync(id, before, limit, ct);
+        return Ok(result);
+    }
+
+    [HttpPost("{id:guid}/collaboration/notes")]
+    public async Task<IActionResult> AddCollaborationNote(Guid id, [FromBody] AddCollaborationNoteDto dto)
+    {
+        var activity = await _caseService.AddCollaborationNoteAsync(id, dto?.Content ?? string.Empty, CurrentUserId);
+        return Ok(activity);
+    }
+
     [HttpPut("{id:guid}/transfer")]
     public async Task<IActionResult> TransferDepartment(Guid id, [FromBody] TransferDepartmentDto dto)
     {
@@ -178,5 +225,21 @@ public class CasesController : BaseApiController
     {
         var logs = await _caseService.GetCaseAuditEventsAsync(page, pageSize, actionType, search, ct);
         return Ok(logs);
+    }
+
+    /// <summary>
+    /// Paginated timeline events for the case detail view.
+    /// Returns up to <paramref name="limit"/> events older than <paramref name="before"/>.
+    /// </summary>
+    [HttpGet("{id:guid}/timeline")]
+    [HttpGet("{id:guid}/events")]
+    public async Task<IActionResult> GetCaseTimeline(
+        Guid id,
+        [FromQuery] DateTime? before,
+        [FromQuery] int limit = 50,
+        CancellationToken ct = default)
+    {
+        var result = await _caseService.GetCaseTimelineEventsAsync(id, before, Math.Clamp(limit, 1, 200), ct);
+        return Ok(result);
     }
 }

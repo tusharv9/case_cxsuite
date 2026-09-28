@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Bell, Sparkles, Menu } from 'lucide-react';
+import { Search, Bell, Menu } from 'lucide-react';
 import { useApp } from '../../../contexts/AppContext.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
 import { searchService } from '../../../services/searchService.js';
@@ -50,7 +50,7 @@ function playNotificationChime() {
   }
 }
 
-export function Header({ onAIAssistantOpen }) {
+export function Header() {
   const { currentUser, isSidebarOpen, dispatch } = useApp();
   const navigate = useNavigate();
   const [searchValue, setSearchValue] = useState('');
@@ -358,17 +358,6 @@ export function Header({ onAIAssistantOpen }) {
             />
           )}
         </div>
-
-        {/* AI Assist Button */}
-        <button
-          id="ai-assist-btn"
-          className="header__ai-btn"
-          onClick={onAIAssistantOpen}
-          aria-label="Open AI Assistant"
-        >
-          <Sparkles size={14} />
-          Agent Assist
-        </button>
 
         <div className="header__divider" />
 

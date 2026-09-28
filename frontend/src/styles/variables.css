@@ -98,12 +98,12 @@
   --color-dept-5-bg: #dbeafe;
 
   /* --- Text --- */
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-tertiary: #94a3b8;
+  --color-text-primary: #0f2149;
+  --color-text-secondary: #61708f;
+  --color-text-tertiary: #9aa6bf;
   --color-text-disabled: #cbd5e1;
   --color-text-inverse: #ffffff;
-  --color-text-link: #1d4ed8;
+  --color-text-link: #16408f;
 
   /* --- Borders --- */
   --color-border: #e2e8f0;

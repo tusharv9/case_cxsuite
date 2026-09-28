@@ -12,6 +12,7 @@ import { formatDate } from '../../utils/dateUtils.js';
 import { createFieldMasker } from '../../utils/maskUtils.js';
 import { CreateCustomerDrawer } from '../../components/drawer/CreateCustomerDrawer/CreateCustomerDrawer.jsx';
 import { ExistingCustomerDrawer } from '../../components/drawer/ExistingCustomerDrawer/ExistingCustomerDrawer.jsx';
+import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import './CustomerDirectoryPage.css';
 
 function CustomerCard({ customer, onClick, mask }) {
@@ -99,21 +100,39 @@ export function CustomerDirectoryPage() {
   const [tenureFilter, setTenureFilter] = useState('all');
   const filterRef = useRef(null);
 
-  const loadCustomers = useCallback(async (forceRefresh = false) => {
+  // Pagination States
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  const loadCustomers = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await customerService.getAllCustomers(forceRefresh);
-      setCustomers(data || []);
+      const data = await customerService.getPaginatedCustomers({
+        search: search.trim() || undefined,
+        page,
+        pageSize,
+      });
+      if (data && Array.isArray(data.items)) {
+        setCustomers(data.items);
+        setTotalCount(data.totalCount || 0);
+        setTotalPages(data.totalPages || 1);
+      } else if (Array.isArray(data)) {
+        setCustomers(data);
+        setTotalCount(data.length);
+        setTotalPages(1);
+      }
     } catch (err) {
       setError(err.message || 'Failed to load customers.');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [search, page, pageSize]);
 
   useEffect(() => {
-    loadCustomers(true);
+    loadCustomers();
   }, [loadCustomers]);
 
   // Click outside listener for filter popover
@@ -245,7 +264,7 @@ export function CustomerDirectoryPage() {
               <p className="customer-dir-banner__subtitle">
                 {isLoading
                   ? 'Loading customer base…'
-                  : `${filtered.length} customer${filtered.length !== 1 ? 's' : ''} · Omni Customer Base`}
+                  : `${totalCount.toLocaleString()} customer${totalCount !== 1 ? 's' : ''} · Omni Customer Base`}
               </p>
             </div>
           </div>
@@ -424,6 +443,23 @@ export function CustomerDirectoryPage() {
             {filtered.map((c) => (
               <CustomerCard key={c.id} customer={c} onClick={handleCustomerClick} mask={maskFn} />
             ))}
+          </div>
+        )}
+
+        {!isLoading && !error && filtered.length > 0 && (
+          <div style={{ marginTop: 24 }}>
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              totalCount={totalCount}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={(newSize) => {
+                setPageSize(newSize);
+                setPage(1);
+              }}
+              isLoading={isLoading}
+            />
           </div>
         )}
       </div>

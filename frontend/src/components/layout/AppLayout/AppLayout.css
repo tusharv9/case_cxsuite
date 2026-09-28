@@ -22,50 +22,6 @@
   position: relative;
 }
 
-/* AI Floating Button */
-.ai-float-btn {
-  position: fixed;
-  bottom: var(--space-6);
-  right: var(--space-6);
-  width: 52px;
-  height: 52px;
-  border-radius: var(--radius-full);
-  background: linear-gradient(135deg, #1e3a8a, #2563eb);
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border: none;
-  box-shadow: 0 4px 20px rgba(29, 78, 216, 0.45);
-  z-index: var(--z-drawer);
-  transition: all var(--transition-normal);
-  animation: aiPulse 3s ease-in-out infinite;
-}
-
-.ai-float-btn:hover {
-  transform: scale(1.08) translateY(-2px);
-  box-shadow: 0 8px 30px rgba(29, 78, 216, 0.55);
-  animation: none;
-}
-
-.ai-float-badge {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 18px;
-  height: 18px;
-  background-color: #dc2626;
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid white;
-}
-
 /* Sidebar closed transitions */
 .layout--sidebar-closed .sidebar {
   display: none;
@@ -77,30 +33,16 @@
     transition: padding-right var(--transition-slow);
   }
 
-  .layout--ai-open .app-layout__main {
-    padding-right: var(--ai-panel-width);
-  }
-
   .layout--drawer-open .app-layout__main {
     padding-right: var(--drawer-width);
   }
 
-  .layout--ai-open.layout--drawer-open .app-layout__main {
-    padding-right: calc(var(--ai-panel-width) + var(--drawer-width));
-  }
-
-  /* Shifting details drawer to the left of the AI panel */
   .case-drawer {
     transition: right var(--transition-slow), transform var(--transition-slow) !important;
   }
 
-  .layout--ai-open .case-drawer {
-    right: var(--ai-panel-width) !important;
-  }
-
   /* Hide overlays on desktop to allow dashboard board interaction */
-  .drawer-overlay,
-  .ai-panel-overlay {
+  .drawer-overlay {
     display: none !important;
     pointer-events: none !important;
   }

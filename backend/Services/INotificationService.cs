@@ -12,9 +12,5 @@ public interface INotificationService
     Task DeleteNotificationAsync(Guid notificationId, Guid userId, CancellationToken ct = default);
     Task CheckAndGenerateSlaNotificationsAsync(CancellationToken ct = default);
 
-    // Notification Rules Management
-    Task<IEnumerable<NotificationRuleDto>> GetNotificationRulesAsync(CancellationToken ct = default);
-    Task<NotificationRuleDto?> UpdateNotificationRuleAsync(Guid id, UpdateNotificationRuleDto dto, Guid userId, CancellationToken ct = default);
-    Task<NotificationRuleDto?> ToggleNotificationRuleAsync(Guid id, Guid userId, CancellationToken ct = default);
     Task CreateConfigChangedNotificationAsync(string title, string message, CancellationToken ct = default);
 }

@@ -16,20 +16,31 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
     private readonly IConfigurableSettingsRepository _repository;
     private readonly AppDbContext _context;
     private readonly INotificationService _notificationService;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public ConfigurableSettingsService(IConfigurableSettingsRepository repository, AppDbContext context, INotificationService notificationService)
+    public ConfigurableSettingsService(IConfigurableSettingsRepository repository, AppDbContext context, INotificationService notificationService, IHttpContextAccessor httpContextAccessor)
     {
         _repository = repository;
         _context = context;
         _notificationService = notificationService;
+        _httpContextAccessor = httpContextAccessor;
     }
+
+    /// <summary>The user making the current request (set by UserAuthorizationMiddleware).</summary>
+    private Guid? CurrentUserId =>
+        _httpContextAccessor.HttpContext?.Items.TryGetValue("UserId", out var value) == true && value is Guid id ? id : null;
 
     private async Task RecordAuditLogAsync(string actionType, string entityName, string description, string? oldValue, string? newValue, CancellationToken ct)
     {
         try
         {
-            var adminUser = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Role.Contains("Admin") || u.Role.Contains("Officer") || u.Role.Contains("Agent"), ct);
-            var userId = adminUser?.Id ?? Guid.Empty;
+            // The audit row names the person who made the change.
+            var userId = CurrentUserId;
+            if (userId is null)
+            {
+                Console.WriteLine($"[ConfigAuditLog] Skipped '{entityName}': no acting user on the request.");
+                return;
+            }
 
             var audit = new CaseEvent
             {
@@ -38,7 +49,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
                 EventType = EventType.Other,
                 Message = description,
                 CreatedAt = DateTime.UtcNow,
-                UserId = userId,
+                UserId = userId.Value,
                 Module = "Configurable Settings",
                 EntityName = entityName,
                 ActionType = actionType,
@@ -483,32 +494,6 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         });
     }
 
-    public async Task<SlaConfigurationDto> SaveSlaConfigurationAsync(CreateOrUpdateSlaDto dto, CancellationToken ct = default)
-    {
-        ValidateSlaHours(dto.InternalHours, "Internal SLA");
-        ValidateSlaHours(dto.ExternalHours, "External SLA");
-
-        var entity = new SlaConfiguration
-        {
-            Severity = dto.Severity.Trim(),
-            InternalHours = dto.InternalHours,
-            ExternalHours = dto.ExternalHours,
-            FirstResponseMinutes = dto.FirstResponseMinutes > 0 ? dto.FirstResponseMinutes : 240,
-            IsActive = true
-        };
-
-        var saved = await _repository.SaveSlaConfigurationAsync(entity, ct);
-        return new SlaConfigurationDto
-        {
-            Id = saved.Id,
-            Severity = saved.Severity,
-            InternalHours = saved.InternalHours,
-            ExternalHours = saved.ExternalHours,
-            FirstResponseMinutes = saved.FirstResponseMinutes,
-            IsActive = saved.IsActive
-        };
-    }
-
     /// <summary>SLA hours are whole hours: zero, negative and absurd values are rejected.</summary>
     private static void ValidateSlaHours(int hours, string label)
     {
@@ -648,6 +633,28 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         var sla = (await _repository.GetSlaConfigurationsAsync(ct))
             .FirstOrDefault(x => x.Severity.Equals(name, StringComparison.OrdinalIgnoreCase));
 
+        // SLA hours are edited together with the severity (the separate SLA Configuration
+        // screen was removed). Only values that were supplied are changed.
+        if (dto.InternalHours.HasValue || dto.ExternalHours.HasValue || dto.FirstResponseMinutes.HasValue)
+        {
+            var internalHours = dto.InternalHours ?? sla?.InternalHours ?? 22;
+            var externalHours = dto.ExternalHours ?? sla?.ExternalHours ?? 24;
+            var firstResponse = dto.FirstResponseMinutes ?? sla?.FirstResponseMinutes ?? 240;
+            ValidateSlaHours(internalHours, "Internal SLA");
+            ValidateSlaHours(externalHours, "External SLA");
+            if (firstResponse <= 0)
+                throw new InvalidOperationException("First response target must be at least 1 minute.");
+
+            sla = await _repository.SaveSlaConfigurationAsync(new SlaConfiguration
+            {
+                Severity = name,
+                InternalHours = internalHours,
+                ExternalHours = externalHours,
+                FirstResponseMinutes = firstResponse,
+                IsActive = true
+            }, ct);
+        }
+
         return new SeverityDto
         {
             Id = id,
@@ -678,73 +685,5 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
         await _repository.DeleteSlaConfigurationBySeverityAsync(current.Value, ct);
         return await _repository.DeleteLookupValueAsync(id, ct);
-    }
-
-    public async Task<bool> DeleteEscalationTemplateAsync(Guid id, CancellationToken ct = default)
-    {
-        return await _repository.DeleteEscalationTemplateAsync(id, ct);
-    }
-
-    public async Task<DepartmentEscalationTemplateDto?> GetEscalationTemplateAsync(Guid departmentId, string reason, CancellationToken ct = default)
-    {
-        var template = await _repository.GetEscalationTemplateAsync(departmentId, reason, ct);
-        if (template == null) return null;
-
-        return new DepartmentEscalationTemplateDto
-        {
-            Id = template.Id,
-            DepartmentId = template.DepartmentId,
-            DepartmentName = template.Department?.Name ?? string.Empty,
-            EscalationReason = template.EscalationReason,
-            SubjectTemplate = template.SubjectTemplate,
-            BodyTemplate = template.BodyTemplate,
-            IsActive = template.IsActive
-        };
-    }
-
-    public async Task<IEnumerable<DepartmentEscalationTemplateDto>> GetAllEscalationTemplatesAsync(Guid? departmentId = null, CancellationToken ct = default)
-    {
-        var items = await _repository.GetAllEscalationTemplatesAsync(departmentId, ct);
-        return items.Select(t => new DepartmentEscalationTemplateDto
-        {
-            Id = t.Id,
-            DepartmentId = t.DepartmentId,
-            DepartmentName = t.Department?.Name ?? string.Empty,
-            EscalationReason = t.EscalationReason,
-            SubjectTemplate = t.SubjectTemplate,
-            BodyTemplate = t.BodyTemplate,
-            IsActive = t.IsActive
-        });
-    }
-
-    public async Task<DepartmentEscalationTemplateDto> SaveEscalationTemplateAsync(CreateOrUpdateEscalationTemplateDto dto, CancellationToken ct = default)
-    {
-        if (!await _repository.DepartmentExistsAsync(dto.DepartmentId, ct))
-            throw new InvalidOperationException("The selected department no longer exists.");
-        if (string.IsNullOrWhiteSpace(dto.SubjectTemplate))
-            throw new InvalidOperationException("Email subject template is required.");
-        if (string.IsNullOrWhiteSpace(dto.BodyTemplate))
-            throw new InvalidOperationException("Email body template is required.");
-
-        var entity = new DepartmentEscalationTemplate
-        {
-            DepartmentId = dto.DepartmentId,
-            EscalationReason = dto.EscalationReason.Trim(),
-            SubjectTemplate = dto.SubjectTemplate.Trim(),
-            BodyTemplate = dto.BodyTemplate.Trim(),
-            IsActive = true
-        };
-
-        var saved = await _repository.SaveEscalationTemplateAsync(entity, ct);
-        return new DepartmentEscalationTemplateDto
-        {
-            Id = saved.Id,
-            DepartmentId = saved.DepartmentId,
-            DepartmentName = saved.Department?.Name ?? string.Empty,
-            EscalationReason = saved.EscalationReason,
-            SubjectTemplate = saved.SubjectTemplate,
-            BodyTemplate = saved.BodyTemplate,
-            IsActive = saved.IsActive
-        };
     }
 }

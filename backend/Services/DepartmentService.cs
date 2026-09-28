@@ -105,7 +105,7 @@ public class DepartmentService : IDepartmentService
         return department;
     }
 
-    public async Task<Department> UpdateDepartmentAsync(Guid id, UpdateDepartmentDto dto)
+    public async Task<Department> UpdateDepartmentAsync(Guid id, UpdateDepartmentDto dto, Guid userId)
     {
         var department = await _departmentRepository.GetByIdAsync(id);
         if (department == null) throw new ArgumentException("Department not found.");
@@ -125,11 +125,11 @@ public class DepartmentService : IDepartmentService
         await _departmentRepository.UpdateAsync(department);
         InvalidateDepartmentCache();
         var newVal = $"Name: {department.Name}, Code: {department.Code}, Active: {department.IsActive}";
-        await RecordAuditLogAsync("UPDATE", $"Department: {department.Name}", $"Updated department '{department.Name}'", oldVal, newVal, Guid.Empty);
+        await RecordAuditLogAsync("UPDATE", $"Department: {department.Name}", $"Updated department '{department.Name}'", oldVal, newVal, userId);
         return department;
     }
 
-    public async Task DeleteDepartmentAsync(Guid id)
+    public async Task DeleteDepartmentAsync(Guid id, Guid userId)
     {
         var department = await _departmentRepository.GetByIdAsync(id);
         if (department == null) throw new ArgumentException("Department not found.");
@@ -147,7 +147,7 @@ public class DepartmentService : IDepartmentService
 
         await _departmentRepository.DeleteAsync(department);
         InvalidateDepartmentCache();
-        await RecordAuditLogAsync("DELETE", $"Department: {deptName}", $"Deleted department '{deptName}'", oldVal, null, Guid.Empty);
+        await RecordAuditLogAsync("DELETE", $"Department: {deptName}", $"Deleted department '{deptName}'", oldVal, null, userId);
     }
 
     public async Task SetDepartmentOwnerAsync(Guid id, SetDepartmentOwnerDto dto, Guid userId)

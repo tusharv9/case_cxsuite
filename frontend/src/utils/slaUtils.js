@@ -6,13 +6,17 @@ import { SEVERITY_SLA_MAPPING } from '../constants/index.js';
  * Get SLA configuration based on severity
  */
 export function getSlaConfig(severity, customExternalHours) {
+  // Prioritize server-provided SLA target hours if present
+  if (customExternalHours !== undefined && customExternalHours !== null && Number(customExternalHours) > 0) {
+    const hours = Number(customExternalHours);
+    return { externalHours: hours, internalHours: Math.max(1, hours - 2) };
+  }
+
   const normalized = severity ? (severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase()) : 'Low';
   const mapping = SEVERITY_SLA_MAPPING[normalized] || SEVERITY_SLA_MAPPING[severity];
 
-  // Severities are administrator-configurable, so anything outside the built-in map takes its
-  // hours from the case's own stored SLA target rather than silently inheriting "Low".
   if (!mapping) {
-    const externalHours = customExternalHours > 0 ? customExternalHours : SEVERITY_SLA_MAPPING.Low.external;
+    const externalHours = customExternalHours > 0 ? customExternalHours : (SEVERITY_SLA_MAPPING.Low?.external || 24);
     return { externalHours, internalHours: Math.max(1, externalHours - 2) };
   }
 

@@ -1,4 +1,4 @@
-// ===== CASE LIST TABLE VIEW — OmniConnect Reference System =====
+// ===== CASE LIST TABLE VIEW — Clean Enterprise CRM Reference System =====
 
 import { useState } from 'react';
 import { Clock, AlertTriangle, CheckCircle2, Pause, Inbox } from 'lucide-react';
@@ -6,7 +6,6 @@ import { getSlaDisplay, getSlaConfig } from '../../../utils/slaUtils.js';
 import { useNow } from '../../../hooks/useNow.js';
 import { getInitials, getAvatarColor } from '../../../utils/avatarUtils.js';
 import { ChannelBadge } from '../ChannelBadge/ChannelBadge.jsx';
-import { CASE_STATUS_COLORS, CASE_STATUS_LABELS } from '../../../constants/index.js';
 import './CaseList.css';
 
 function SlaBadgeList({ status, severity, slaStartTime, slaTargetHours, slaPausedAt, slaTotalPausedMinutes }) {
@@ -17,7 +16,7 @@ function SlaBadgeList({ status, severity, slaStartTime, slaTargetHours, slaPause
   if (sla.status === 'within') {
     return (
       <span className="case-list-sla case-list-sla--met">
-        <CheckCircle2 size={12} strokeWidth={2.5} />
+        <CheckCircle2 size={11} strokeWidth={2.5} />
         <span>{sla.label}</span>
       </span>
     );
@@ -26,7 +25,7 @@ function SlaBadgeList({ status, severity, slaStartTime, slaTargetHours, slaPause
   if (sla.status === 'paused') {
     return (
       <span className="case-list-sla case-list-sla--paused">
-        <Pause size={11} strokeWidth={2.5} />
+        <Pause size={10} strokeWidth={2.5} />
         <span>{sla.label}</span>
       </span>
     );
@@ -35,7 +34,7 @@ function SlaBadgeList({ status, severity, slaStartTime, slaTargetHours, slaPause
   if (sla.status === 'breached') {
     return (
       <span className="case-list-sla case-list-sla--breached">
-        <Clock size={12} strokeWidth={2.5} />
+        <Clock size={11} strokeWidth={2.2} />
         <span>{sla.label}</span>
       </span>
     );
@@ -43,7 +42,7 @@ function SlaBadgeList({ status, severity, slaStartTime, slaTargetHours, slaPause
 
   return (
     <span className="case-list-sla case-list-sla--active">
-      <Clock size={12} strokeWidth={2.5} />
+      <Clock size={11} strokeWidth={2.2} />
       <span>{sla.label}</span>
     </span>
   );
@@ -54,7 +53,7 @@ function PriorityBadgeList({ severity }) {
   const lower = norm.toLowerCase();
 
   let className = 'case-list-priority--medium';
-  let label = norm;
+  let label = 'Medium';
 
   if (lower === 'critical' || lower === 'bad') {
     className = 'case-list-priority--critical';
@@ -68,6 +67,8 @@ function PriorityBadgeList({ severity }) {
   } else if (lower === 'medium' || lower === 'info') {
     className = 'case-list-priority--medium';
     label = 'Medium';
+  } else {
+    label = norm;
   }
 
   return (
@@ -77,25 +78,41 @@ function PriorityBadgeList({ severity }) {
   );
 }
 
-function StatusBadgeList({ status }) {
-  const label = CASE_STATUS_LABELS[status] || status;
-  const colors = CASE_STATUS_COLORS[status] || {
-    color: '#475569',
-    bg: '#f1f5f9',
-    border: '#cbd5e1',
-  };
+function StatusBadgeList({ status, escalationLevel }) {
+  const norm = (status || 'Open').trim();
+  const lower = norm.toLowerCase();
+
+  let className = 'case-list-status--open';
+  let label = norm;
+
+  if (lower === 'open') {
+    className = 'case-list-status--open';
+    label = 'Open';
+  } else if (lower === 'in progress' || lower === 'inprogress') {
+    className = 'case-list-status--inprogress';
+    label = 'In Progress';
+  } else if (lower === 'waiting on customer' || lower === 'waitingoncustomer') {
+    className = 'case-list-status--waiting';
+    label = 'Waiting on Customer';
+  } else if (lower === 'escalated') {
+    className = 'case-list-status--escalated';
+    label = 'Escalated';
+  } else if (lower === 'resolved') {
+    className = 'case-list-status--resolved';
+    label = 'Resolved';
+  }
 
   return (
-    <span
-      className="case-list-status"
-      style={{
-        color: colors.color,
-        backgroundColor: colors.bg,
-        borderColor: colors.border,
-      }}
-    >
-      {label}
-    </span>
+    <div className="status-badge-container">
+      <span className={`case-list-status ${className}`}>
+        {label}
+      </span>
+      {lower === 'escalated' && escalationLevel ? (
+        <span className="case-list-esc-badge" title={`Escalation Level ${escalationLevel}`}>
+          {typeof escalationLevel === 'number' ? `L${escalationLevel}` : escalationLevel.startsWith('L') ? escalationLevel : `L${escalationLevel}`}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -141,7 +158,7 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
   if (cases.length === 0) {
     return (
       <div className="case-list-empty">
-        <Inbox size={40} strokeWidth={1.3} className="case-list-empty__icon" />
+        <Inbox size={38} strokeWidth={1.4} className="case-list-empty__icon" />
         <h3 className="case-list-empty__title">No cases found</h3>
         <p className="case-list-empty__desc">No case records match your current filter or search criteria.</p>
       </div>
@@ -182,11 +199,16 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
             const custInitials = c.customerName ? getInitials(c.customerName) : 'CU';
             const custColor = c.customerName ? getAvatarColor(c.customerName) : { bg: '#64748b', text: '#ffffff' };
 
-            const agentInitials = c.ownerName ? getInitials(c.ownerName) : '?';
-            const agentColor = c.ownerName ? getAvatarColor(c.ownerName) : { bg: '#94a3af', text: '#ffffff' };
-            const agentFirstName = c.ownerName ? c.ownerName.split(' ')[0] : 'Unassigned';
+            const isAssigned = Boolean(c.ownerName && c.ownerName.trim() && c.ownerName.toLowerCase() !== 'unassigned');
+            const agentInitials = isAssigned ? getInitials(c.ownerName) : '';
+            const agentColor = isAssigned ? getAvatarColor(c.ownerName) : null;
+            const agentFirstName = isAssigned ? c.ownerName.split(' ')[0] : '';
 
             const resolvedSlaStartTime = c.slaStartTime || c.createdAt;
+
+            // Escalation level comes only from the case's escalationLevel. (A "-L01" suffix in
+            // a case number marks a linked sub-case, not an escalation level.)
+            const escLvl = c.escalationLevel || null;
 
             return (
               <tr
@@ -205,7 +227,7 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
                   />
                 </td>
 
-                {/* Case ID & Title */}
+                {/* Case ID & Subject */}
                 <td className="td-case">
                   <div className="case-cell">
                     <span className="case-cell__number">{c.caseNumber}</span>
@@ -213,7 +235,7 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
                   </div>
                 </td>
 
-                {/* Customer */}
+                {/* Customer with Avatar & Subtitle */}
                 <td className="td-customer">
                   <div className="customer-cell">
                     <span
@@ -224,37 +246,41 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
                     </span>
                     <div className="customer-cell__info">
                       <span className="customer-cell__name">{c.customerName || 'Walk-in Customer'}</span>
-                      <span className="customer-cell__segment">{c.caseType || 'Standard'}</span>
+                      <span className="customer-cell__segment">{c.caseType || 'Priority'}</span>
                     </div>
                   </div>
                 </td>
 
-                {/* Channel */}
+                {/* Channel Badge */}
                 <td className="td-channel">
                   <ChannelBadge channel={c.sourceChannel || c.communicationChannel || 'Voice'} />
                 </td>
 
-                {/* Priority */}
+                {/* Priority Pill */}
                 <td className="td-priority">
                   <PriorityBadgeList severity={c.severity} />
                 </td>
 
-                {/* Status */}
+                {/* Status Pill (+ optional escalation level badge) */}
                 <td className="td-status">
-                  <StatusBadgeList status={c.status} />
+                  <StatusBadgeList status={c.status} escalationLevel={escLvl} />
                 </td>
 
-                {/* Assignee / Agent */}
+                {/* Assignee / Queue */}
                 <td className="td-assignee">
-                  <div className="assignee-cell" title={`Assigned Agent: ${c.ownerName || 'Unassigned'}`}>
-                    <span
-                      className="assignee-cell__avatar"
-                      style={{ backgroundColor: agentColor.bg, color: agentColor.text }}
-                    >
-                      {agentInitials}
-                    </span>
-                    <span className="assignee-cell__name">{agentFirstName}</span>
-                  </div>
+                  {isAssigned ? (
+                    <div className="assignee-cell" title={`Assigned Agent: ${c.ownerName}`}>
+                      <span
+                        className="assignee-cell__avatar"
+                        style={{ backgroundColor: agentColor.bg, color: agentColor.text }}
+                      >
+                        {agentInitials}
+                      </span>
+                      <span className="assignee-cell__name">{agentFirstName}</span>
+                    </div>
+                  ) : (
+                    <span className="assignee-unassigned-tag">Queue</span>
+                  )}
                 </td>
 
                 {/* Resolution SLA */}
@@ -269,7 +295,7 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
                   />
                 </td>
 
-                {/* Created */}
+                {/* Created Date */}
                 <td className="td-created">
                   <span className="created-cell">{formatCreatedDate(c.createdAt)}</span>
                 </td>

@@ -23,14 +23,19 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
     });
 
-var frontendUrl = builder.Configuration["FrontendUrl"] ?? "https://csm-livid.vercel.app";
+// CORS allow-list is driven by configuration so production can restrict origins
+// without code changes. The development config includes localhost ports.
+var allowedOriginsRaw = builder.Configuration["AllowedOrigins"] ?? "http://localhost:3000,http://localhost:5173";
+var allowedOrigins = allowedOriginsRaw
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .ToArray();
 
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactPolicy", policy =>
     {
         policy
-            .SetIsOriginAllowed(_ => true)
+            .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -63,12 +68,16 @@ builder.Services.AddScoped<ICustomerService, CustomerService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IConfigurableSettingsService, ConfigurableSettingsService>();
+builder.Services.AddScoped<IPiiMaskingService, PiiMaskingService>();
 
 // Register SLA Escalation Background Worker
 builder.Services.AddHostedService<SlaEscalationBackgroundService>();
 
 // In-process cache used by the authorization middleware and lookup caching
 builder.Services.AddMemoryCache();
+
+// Lets services read the acting user (for audit records) set by UserAuthorizationMiddleware
+builder.Services.AddHttpContextAccessor();
 
 // Bind tunables so they are configurable per environment rather than compiled in
 builder.Services.Configure<CaseManagement.Api.Configuration.SearchOptions>(
@@ -77,6 +86,8 @@ builder.Services.Configure<CaseManagement.Api.Configuration.UserAuthorizationOpt
     builder.Configuration.GetSection(CaseManagement.Api.Configuration.UserAuthorizationOptions.SectionName));
 builder.Services.Configure<CaseManagement.Api.Configuration.LookupCacheOptions>(
     builder.Configuration.GetSection(CaseManagement.Api.Configuration.LookupCacheOptions.SectionName));
+builder.Services.Configure<CaseManagement.Api.Configuration.AttachmentOptions>(
+    builder.Configuration.GetSection(CaseManagement.Api.Configuration.AttachmentOptions.SectionName));
 
 // Register FluentValidation
 builder.Services.AddFluentValidationAutoValidation();
@@ -85,6 +96,20 @@ builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionMiddleware>();
+
+// Correlation ID: if the host app sends one, use it; otherwise create one.
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Headers.ContainsKey("X-Correlation-Id"))
+    {
+        context.Request.Headers["X-Correlation-Id"] = Guid.NewGuid().ToString("N");
+    }
+    context.Response.Headers["X-Correlation-Id"] = context.Request.Headers["X-Correlation-Id"].ToString();
+    using (app.Logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = context.Request.Headers["X-Correlation-Id"].ToString() }))
+    {
+        await next();
+    }
+});
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -208,23 +233,6 @@ using (var scope = app.Services.CreateScope())
 
 
         db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""NotificationRules"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_NotificationRules"" PRIMARY KEY,
-                ""EventType"" text NOT NULL,
-                ""Name"" text NOT NULL,
-                ""IsEnabled"" boolean NOT NULL DEFAULT true,
-                ""Priority"" text NOT NULL DEFAULT 'High',
-                ""CooldownMinutes"" integer NOT NULL DEFAULT 60,
-                ""MaxReminders"" integer NOT NULL DEFAULT 3,
-                ""EnableAggregation"" boolean NOT NULL DEFAULT true,
-                ""AggregationThreshold"" integer NOT NULL DEFAULT 3,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_NotificationRules_EventType"" ON ""NotificationRules"" (""EventType"");
-        ");
-
-        db.Database.ExecuteSqlRaw(@"
             CREATE INDEX IF NOT EXISTS ""IX_Notifications_RecipientUserId"" ON ""Notifications"" (""RecipientUserId"");
             CREATE INDEX IF NOT EXISTS ""IX_Notifications_IsRead"" ON ""Notifications"" (""IsRead"");
             CREATE INDEX IF NOT EXISTS ""IX_Notifications_CreatedAt"" ON ""Notifications"" (""CreatedAt"");
@@ -325,17 +333,9 @@ using (var scope = app.Services.CreateScope())
             );
             CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SlaConfigurations_Severity"" ON ""SlaConfigurations"" (""Severity"");
 
-            CREATE TABLE IF NOT EXISTS ""DepartmentEscalationTemplates"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_DepartmentEscalationTemplates"" PRIMARY KEY,
-                ""DepartmentId"" uuid NOT NULL CONSTRAINT ""FK_DepartmentEscalationTemplates_Departments_DepartmentId"" REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
-                ""EscalationReason"" text NOT NULL,
-                ""SubjectTemplate"" text NOT NULL,
-                ""BodyTemplate"" text NOT NULL,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE INDEX IF NOT EXISTS ""IX_DepartmentEscalationTemplates_DepartmentId"" ON ""DepartmentEscalationTemplates"" (""DepartmentId"");
+            -- Clean up retired tables from removed features
+            DROP TABLE IF EXISTS ""DepartmentEscalationTemplates"" CASCADE;
+            DROP TABLE IF EXISTS ""NotificationRules"" CASCADE;
         ");
     }
     catch (Exception ex)
@@ -376,11 +376,63 @@ using (var scope = app.Services.CreateScope())
             -- SQL because EF Core cannot model an expression index.
             CREATE INDEX IF NOT EXISTS ""IX_Customers_NRIC_Normalized""
                 ON ""Customers"" (replace(""NRIC"", '-', ''));
+
+            -- Case List View paging and Board columns: WHERE Status = ? ORDER BY CreatedAt DESC.
+            CREATE INDEX IF NOT EXISTS ""IX_Cases_Status_CreatedAt"" ON ""Cases"" (""Status"", ""CreatedAt"" DESC);
+            -- Priority filter and severity usage counts.
+            CREATE INDEX IF NOT EXISTS ""IX_Cases_Severity"" ON ""Cases"" (""Severity"");
+            -- Duplicate-notification check performed before every notification insert.
+            CREATE INDEX IF NOT EXISTS ""IX_Notifications_Dedup""
+                ON ""Notifications"" (""RecipientUserId"", ""Type"", ""CaseId"", ""CreatedAt"" DESC);
         ");
     }
     catch (Exception ex)
     {
         Console.WriteLine($"[DB Index Bootstrap] Note: {ex.Message}");
+    }
+
+    // --- Case collaboration feed ------------------------------------------------------
+    // Collaboration activity is stored apart from the case workflow timeline (CaseEvents).
+    try
+    {
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""CaseCollaborationActivities"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_CaseCollaborationActivities"" PRIMARY KEY,
+                ""CaseId"" uuid NOT NULL CONSTRAINT ""FK_CaseCollaborationActivities_Cases_CaseId"" REFERENCES ""Cases"" (""Id"") ON DELETE CASCADE,
+                ""ActivityType"" text NOT NULL,
+                ""ActorUserId"" uuid NOT NULL CONSTRAINT ""FK_CaseCollaborationActivities_Users_ActorUserId"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
+                ""TargetUserId"" uuid NULL CONSTRAINT ""FK_CaseCollaborationActivities_Users_TargetUserId"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
+                ""Content"" text NULL,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS ""IX_CaseCollaborationActivities_CaseId_CreatedAt""
+                ON ""CaseCollaborationActivities"" (""CaseId"", ""CreatedAt"" DESC);
+            CREATE INDEX IF NOT EXISTS ""IX_CaseCollaborationActivities_ActorUserId"" ON ""CaseCollaborationActivities"" (""ActorUserId"");
+            CREATE INDEX IF NOT EXISTS ""IX_CaseCollaborationActivities_TargetUserId"" ON ""CaseCollaborationActivities"" (""TargetUserId"");
+        ");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[DB Collaboration Bootstrap] Note: {ex.Message}");
+    }
+
+    // --- Trigram search indexes ---------------------------------------------------------
+    // Case and customer search use ILIKE '%term%', which a B-tree index cannot serve. pg_trgm
+    // GIN indexes make those searches index scans. Isolated so a database without permission
+    // to create the extension still starts normally (search just stays unindexed).
+    try
+    {
+        db.Database.ExecuteSqlRaw(@"
+            CREATE EXTENSION IF NOT EXISTS pg_trgm;
+            CREATE INDEX IF NOT EXISTS ""IX_Cases_CaseNumber_Trgm"" ON ""Cases"" USING gin (""CaseNumber"" gin_trgm_ops);
+            CREATE INDEX IF NOT EXISTS ""IX_Cases_Title_Trgm"" ON ""Cases"" USING gin (""Title"" gin_trgm_ops);
+            CREATE INDEX IF NOT EXISTS ""IX_Customers_FullName_Trgm"" ON ""Customers"" USING gin (""FullName"" gin_trgm_ops);
+            CREATE INDEX IF NOT EXISTS ""IX_Users_Name_Trgm"" ON ""Users"" USING gin (""Name"" gin_trgm_ops);
+        ");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[DB Trigram Index Bootstrap] Note: {ex.Message}");
     }
 
     // --- Case number sequence ----------------------------------------------------------

@@ -1,6 +1,6 @@
 // ===== CASE COLLABORATION DRAWER =====
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Zap, UserPlus, Send, MessageSquare, ShieldAlert, Check } from 'lucide-react';
 import { Modal } from '../../common/Modal/Modal.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
@@ -37,6 +37,57 @@ export function CollaborationDrawer({
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
   const inputRef = useRef(null);
 
+  // ---- Collaboration feed (collaboration-only activity, not the case workflow timeline) ----
+  const [feed, setFeed] = useState({ collaborators: null, activities: [], hasMore: false });
+  const [isFeedLoading, setIsFeedLoading] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+
+  const loadFeed = useCallback(async () => {
+    if (!activeCaseId) return;
+    setIsFeedLoading(true);
+    try {
+      const data = await caseService.getCollaboration(activeCaseId);
+      setFeed({
+        collaborators: data.collaborators || [],
+        activities: data.activities || [],
+        hasMore: Boolean(data.hasMore),
+      });
+    } catch (err) {
+      toast.error(err.message || 'Failed to load collaboration activity.');
+    } finally {
+      setIsFeedLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCaseId]);
+
+  const loadOlder = async () => {
+    const oldest = feed.activities[feed.activities.length - 1];
+    if (!oldest || !activeCaseId) return;
+    setIsLoadingOlder(true);
+    try {
+      const data = await caseService.getCollaboration(activeCaseId, { before: oldest.createdAt });
+      setFeed((prev) => ({
+        ...prev,
+        activities: [...prev.activities, ...(data.activities || [])],
+        hasMore: Boolean(data.hasMore),
+      }));
+    } catch (err) {
+      toast.error(err.message || 'Failed to load older activity.');
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) loadFeed();
+  }, [isOpen, loadFeed]);
+
+  // After any collaboration change: refresh this feed and let the case drawer refresh itself.
+  const afterChange = () => {
+    loadFeed();
+    onSuccess?.();
+  };
+
   useEffect(() => {
     if (propUsers && propUsers.length > 0) {
       setUsers(propUsers);
@@ -53,7 +104,7 @@ export function CollaborationDrawer({
 
   if (!isOpen || !caseData) return null;
 
-  const participants = caseData.participants || [];
+  const participants = feed.collaborators ?? caseData.participants ?? [];
   const existingParticipantIds = participants.map((p) => String(p.userId));
 
   // Available agents not yet collaborators or owner
@@ -139,7 +190,7 @@ export function CollaborationDrawer({
       await caseService.addCoworkers(activeCaseId, { coworkerIds: [userId] });
       toast.success('Collaborator added to case.');
       setSelectedWatcherId('');
-      onSuccess?.();
+      afterChange();
     } catch (err) {
       toast.error(err.message || 'Failed to add collaborator.');
     } finally {
@@ -153,7 +204,7 @@ export function CollaborationDrawer({
     try {
       const res = await caseService.requestSwarm(activeCaseId);
       toast.success(res.message || 'Swarm requested successfully!');
-      onSuccess?.();
+      afterChange();
     } catch (err) {
       toast.error(err.message || 'Failed to request swarm.');
     } finally {
@@ -165,13 +216,10 @@ export function CollaborationDrawer({
     if (!message.trim() || !activeCaseId) return;
     setIsPostingMessage(true);
     try {
-      await caseService.addTimelineInteraction(activeCaseId, {
-        message: message.trim(),
-        isInternal: true,
-      });
+      await caseService.addCollaborationNote(activeCaseId, message.trim());
       setMessage('');
-      toast.success('Internal note posted.');
-      onSuccess?.();
+      toast.success('Collaboration note posted.');
+      loadFeed();
     } catch (err) {
       toast.error(err.message || 'Failed to post note.');
     } finally {
@@ -186,7 +234,7 @@ export function CollaborationDrawer({
       await caseService.removeCoworker(activeCaseId, pendingRemoveUser.userId);
       toast.success(`${pendingRemoveUser.userName || 'Collaborator'} removed.`);
       setPendingRemoveUser(null);
-      onSuccess?.();
+      afterChange();
     } catch (err) {
       toast.error(err.message || 'Failed to remove collaborator.');
     } finally {
@@ -206,23 +254,7 @@ export function CollaborationDrawer({
     }, 50);
   };
 
-  // Filter for Swarm events and agent notes / mentions only (exclude automated system logs)
-  const isSwarmEvent = (e) => {
-    const msg = (e.message || '').toLowerCase();
-    return msg.includes('swarm') || e.eventType === 'Cowork';
-  };
-
-  const isAgentMessage = (e) => {
-    const author = (e.user?.name || e.userName || '').toLowerCase();
-    const isSystem = !e.user && (!author || author.includes('system') || author.includes('automation'));
-    if (isSystem) return false;
-    const msg = e.message || '';
-    return e.isInternal === true || msg.includes('@') || e.eventType === 'Note';
-  };
-
-  const collaborationEvents = (caseData.events || [])
-    .filter((e) => isSwarmEvent(e) || isAgentMessage(e))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const activities = feed.activities;
 
   return (
     <>
@@ -319,7 +351,7 @@ export function CollaborationDrawer({
             <textarea
               ref={inputRef}
               className="collaboration-drawer__composer-textarea"
-              placeholder="Post an internal note or mention a colleague with @Name..."
+              placeholder="Post a collaboration note or mention a colleague with @Name..."
               value={message}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
@@ -360,7 +392,7 @@ export function CollaborationDrawer({
                 <UserPlus size={13} />
                 <span>Mention</span>
               </button>
-              <span className="collaboration-drawer__shortcut-hint">Ctrl+Enter to post</span>
+              <span className="collaboration-drawer__shortcut-hint">Enter to post · Shift+Enter for a new line</span>
             </div>
 
             <Button
@@ -376,61 +408,67 @@ export function CollaborationDrawer({
           </div>
         </div>
 
-        {/* Discussion Stream (Newest First) */}
+        {/* Collaboration activity (newest first) — collaborator changes, notes and swarm requests only */}
         <div className="collaboration-drawer__stream scrollbar-thin">
           <div className="collaboration-drawer__stream-header">
             <span className="collaboration-drawer__stream-title">
-              COLLABORATION DISCUSSION &amp; SWARM EVENTS
+              COLLABORATION ACTIVITY
             </span>
             <span className="collaboration-drawer__stream-count">
-              &middot; {collaborationEvents.length} {collaborationEvents.length === 1 ? 'event' : 'events'} (Newest first)
+              &middot; {activities.length}{feed.hasMore ? '+' : ''} {activities.length === 1 ? 'entry' : 'entries'} (Newest first)
             </span>
           </div>
 
-          {collaborationEvents.length === 0 ? (
+          {isFeedLoading && activities.length === 0 ? (
+            <div className="collaboration-drawer__empty-stream">
+              <p className="collaboration-drawer__empty-desc">Loading collaboration activity…</p>
+            </div>
+          ) : activities.length === 0 ? (
             <div className="collaboration-drawer__empty-stream">
               <div className="collaboration-drawer__empty-icon">
                 <MessageSquare size={28} strokeWidth={1.5} color="#3b82f6" />
               </div>
-              <p className="collaboration-drawer__empty-title">No internal discussions or swarm events yet</p>
+              <p className="collaboration-drawer__empty-title">No collaboration activity yet</p>
               <p className="collaboration-drawer__empty-desc">
-                Post an internal note above, request a swarm, or mention a colleague with @Name to collaborate.
+                Add a collaborator, post a collaboration note, or request a swarm to start collaborating.
               </p>
             </div>
           ) : (
             <div className="collaboration-drawer__message-list">
-              {collaborationEvents.map((evt) => {
-                const isSwarm = (evt.message || '').toLowerCase().includes('swarm');
-                const authorName = evt.user?.name || evt.userName || (isSwarm ? 'Swarm Automation' : 'Staff');
-                const authorRole = evt.user?.role || (isSwarm ? 'System Action' : 'Collaborator');
-
+              {activities.map((act) => {
+                const isSwarm = act.activityType === 'SwarmRequested';
+                const hasBubble = Boolean(act.content);
                 return (
-                  <div key={evt.id} className={`collaboration-message-item ${isSwarm ? 'collaboration-message-item--swarm-wrap' : ''}`}>
+                  <div key={act.id} className={`collaboration-message-item ${isSwarm ? 'collaboration-message-item--swarm-wrap' : ''}`}>
                     <div className={`collaboration-message-item__dot ${isSwarm ? 'collaboration-message-item__dot--swarm' : ''}`} />
                     <div className="collaboration-message-item__content">
                       <div className="collaboration-message-item__header">
-                        <Avatar name={authorName} size="xs" />
+                        <Avatar name={act.actorName || 'Staff'} size="xs" />
                         <span className="collaboration-message-item__author">
-                          {authorName}
-                        </span>
-                        <span className="collaboration-message-item__role">
-                          ({authorRole})
+                          {describeActivity(act)}
                         </span>
                         <span className="collaboration-message-item__time-dot">&middot;</span>
                         <span className="collaboration-message-item__time">
-                          {formatFullDateTime(evt.createdAt)}
+                          {formatFullDateTime(act.createdAt)}
                         </span>
                       </div>
-                      <div className={`collaboration-message-item__bubble ${isSwarm ? 'collaboration-message-item__bubble--swarm' : ''}`}>
-                        {isSwarm && <Zap size={14} className="collaboration-message-item__swarm-zap" />}
-                        <p className="collaboration-message-item__text">
-                          {renderMessageWithMentions(evt.message)}
-                        </p>
-                      </div>
+                      {hasBubble && (
+                        <div className={`collaboration-message-item__bubble ${isSwarm ? 'collaboration-message-item__bubble--swarm' : ''}`}>
+                          {isSwarm && <Zap size={14} className="collaboration-message-item__swarm-zap" />}
+                          <p className="collaboration-message-item__text">
+                            {renderMessageWithMentions(act.content)}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
+              {feed.hasMore && (
+                <Button variant="ghost" size="sm" isLoading={isLoadingOlder} onClick={loadOlder}>
+                  Show older activity
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -447,6 +485,24 @@ export function CollaborationDrawer({
       />
     </>
   );
+}
+
+// One readable sentence per collaboration activity, e.g. "Mukul added Shivam as a collaborator."
+function describeActivity(act) {
+  const actor = act.actorName || 'A user';
+  const target = act.targetName || 'a user';
+  switch (act.activityType) {
+    case 'CollaboratorAdded':
+      return `${actor} added ${target} as a collaborator.`;
+    case 'CollaboratorRemoved':
+      return `${actor} removed ${target} as a collaborator.`;
+    case 'NoteAdded':
+      return `${actor} added a note:`;
+    case 'SwarmRequested':
+      return act.content ? `${actor} requested a swarm:` : `${actor} requested a swarm.`;
+    default:
+      return actor;
+  }
 }
 
 function renderMessageWithMentions(text) {

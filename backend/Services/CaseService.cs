@@ -7,6 +7,9 @@ using CaseManagement.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Hosting;
 
+using CaseManagement.Api.Configuration;
+using Microsoft.Extensions.Options;
+
 public class CaseService : ICaseService
 {
     private readonly ICaseRepository _caseRepository;
@@ -14,23 +17,75 @@ public class CaseService : ICaseService
     private readonly IConfigurableSettingsService _settingsService;
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _env;
+    private readonly AttachmentOptions _attachmentOptions;
+    private readonly IPiiMaskingService? _piiMasking;
 
     public CaseService(
         ICaseRepository caseRepository,
         INotificationService notificationService,
         IConfigurableSettingsService settingsService,
         AppDbContext context,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        IOptions<AttachmentOptions>? attachmentOptions = null,
+        IPiiMaskingService? piiMasking = null)
     {
         _caseRepository = caseRepository;
         _notificationService = notificationService;
         _settingsService = settingsService;
         _context = context;
         _env = env;
+        _attachmentOptions = attachmentOptions?.Value ?? new AttachmentOptions();
+        _piiMasking = piiMasking;
+    }
+
+    /// <summary>
+    /// Executes a unit of work inside a user-initiated transaction wrapped in the configured
+    /// execution strategy (e.g. NpgsqlRetryingExecutionStrategy), as required by EF Core when
+    /// retry-on-failure is enabled.
+    /// </summary>
+    private async Task ExecuteInTransactionAsync(Func<Task> action)
+    {
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                await action();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    private async Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action)
+    {
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                var result = await action();
+                await transaction.CommitAsync();
+                return result;
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<Case> CreateCaseAsync(CreateCaseDto dto, Guid createdByUserId)
     {
+        await ValidateCreateCaseMetadataAsync(dto);
+
         var severity = await ResolveSeverityAsync(dto.Severity);
 
         string caseTypeInput = dto.CaseType?.Trim() ?? "";
@@ -108,8 +163,6 @@ public class CaseService : ICaseService
             EscalationLevel = 1,
         };
 
-        await _caseRepository.AddAsync(newCase);
-
         var caseEvent = new CaseEvent
         {
             CaseId = newCase.Id,
@@ -118,7 +171,12 @@ public class CaseService : ICaseService
             CreatedAt = DateTime.UtcNow,
             UserId = createdByUserId
         };
-        await _caseRepository.AddEventAsync(caseEvent);
+
+        await ExecuteInTransactionAsync(async () =>
+        {
+            await _caseRepository.AddAsync(newCase);
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
 
         try
         {
@@ -141,15 +199,13 @@ public class CaseService : ICaseService
 
     public async Task<CaseDetailDto?> GetCaseDetailsAsync(Guid caseId, CancellationToken ct = default)
     {
-        try
+        // Read-only: SLA monitoring runs in SlaEscalationBackgroundService, never on a read.
+        var caseDetail = await _caseRepository.GetCaseDetailAsync(caseId, ct);
+        if (caseDetail?.Customer != null && _piiMasking != null)
         {
-            await EvaluateSlaEscalationsAsync(caseId, ct);
+            await _piiMasking.MaskCustomerSummaryAsync(caseDetail.Customer, ct);
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[EvaluateSlaEscalations Error on GetDetails] {ex.Message}");
-        }
-        return await _caseRepository.GetCaseDetailAsync(caseId, ct);
+        return caseDetail;
     }
 
     public async Task<IEnumerable<SearchCaseHitDto>> SearchCasesAsync(string query, int limit, CancellationToken ct = default)
@@ -162,13 +218,36 @@ public class CaseService : ICaseService
         return await _caseRepository.GetBoardCasesAsync(departmentId, caseType, ct);
     }
 
+    public async Task<PagedResponseDto<CaseSummaryDto>> GetPaginatedBoardCasesAsync(
+        string? status = null,
+        int page = 1,
+        int pageSize = 30,
+        Guid? departmentId = null,
+        string? caseType = null,
+        string? search = null,
+        string? priority = null,
+        string? channel = null,
+        CancellationToken ct = default)
+    {
+        return await _caseRepository.GetPaginatedBoardCasesAsync(
+            status,
+            page,
+            pageSize,
+            departmentId,
+            caseType,
+            search,
+            priority,
+            channel,
+            ct);
+    }
+
     public async Task UpdateCaseStatusAsync(Guid caseId, UpdateCaseStatusDto dto)
     {
         var existingCase = await _caseRepository.GetByIdAsync(caseId);
         if (existingCase == null) throw new ArgumentException("Case not found");
 
         if (existingCase.Status == CaseStatus.Resolved)
-            throw new InvalidOperationException("Cannot update status of a resolved case.");
+            throw new InvalidOperationException("Cannot update status of a resolved case. Use Reopen instead.");
 
         string rawStatus = dto.Status?.Trim() ?? "";
         CaseStatus newStatus;
@@ -184,13 +263,28 @@ public class CaseService : ICaseService
         {
             newStatus = CaseStatus.InProgress;
         }
-        else
+        else if (!Enum.TryParse<CaseStatus>(rawStatus.Replace(" ", "").Replace("_", ""), true, out newStatus) || !Enum.IsDefined(newStatus))
         {
-            newStatus = Enum.Parse<CaseStatus>(rawStatus, true);
+            throw new InvalidOperationException($"'{rawStatus}' is not a valid case status.");
         }
         
         if (existingCase.Status == newStatus)
             throw new InvalidOperationException($"Case is already in '{newStatus}' status.");
+
+        // --- Status Transition Validation ---
+        // Only approved transitions are allowed. Resolved must go through ResolveCaseAsync,
+        // Escalated must go through EscalateCaseAsync.
+        if (newStatus == CaseStatus.Resolved)
+            throw new InvalidOperationException("Use the Resolve workflow to resolve a case.");
+
+        if (newStatus == CaseStatus.Escalated)
+            throw new InvalidOperationException("Use the Escalate workflow to escalate a case.");
+
+        if (!IsValidTransition(existingCase.Status, newStatus))
+            throw new InvalidOperationException(
+                $"Cannot transition from '{existingCase.Status}' to '{newStatus}'. " +
+                $"Allowed transitions from '{existingCase.Status}': {string.Join(", ", GetAllowedTransitions(existingCase.Status))}.");
+
 
         var oldStatus = existingCase.Status;
 
@@ -242,8 +336,6 @@ public class CaseService : ICaseService
             }
         }
 
-        await _caseRepository.UpdateAsync(existingCase);
-
         var eventType = newStatus switch
         {
             CaseStatus.Resolved => EventType.Resolve,
@@ -260,7 +352,12 @@ public class CaseService : ICaseService
             CreatedAt = DateTime.UtcNow,
             UserId = dto.UserId
         };
-        await _caseRepository.AddEventAsync(caseEvent);
+
+        await ExecuteInTransactionAsync(async () =>
+        {
+            await _caseRepository.UpdateAsync(existingCase);
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
 
         try
         {
@@ -287,16 +384,17 @@ public class CaseService : ICaseService
         if (existingCase.OwnerId == dto.OwnerId)
             throw new InvalidOperationException($"{existingCase.Owner?.Name ?? "The current owner"} is already handling this case.");
 
+        var newOwner = await _context.Users.FindAsync(dto.OwnerId);
+        if (newOwner == null)
+            throw new ArgumentException("Assigned user not found.");
+
         existingCase.OwnerId = dto.OwnerId;
         existingCase.SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity);
         
         // Reset SLA timer
         existingCase.SlaStartTime = DateTime.UtcNow;
-        
-        await _caseRepository.UpdateAsync(existingCase);
 
-        var newOwner = await _context.Users.FindAsync(dto.OwnerId);
-        var ownerName = newOwner?.Name ?? "new agent";
+        var ownerName = newOwner.Name;
         var reasonText = !string.IsNullOrWhiteSpace(dto.Reason) ? $" Reason: {dto.Reason}." : "";
 
         var caseEvent = new CaseEvent
@@ -307,7 +405,12 @@ public class CaseService : ICaseService
             CreatedAt = DateTime.UtcNow,
             UserId = dto.UserId
         };
-        await _caseRepository.AddEventAsync(caseEvent);
+
+        await ExecuteInTransactionAsync(async () =>
+        {
+            await _caseRepository.UpdateAsync(existingCase);
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
 
         try
         {
@@ -360,29 +463,55 @@ public class CaseService : ICaseService
         if (existingCase.Status == CaseStatus.Resolved)
             throw new InvalidOperationException("Cannot add coworkers to a resolved case.");
 
-        foreach (var coworkerUserId in coworkerUserIds)
-        {
-            if (existingCase.Participants.Any(p => p.UserId == coworkerUserId && p.Role == ParticipantRole.CoWorker))
-                throw new InvalidOperationException("One or more users are already coworkers on this case.");
+        var ids = (coworkerUserIds ?? new List<Guid>()).Where(id => id != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0)
+            throw new InvalidOperationException("Select at least one collaborator.");
 
-            var participant = new CaseParticipant
+        // Validate everything first so a bad id cannot leave the case half-updated.
+        if (existingCase.Participants.Any(p => ids.Contains(p.UserId) && p.Role == ParticipantRole.CoWorker))
+            throw new InvalidOperationException("One or more users are already coworkers on this case.");
+
+        var users = await _context.Users.AsNoTracking()
+            .Where(u => ids.Contains(u.Id) || u.Id == addedByUserId)
+            .Select(u => new { u.Id, u.Name })
+            .ToListAsync();
+        if (ids.Any(id => users.All(u => u.Id != id)))
+            throw new InvalidOperationException("One or more selected users no longer exist.");
+
+        var now = DateTime.UtcNow;
+        var actorName = users.FirstOrDefault(u => u.Id == addedByUserId)?.Name ?? "A user";
+        var addedNames = new List<string>();
+
+        foreach (var id in ids)
+        {
+            _context.CaseParticipants.Add(new CaseParticipant
             {
                 CaseId = caseId,
-                UserId = coworkerUserId,
+                UserId = id,
                 Role = ParticipantRole.CoWorker
-            };
-            await _caseRepository.AddParticipantAsync(participant);
+            });
+            _context.CaseCollaborationActivities.Add(new CaseCollaborationActivity
+            {
+                CaseId = caseId,
+                ActivityType = CollaborationActivityTypes.CollaboratorAdded,
+                ActorUserId = addedByUserId,
+                TargetUserId = id,
+                CreatedAt = now
+            });
+            addedNames.Add(users.First(u => u.Id == id).Name);
         }
 
-        var caseEvent = new CaseEvent
+        _context.CaseEvents.Add(new CaseEvent
         {
             CaseId = caseId,
             EventType = EventType.Cowork,
-            Message = $"Added {coworkerUserIds.Count} Co-worker(s)",
-            CreatedAt = DateTime.UtcNow,
+            Message = $"{actorName} added {string.Join(", ", addedNames)} as collaborator{(addedNames.Count > 1 ? "s" : "")}.",
+            CreatedAt = now,
             UserId = addedByUserId
-        };
-        await _caseRepository.AddEventAsync(caseEvent);
+        });
+
+        // Participants, collaboration activity and the audit event are saved together.
+        await _context.SaveChangesAsync();
     }
 
     public async Task RemoveCoworkerAsync(Guid caseId, Guid coworkerUserId, Guid removedByUserId)
@@ -393,17 +522,181 @@ public class CaseService : ICaseService
         if (existingCase.Status == CaseStatus.Resolved)
             throw new InvalidOperationException("Cannot remove coworkers from a resolved case.");
 
-        await _caseRepository.RemoveParticipantAsync(caseId, coworkerUserId);
+        var participant = existingCase.Participants.FirstOrDefault(p => p.UserId == coworkerUserId);
+        if (participant == null)
+            throw new InvalidOperationException("That user is not a collaborator on this case.");
 
-        var caseEvent = new CaseEvent
+        var names = await _context.Users.AsNoTracking()
+            .Where(u => u.Id == coworkerUserId || u.Id == removedByUserId)
+            .ToDictionaryAsync(u => u.Id, u => u.Name);
+        var now = DateTime.UtcNow;
+        var actorName = names.TryGetValue(removedByUserId, out var actorValue) ? actorValue : "A user";
+        var targetName = names.TryGetValue(coworkerUserId, out var targetValue) ? targetValue : "a collaborator";
+
+        _context.CaseParticipants.Remove(participant);
+        _context.CaseCollaborationActivities.Add(new CaseCollaborationActivity
+        {
+            CaseId = caseId,
+            ActivityType = CollaborationActivityTypes.CollaboratorRemoved,
+            ActorUserId = removedByUserId,
+            TargetUserId = coworkerUserId,
+            CreatedAt = now
+        });
+        _context.CaseEvents.Add(new CaseEvent
         {
             CaseId = caseId,
             EventType = EventType.Cowork,
-            Message = "Removed Co-worker",
-            CreatedAt = DateTime.UtcNow,
+            Message = $"{actorName} removed {targetName} as collaborator.",
+            CreatedAt = now,
             UserId = removedByUserId
+        });
+
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<CaseCollaborationDto> GetCollaborationAsync(Guid caseId, DateTime? before, int limit, CancellationToken ct = default)
+    {
+        if (limit < 1) limit = 50;
+        if (limit > 200) limit = 200;
+
+        var collaborators = await _context.CaseParticipants.AsNoTracking()
+            .Where(p => p.CaseId == caseId)
+            .Select(p => new ParticipantDto
+            {
+                UserId = p.UserId,
+                UserName = p.User != null ? p.User.Name : string.Empty,
+                Role = p.Role.ToString()
+            })
+            .ToListAsync(ct);
+
+        var query = _context.CaseCollaborationActivities.AsNoTracking().Where(a => a.CaseId == caseId);
+        if (before.HasValue)
+        {
+            var cutoff = DateTime.SpecifyKind(before.Value, DateTimeKind.Utc);
+            query = query.Where(a => a.CreatedAt < cutoff);
+        }
+
+        var rows = await query
+            .OrderByDescending(a => a.CreatedAt)
+            .Take(limit + 1)
+            .Select(a => new CollaborationActivityDto
+            {
+                Id = a.Id,
+                ActivityType = a.ActivityType,
+                ActorUserId = a.ActorUserId,
+                ActorName = a.ActorUser != null ? a.ActorUser.Name : string.Empty,
+                ActorRole = a.ActorUser != null ? a.ActorUser.Role : null,
+                TargetUserId = a.TargetUserId,
+                TargetName = a.TargetUser != null ? a.TargetUser.Name : null,
+                Content = a.Content,
+                CreatedAt = a.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        return new CaseCollaborationDto
+        {
+            Collaborators = collaborators,
+            Activities = rows.Take(limit).ToList(),
+            HasMore = rows.Count > limit
         };
-        await _caseRepository.AddEventAsync(caseEvent);
+    }
+
+    public async Task<CollaborationActivityDto> AddCollaborationNoteAsync(Guid caseId, string content, Guid userId)
+    {
+        var text = content?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidOperationException("Note cannot be empty.");
+        if (text.Length > 2000)
+            throw new InvalidOperationException("Note cannot exceed 2000 characters.");
+
+        var existingCase = await _context.Cases.AsNoTracking()
+            .Where(c => c.Id == caseId)
+            .Select(c => new { c.Id, c.CaseNumber })
+            .FirstOrDefaultAsync();
+        if (existingCase == null) throw new ArgumentException("Case not found");
+
+        var sender = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+
+        var activity = new CaseCollaborationActivity
+        {
+            CaseId = caseId,
+            ActivityType = CollaborationActivityTypes.NoteAdded,
+            ActorUserId = userId,
+            Content = text,
+            CreatedAt = DateTime.UtcNow
+        };
+        _context.CaseCollaborationActivities.Add(activity);
+        await _context.SaveChangesAsync();
+
+        // @mentions notify colleagues, as internal notes always have.
+        try
+        {
+            var tokens = System.Text.RegularExpressions.Regex.Matches(text, @"@([a-zA-Z0-9_\.\-]+)")
+                .Select(m => m.Groups[1].Value.ToLowerInvariant())
+                .Distinct()
+                .ToList();
+
+            foreach (var token in tokens)
+            {
+                var matches = await _context.Users.AsNoTracking()
+                    .Where(u => u.Id != userId &&
+                                (u.Name.ToLower().Contains(token) || u.Email.ToLower().StartsWith(token)))
+                    .Select(u => u.Id)
+                    .ToListAsync();
+
+                foreach (var mentionedUserId in matches)
+                {
+                    await _notificationService.CreateNotificationAsync(
+                        mentionedUserId,
+                        "USER_MENTIONED",
+                        "Mentioned in Case Collaboration",
+                        $"{sender?.Name ?? "A colleague"} mentioned you in Case {existingCase.CaseNumber}: \"{text}\"",
+                        caseId,
+                        existingCase.CaseNumber,
+                        "High"
+                    );
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Collaboration Mention Notification Error] {ex.Message}");
+        }
+
+        return new CollaborationActivityDto
+        {
+            Id = activity.Id,
+            ActivityType = activity.ActivityType,
+            ActorUserId = userId,
+            ActorName = sender?.Name ?? string.Empty,
+            ActorRole = sender?.Role,
+            Content = activity.Content,
+            CreatedAt = activity.CreatedAt
+        };
+    }
+
+    public async Task<CaseStatsDto> GetCaseStatsAsync(Guid? departmentId, CancellationToken ct = default)
+    {
+        // Mirrors the counts the page used to compute from the full case list in the browser:
+        // "open" = not resolved; "breached" = not resolved, clock not paused, and past
+        // start + target (+ paused minutes). Done in one SQL statement instead.
+        const string sql = @"
+            SELECT
+                COUNT(*) FILTER (WHERE ""Status"" <> 'Resolved')::int AS ""OpenCount"",
+                COUNT(*) FILTER (
+                    WHERE ""Status"" NOT IN ('Resolved', 'WaitingOnCustomer')
+                      AND ""SlaPausedAt"" IS NULL
+                      AND ""SlaStartTime""
+                          + make_interval(hours => COALESCE(NULLIF(""SlaTargetHours"", 0), 24))
+                          + make_interval(mins => COALESCE(""SlaTotalPausedMinutes"", 0)) <= now()
+                )::int AS ""BreachedCount""
+            FROM ""Cases""";
+
+        var result = departmentId.HasValue
+            ? await _context.Database.SqlQueryRaw<CaseStatsDto>(sql + @" WHERE ""DepartmentId"" = {0}", departmentId.Value).SingleAsync(ct)
+            : await _context.Database.SqlQueryRaw<CaseStatsDto>(sql).SingleAsync(ct);
+
+        return result;
     }
 
     public async Task TransferDepartmentAsync(Guid caseId, TransferDepartmentDto dto, Guid transferredByUserId)
@@ -416,6 +709,10 @@ public class CaseService : ICaseService
 
         if (dto.DepartmentId != Guid.Empty && dto.DepartmentId != existingCase.DepartmentId)
         {
+            var targetDept = await _context.Departments.FindAsync(dto.DepartmentId);
+            if (targetDept == null)
+                throw new ArgumentException("Target department not found.");
+
             existingCase.DepartmentId = dto.DepartmentId;
             var newOwnerId = await _caseRepository.GetDepartmentOwnerAsync(dto.DepartmentId);
             if (newOwnerId.HasValue)
@@ -425,8 +722,6 @@ public class CaseService : ICaseService
         }
 
         // SLA TARGETS DO NOT RESET: Transfer keeps SLA clock running continuously without interruption
-        await _caseRepository.UpdateAsync(existingCase);
-
         var targetDesc = !string.IsNullOrWhiteSpace(dto.TargetQueue)
             ? dto.TargetQueue
             : (!string.IsNullOrWhiteSpace(dto.TransferTo) ? dto.TransferTo : "new department");
@@ -441,7 +736,12 @@ public class CaseService : ICaseService
             CreatedAt = DateTime.UtcNow,
             UserId = transferredByUserId
         };
-        await _caseRepository.AddEventAsync(caseEvent);
+
+        await ExecuteInTransactionAsync(async () =>
+        {
+            await _caseRepository.UpdateAsync(existingCase);
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
     }
 
     public async Task<LinkCaseResultDto> LinkCaseAsync(Guid caseId, LinkCaseDto dto)
@@ -461,75 +761,82 @@ public class CaseService : ICaseService
             throw new InvalidOperationException($"Case is already linked to {targetCase.CaseNumber}.");
         }
 
-        // 1. Generate Sub-Case ID (e.g. C-00045-L01)
-        int seq = await _caseRepository.GetNextChildSequenceAsync(caseId, ChildRelationType.Link);
-        string childId = $"{existingCase.CaseNumber}-L{seq:D2}";
+        string childId = string.Empty;
+        Case newLinkSubcase = null!;
 
-        // 2. Create and Save NEW Child Subcase Record in Cases Table
-        var newLinkSubcase = new Case
+        await ExecuteInTransactionAsync(async () =>
         {
-            Id = Guid.NewGuid(),
-            CaseNumber = childId,
-            CaseType = existingCase.CaseType,
-            Title = $"[Linked Subcase] {existingCase.Title}",
-            Description = $"Linked Subcase under Parent Case {existingCase.CaseNumber} referencing Case {targetCase.CaseNumber}. Reason: {dto.RelationshipType}",
-            Status = CaseStatus.Open,
-            Severity = existingCase.Severity,
-            SlaStartTime = DateTime.UtcNow,
-            SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity),
-            DepartmentId = existingCase.DepartmentId,
-            CustomerId = existingCase.CustomerId,
-            OwnerId = existingCase.OwnerId,
-            ParentCaseId = existingCase.Id,
-            LinkedSourceCaseId = targetCase.Id,
-            SubcaseType = "LinkedSubcase",
-            CreatedAt = DateTime.UtcNow
-        };
-        await _caseRepository.AddAsync(newLinkSubcase);
+            // 1. Generate Sub-Case ID (e.g. C-00045-L01)
+            int seq = await _caseRepository.GetNextChildSequenceAsync(caseId, ChildRelationType.Link);
+            childId = $"{existingCase.CaseNumber}-L{seq:D2}";
 
-        // 3. Save Sub-Case Relationship Entity
-        var childRel = new CaseChildRelation
-        {
-            ChildId = childId,
-            ParentCaseId = caseId,
-            RelationType = ChildRelationType.Link,
-            LinkedCaseId = targetCase.Id,
-            Reason = !string.IsNullOrWhiteSpace(dto.RelationshipType) ? dto.RelationshipType : "Linked Case",
-            CreatedByUserId = dto.UserId
-        };
-        await _caseRepository.AddChildRelationAsync(childRel);
+            // 2. Create and Save NEW Child Subcase Record in Cases Table
+            newLinkSubcase = new Case
+            {
+                Id = Guid.NewGuid(),
+                CaseNumber = childId,
+                CaseType = existingCase.CaseType,
+                Title = $"[Linked Subcase] {existingCase.Title}",
+                Description = $"Linked Subcase under Parent Case {existingCase.CaseNumber} referencing Case {targetCase.CaseNumber}. Reason: {dto.RelationshipType}",
+                Status = CaseStatus.Open,
+                Severity = existingCase.Severity,
+                SlaStartTime = DateTime.UtcNow,
+                SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity),
+                DepartmentId = existingCase.DepartmentId,
+                CustomerId = existingCase.CustomerId,
+                OwnerId = existingCase.OwnerId,
+                ParentCaseId = existingCase.Id,
+                LinkedSourceCaseId = targetCase.Id,
+                SubcaseType = "LinkedSubcase",
+                CreatedAt = DateTime.UtcNow
+            };
+            await _caseRepository.AddAsync(newLinkSubcase);
 
-        // 4. Save Legacy LinkedCase Record
-        var linkedCase = new LinkedCase
-        {
-            CaseId = caseId,
-            TargetCaseId = targetCase.Id
-        };
-        await _caseRepository.AddLinkedCaseAsync(linkedCase);
-        
-        // 5. Record Audit Event
-        var caseEvent = new CaseEvent
-        {
-            CaseId = caseId,
-            EventType = EventType.Note,
-            Message = $"Linked case {targetCase.CaseNumber} (Sub-Case ID: {childId}, Reason: {dto.RelationshipType})",
-            CreatedAt = DateTime.UtcNow,
-            UserId = dto.UserId
-        };
-        await _caseRepository.AddEventAsync(caseEvent);
+            // 3. Save Sub-Case Relationship Entity
+            var childRel = new CaseChildRelation
+            {
+                ChildId = childId,
+                ParentCaseId = caseId,
+                RelationType = ChildRelationType.Link,
+                LinkedCaseId = targetCase.Id,
+                Reason = !string.IsNullOrWhiteSpace(dto.RelationshipType) ? dto.RelationshipType : "Linked Case",
+                CreatedByUserId = dto.UserId
+            };
+            await _caseRepository.AddChildRelationAsync(childRel);
 
-        try
-        {
-            await _notificationService.CreateNotificationAsync(
-                existingCase.OwnerId,
-                "SUBCASE_CREATED",
-                "New Subcase Linked",
-                $"Subcase {childId} linked to Case {existingCase.CaseNumber}.",
-                newLinkSubcase.Id,
-                childId
-            );
-        }
-        catch (Exception ex) { Console.WriteLine($"[Notification Trigger Error] {ex.Message}"); }
+            // 4. Save Legacy LinkedCase Record
+            var linkedCase = new LinkedCase
+            {
+                CaseId = caseId,
+                TargetCaseId = targetCase.Id
+            };
+            await _caseRepository.AddLinkedCaseAsync(linkedCase);
+            
+            // 5. Record Audit Event
+            var caseEvent = new CaseEvent
+            {
+                CaseId = caseId,
+                EventType = EventType.Note,
+                Message = $"Linked case {targetCase.CaseNumber} (Sub-Case ID: {childId}, Reason: {dto.RelationshipType})",
+                CreatedAt = DateTime.UtcNow,
+                UserId = dto.UserId
+            };
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
+
+            // Notification outside transaction — failure here is non-critical
+            try
+            {
+                await _notificationService.CreateNotificationAsync(
+                    existingCase.OwnerId,
+                    "SUBCASE_CREATED",
+                    "New Subcase Linked",
+                    $"Subcase {childId} linked to Case {existingCase.CaseNumber}.",
+                    newLinkSubcase.Id,
+                    childId
+                );
+            }
+            catch (Exception ex) { Console.WriteLine($"[Notification Trigger Error] {ex.Message}"); }
 
         return new LinkCaseResultDto
         {
@@ -566,35 +873,38 @@ public class CaseService : ICaseService
             }
         }
 
-        if (targetCaseId.HasValue)
+        await ExecuteInTransactionAsync(async () =>
         {
-            await _caseRepository.RemoveLinkedCaseAsync(caseId, targetCaseId.Value);
-        }
-        else
-        {
-            // Remove by ChildId if matched
-            var relationsToRemove = await _context.Set<CaseChildRelation>()
-                .Where(cr => (cr.ParentCaseId == caseId || cr.LinkedCaseId == caseId) &&
-                             cr.RelationType == ChildRelationType.Link &&
-                             cr.ChildId == dto.TargetCaseNumber)
-                .ToListAsync();
-
-            if (relationsToRemove.Any())
+            if (targetCaseId.HasValue)
             {
-                _context.Set<CaseChildRelation>().RemoveRange(relationsToRemove);
-                await _context.SaveChangesAsync();
+                await _caseRepository.RemoveLinkedCaseAsync(caseId, targetCaseId.Value);
             }
-        }
+            else
+            {
+                // Remove by ChildId if matched
+                var relationsToRemove = await _context.Set<CaseChildRelation>()
+                    .Where(cr => (cr.ParentCaseId == caseId || cr.LinkedCaseId == caseId) &&
+                                 cr.RelationType == ChildRelationType.Link &&
+                                 cr.ChildId == dto.TargetCaseNumber)
+                    .ToListAsync();
 
-        var caseEvent = new CaseEvent
-        {
-            CaseId = caseId,
-            EventType = EventType.Note,
-            Message = $"Unlinked from case {targetCaseNumber}",
-            CreatedAt = DateTime.UtcNow,
-            UserId = dto.UserId
-        };
-        await _caseRepository.AddEventAsync(caseEvent);
+                if (relationsToRemove.Any())
+                {
+                    _context.Set<CaseChildRelation>().RemoveRange(relationsToRemove);
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            var caseEvent = new CaseEvent
+            {
+                CaseId = caseId,
+                EventType = EventType.Note,
+                Message = $"Unlinked from case {targetCaseNumber}",
+                CreatedAt = DateTime.UtcNow,
+                UserId = dto.UserId
+            };
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
     }
 
     public async Task<List<RelatedCustomerCaseDto>> GetRelatedCustomerCasesAsync(Guid caseId)
@@ -643,7 +953,6 @@ public class CaseService : ICaseService
         }
 
         existingCase.Status = CaseStatus.Resolved;
-        existingCase.Severity = "Low";
         existingCase.ResolvedAt = DateTime.UtcNow;
         existingCase.Disposition = dto.Disposition;
         existingCase.ResolutionNote = dto.ResolutionNote;
@@ -654,8 +963,6 @@ public class CaseService : ICaseService
             existingCase.FirstResponseStatus = existingCase.FirstResponseActualAt.Value <= effectiveDueAt ? "Met" : "Breached";
         }
         
-        await _caseRepository.UpdateAsync(existingCase);
-        
         var caseEvent = new CaseEvent
         {
             CaseId = caseId,
@@ -664,7 +971,12 @@ public class CaseService : ICaseService
             CreatedAt = DateTime.UtcNow,
             UserId = dto.UserId
         };
-        await _caseRepository.AddEventAsync(caseEvent);
+
+        await ExecuteInTransactionAsync(async () =>
+        {
+            await _caseRepository.UpdateAsync(existingCase);
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
 
         try
         {
@@ -688,65 +1000,72 @@ public class CaseService : ICaseService
         if (existingCase.Status != CaseStatus.Resolved)
             throw new InvalidOperationException("Only resolved cases can be reopened.");
 
-        // 1. Generate Sub-Case ID (e.g. C-00045-R01)
-        int seq = await _caseRepository.GetNextChildSequenceAsync(caseId, ChildRelationType.Reopen);
-        string childId = $"{existingCase.CaseNumber}-R{seq:D2}";
+        string childId = string.Empty;
+        Case newReopenSubcase = null!;
 
-        // 2. Create and Save NEW Child Subcase Record in Cases Table (Parent Case remains Resolved)
-        var newReopenSubcase = new Case
+        await ExecuteInTransactionAsync(async () =>
         {
-            Id = Guid.NewGuid(),
-            CaseNumber = childId,
-            CaseType = existingCase.CaseType,
-            Title = $"[Reopened] {existingCase.Title}",
-            Description = $"Reopened from Parent Case {existingCase.CaseNumber}. Reason: {dto.Message}",
-            Status = CaseStatus.Open,
-            Severity = existingCase.Severity,
-            SlaStartTime = DateTime.UtcNow,
-            SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity),
-            DepartmentId = existingCase.DepartmentId,
-            CustomerId = existingCase.CustomerId,
-            OwnerId = existingCase.OwnerId,
-            ParentCaseId = existingCase.Id,
-            SubcaseType = "ReopenedSubcase",
-            CreatedAt = DateTime.UtcNow
-        };
-        await _caseRepository.AddAsync(newReopenSubcase);
+            // 1. Generate Sub-Case ID (e.g. C-00045-R01)
+            int seq = await _caseRepository.GetNextChildSequenceAsync(caseId, ChildRelationType.Reopen);
+            childId = $"{existingCase.CaseNumber}-R{seq:D2}";
 
-        // 3. Save Sub-Case Relationship Entity
-        var childRel = new CaseChildRelation
-        {
-            ChildId = childId,
-            ParentCaseId = caseId,
-            RelationType = ChildRelationType.Reopen,
-            LinkedCaseId = null,
-            Reason = dto.Message,
-            CreatedByUserId = dto.UserId
-        };
-        await _caseRepository.AddChildRelationAsync(childRel);
-        
-        // Parent Case remains Closed/Resolved. Record audit note on Parent Case.
-        var caseEvent = new CaseEvent
-        {
-            CaseId = caseId,
-            EventType = EventType.Note,
-            Message = $"Case reopened -> Created Sub-Case {childId} (Reason: {dto.Message})",
-            CreatedAt = DateTime.UtcNow,
-            UserId = dto.UserId
-        };
-        await _caseRepository.AddEventAsync(caseEvent);
+            // 2. Create and Save NEW Child Subcase Record in Cases Table (Parent Case remains Resolved)
+            newReopenSubcase = new Case
+            {
+                Id = Guid.NewGuid(),
+                CaseNumber = childId,
+                CaseType = existingCase.CaseType,
+                Title = $"[Reopened] {existingCase.Title}",
+                Description = $"Reopened from Parent Case {existingCase.CaseNumber}. Reason: {dto.Message}",
+                Status = CaseStatus.Open,
+                Severity = existingCase.Severity,
+                SlaStartTime = DateTime.UtcNow,
+                SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity),
+                DepartmentId = existingCase.DepartmentId,
+                CustomerId = existingCase.CustomerId,
+                OwnerId = existingCase.OwnerId,
+                ParentCaseId = existingCase.Id,
+                SubcaseType = "ReopenedSubcase",
+                CreatedAt = DateTime.UtcNow
+            };
+            await _caseRepository.AddAsync(newReopenSubcase);
 
-        // Record audit event on new Child Subcase
-        var subcaseEvent = new CaseEvent
-        {
-            CaseId = newReopenSubcase.Id,
-            EventType = EventType.Create,
-            Message = $"Reopened Sub-case created from Parent {existingCase.CaseNumber}.",
-            CreatedAt = DateTime.UtcNow,
-            UserId = dto.UserId
-        };
-        await _caseRepository.AddEventAsync(subcaseEvent);
+            // 3. Save Sub-Case Relationship Entity
+            var childRel = new CaseChildRelation
+            {
+                ChildId = childId,
+                ParentCaseId = caseId,
+                RelationType = ChildRelationType.Reopen,
+                LinkedCaseId = null,
+                Reason = dto.Message,
+                CreatedByUserId = dto.UserId
+            };
+            await _caseRepository.AddChildRelationAsync(childRel);
+            
+            // Parent Case remains Closed/Resolved. Record audit note on Parent Case.
+            var caseEvent = new CaseEvent
+            {
+                CaseId = caseId,
+                EventType = EventType.Note,
+                Message = $"Case reopened -> Created Sub-Case {childId} (Reason: {dto.Message})",
+                CreatedAt = DateTime.UtcNow,
+                UserId = dto.UserId
+            };
+            await _caseRepository.AddEventAsync(caseEvent);
 
+            // Record audit event on new Child Subcase
+            var subcaseEvent = new CaseEvent
+            {
+                CaseId = newReopenSubcase.Id,
+                EventType = EventType.Create,
+                Message = $"Reopened Sub-case created from Parent {existingCase.CaseNumber}.",
+                CreatedAt = DateTime.UtcNow,
+                UserId = dto.UserId
+            };
+            await _caseRepository.AddEventAsync(subcaseEvent);
+        });
+
+        // Notification outside transaction — failure here is non-critical
         try
         {
             await _notificationService.CreateNotificationAsync(
@@ -980,6 +1299,28 @@ public class CaseService : ICaseService
             }
         }
 
+        // Collaboration feed: the swarm request and every person it pulled in.
+        var swarmTime = DateTime.UtcNow;
+        _context.CaseCollaborationActivities.Add(new CaseCollaborationActivity
+        {
+            CaseId = caseId,
+            ActivityType = CollaborationActivityTypes.SwarmRequested,
+            ActorUserId = userId,
+            Content = string.IsNullOrWhiteSpace(dto.Reason) ? null : dto.Reason.Trim(),
+            CreatedAt = swarmTime
+        });
+        foreach (var added in addedUsers)
+        {
+            _context.CaseCollaborationActivities.Add(new CaseCollaborationActivity
+            {
+                CaseId = caseId,
+                ActivityType = CollaborationActivityTypes.CollaboratorAdded,
+                ActorUserId = userId,
+                TargetUserId = added.Id,
+                CreatedAt = swarmTime
+            });
+        }
+
         // 4. Increase case attention / severity if not already Critical
         if (!string.Equals(existingCase.Severity, "Critical", StringComparison.OrdinalIgnoreCase))
         {
@@ -1048,18 +1389,36 @@ public class CaseService : ICaseService
 
     public async Task<CaseAttachmentDto> UploadAttachmentAsync(Guid caseId, Microsoft.AspNetCore.Http.IFormFile file, string? note, Guid userId)
     {
-        var existingCase = await _caseRepository.GetByIdAsync(caseId);
-        if (existingCase == null) throw new ArgumentException("Case not found");
-
         if (file == null || file.Length == 0)
-            throw new ArgumentException("Please select a valid file to upload.");
+            throw new ArgumentException("Please select a valid non-empty file to upload.");
 
-        if (file.Length > 25 * 1024 * 1024)
-            throw new ArgumentException("File size exceeds 25 MB limit.");
+        var existingCase = await _caseRepository.GetByIdAsync(caseId);
+        if (existingCase == null) throw new KeyNotFoundException("Case not found");
+
+        var maxSizeBytes = _attachmentOptions.MaxFileSizeBytes > 0 ? _attachmentOptions.MaxFileSizeBytes : 25 * 1024 * 1024;
+        if (file.Length > maxSizeBytes)
+            throw new ArgumentException($"File size ({file.Length / (1024 * 1024)} MB) exceeds allowed limit of {maxSizeBytes / (1024 * 1024)} MB.");
 
         var rawFileName = System.IO.Path.GetFileName(file.FileName);
+        if (string.IsNullOrWhiteSpace(rawFileName))
+            throw new ArgumentException("Invalid file name.");
+
         var ext = System.IO.Path.GetExtension(rawFileName).ToLowerInvariant();
-        var safeStoredFileName = $"{Guid.NewGuid()}_{rawFileName}";
+        if (string.IsNullOrEmpty(ext))
+            throw new ArgumentException("Files without an extension are not permitted.");
+
+        var dangerousExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".exe", ".bat", ".cmd", ".sh", ".bash", ".dll", ".so", ".dylib", ".vbs", ".ps1", ".jar", ".com", ".scr", ".msi", ".pif", ".application", ".gadget", ".hta", ".cpl", ".msc", ".msp"
+        };
+        if (dangerousExtensions.Contains(ext))
+            throw new ArgumentException($"File extension '{ext}' is forbidden for security reasons.");
+
+        var allowedExtensions = _attachmentOptions.GetAllowedExtensionSet();
+        if (allowedExtensions.Count > 0 && !allowedExtensions.Contains(ext))
+            throw new ArgumentException($"File type '{ext}' is not permitted. Allowed extensions: {_attachmentOptions.AllowedExtensions}");
+
+        var safeStoredFileName = $"{Guid.NewGuid()}{ext}";
 
         var uploadsDir = System.IO.Path.Combine(_env.ContentRootPath, "Uploads", "Attachments");
         if (!System.IO.Directory.Exists(uploadsDir))
@@ -1367,8 +1726,6 @@ public class CaseService : ICaseService
             existingCase.SlaPausedAt = null;
         }
 
-        await _context.SaveChangesAsync();
-
         var nextLevelRoleName = nextLevel switch
         {
             2 => "Team Lead",
@@ -1389,7 +1746,12 @@ public class CaseService : ICaseService
             CreatedAt = DateTime.UtcNow,
             UserId = userId
         };
-        await _caseRepository.AddEventAsync(caseEvent);
+
+        await ExecuteInTransactionAsync(async () =>
+        {
+            await _context.SaveChangesAsync();
+            await _caseRepository.AddEventAsync(caseEvent);
+        });
 
         try
         {
@@ -1409,13 +1771,22 @@ public class CaseService : ICaseService
         }
     }
 
+    /// <summary>
+    /// SLA monitoring. Sends the 70% consumption reminder, stamps first-response breaches and
+    /// records the moment the resolution SLA is breached.
+    ///
+    /// It deliberately never reassigns a case or changes its status: escalation is a manual
+    /// action only (POST /api/cases/{id}/escalate). Only cases that still have something to
+    /// evaluate are loaded, so the cost does not grow with the number of already-processed cases.
+    /// </summary>
     public async Task EvaluateSlaEscalationsAsync(Guid? caseId = null, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
         var query = _context.Cases
-            .Include(c => c.Department)
-            .Include(c => c.Owner)
-            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled);
+            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled)
+            .Where(c => !c.Sla70ReminderSent
+                     || c.SlaBreachedAt == null
+                     || (c.FirstResponseActualAt == null && c.FirstResponseDueAt != null && c.FirstResponseStatus != "Breached"));
 
         if (caseId.HasValue)
         {
@@ -1425,17 +1796,19 @@ public class CaseService : ICaseService
         var cases = await query.ToListAsync(ct);
         if (cases.Count == 0) return;
 
+        var reminders = new List<Case>();
+
         foreach (var c in cases)
         {
-            // 1. Paused Minutes Calculation
+            // 1. Paused minutes (Waiting on Customer stops the clock)
             int totalPaused = c.SlaTotalPausedMinutes;
             if (c.Status == CaseStatus.WaitingOnCustomer && c.SlaPausedAt.HasValue)
             {
                 totalPaused += (int)Math.Max(0, (now - c.SlaPausedAt.Value).TotalMinutes);
             }
 
-            // 2. First Response Check
-            if (!c.FirstResponseActualAt.HasValue && c.FirstResponseDueAt.HasValue)
+            // 2. First response breach
+            if (!c.FirstResponseActualAt.HasValue && c.FirstResponseDueAt.HasValue && c.FirstResponseStatus != "Breached")
             {
                 var effectiveFrDue = c.FirstResponseDueAt.Value.AddMinutes(totalPaused);
                 if (now > effectiveFrDue)
@@ -1444,162 +1817,66 @@ public class CaseService : ICaseService
                 }
             }
 
-            // 3. Resolution SLA Consumption
+            // 3. Resolution SLA consumption
             double totalTargetMinutes = Math.Max(1, c.SlaTargetHours * 60);
             double elapsedMinutes = Math.Max(0, (now - c.SlaStartTime).TotalMinutes - totalPaused);
             double consumptionPercent = (elapsedMinutes / totalTargetMinutes) * 100.0;
 
-            // Level 1: 70% Reminder to Assigned Agent
             if (consumptionPercent >= 70.0 && !c.Sla70ReminderSent)
             {
                 c.Sla70ReminderSent = true;
-                try
-                {
-                    await _notificationService.CreateNotificationAsync(
-                        c.OwnerId,
-                        "SLA_REMINDER_70",
-                        "SLA 70% Consumed",
-                        $"SLA has reached 70% consumption for Case {c.CaseNumber} ({c.Title}). Please take the required action before SLA breach.",
-                        c.Id,
-                        c.CaseNumber,
-                        "Medium",
-                        0,
-                        ct
-                    );
-
-                    await _caseRepository.AddEventAsync(new CaseEvent
-                    {
-                        CaseId = c.Id,
-                        EventType = EventType.Note,
-                        Message = $"SLA reached 70% — reminder sent to assigned agent ({c.Owner?.Name ?? "Agent"}).",
-                        CreatedAt = now,
-                        UserId = c.OwnerId
-                    });
-                }
-                catch (Exception ex) { Console.WriteLine($"[SLA 70% Reminder Error] {ex.Message}"); }
+                reminders.Add(c);
             }
 
-            // Level 2: 90% Auto-Escalation to Team Lead
-            if (consumptionPercent >= 90.0 && !c.Sla90Escalated && c.EscalationLevel < 2)
+            // Breach is only recorded (reporting / notifications). The case keeps its owner and status.
+            if (consumptionPercent >= 100.0 && !c.SlaBreachedAt.HasValue)
             {
-                c.Sla90Escalated = true;
-                var teamLead = await ResolveEscalationTargetAsync(c, 2);
-                if (teamLead != null && teamLead.Id != c.OwnerId)
-                {
-                    c.OwnerId = teamLead.Id;
-                    c.EscalationLevel = 2;
-                    c.Status = CaseStatus.Escalated;
-
-                    try
-                    {
-                        await _notificationService.CreateNotificationAsync(
-                            teamLead.Id,
-                            "CASE_ESCALATED",
-                            "Case Escalated (SLA 90%)",
-                            $"Case {c.CaseNumber} ({c.Title}) has been escalated to you due to SLA reaching 90%.",
-                            c.Id,
-                            c.CaseNumber,
-                            "High",
-                            0,
-                            ct
-                        );
-
-                        await _caseRepository.AddEventAsync(new CaseEvent
-                        {
-                            CaseId = c.Id,
-                            EventType = EventType.Escalate,
-                            Message = $"Case automatically escalated to Team Lead ({teamLead.Name}) due to 90% SLA consumption.",
-                            CreatedAt = now,
-                            UserId = teamLead.Id
-                        });
-                    }
-                    catch (Exception ex) { Console.WriteLine($"[SLA 90% Escalation Error] {ex.Message}"); }
-                }
+                c.SlaBreachedAt = now;
             }
+        }
 
-            // Level 3: 100% SLA Breach Auto-Escalation to CX Supervisor
-            if (consumptionPercent >= 100.0 && !c.SlaBreachedEscalated && c.EscalationLevel < 3)
+        if (reminders.Count > 0)
+        {
+            var ownerIds = reminders.Select(r => r.OwnerId).Distinct().ToList();
+            var ownerNames = await _context.Users.AsNoTracking()
+                .Where(u => ownerIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.Name, ct);
+
+            foreach (var c in reminders)
             {
-                c.SlaBreachedEscalated = true;
-                c.SlaBreachedAt ??= now;
-                var supervisor = await ResolveEscalationTargetAsync(c, 3);
-                if (supervisor != null && supervisor.Id != c.OwnerId)
+                var ownerName = ownerNames.TryGetValue(c.OwnerId, out var foundName) ? foundName : "Agent";
+                _context.CaseEvents.Add(new CaseEvent
                 {
-                    c.OwnerId = supervisor.Id;
-                    c.EscalationLevel = 3;
-                    c.Status = CaseStatus.Escalated;
-
-                    try
-                    {
-                        await _notificationService.CreateNotificationAsync(
-                            supervisor.Id,
-                            "SLA_BREACHED",
-                            "Case SLA Breached — Escalated",
-                            $"Case {c.CaseNumber} ({c.Title}) has breached its SLA and has been escalated to you.",
-                            c.Id,
-                            c.CaseNumber,
-                            "Critical",
-                            0,
-                            ct
-                        );
-
-                        await _caseRepository.AddEventAsync(new CaseEvent
-                        {
-                            CaseId = c.Id,
-                            EventType = EventType.Escalate,
-                            Message = $"Case escalated to CX Supervisor ({supervisor.Name}) due to SLA breach.",
-                            CreatedAt = now,
-                            UserId = supervisor.Id
-                        });
-                    }
-                    catch (Exception ex) { Console.WriteLine($"[SLA Breach Escalation Error] {ex.Message}"); }
-                }
-            }
-
-            // Level 4: 12 Hours Post-Breach Auto-Escalation to Head of Customer Experience
-            if (c.SlaBreachedAt.HasValue && !c.Sla12hBreachedEscalated && c.EscalationLevel < 4)
-            {
-                var hoursSinceBreach = (now - c.SlaBreachedAt.Value).TotalHours;
-                if (hoursSinceBreach >= 12.0)
-                {
-                    c.Sla12hBreachedEscalated = true;
-                    var headOfCx = await ResolveEscalationTargetAsync(c, 4);
-                    if (headOfCx != null && headOfCx.Id != c.OwnerId)
-                    {
-                        c.OwnerId = headOfCx.Id;
-                        c.EscalationLevel = 4;
-                        c.Status = CaseStatus.Escalated;
-
-                        try
-                        {
-                            await _notificationService.CreateNotificationAsync(
-                                headOfCx.Id,
-                                "CASE_ESCALATED_EXEC",
-                                "Executive Escalation (+12h Breach)",
-                                $"Case {c.CaseNumber} ({c.Title}) has remained SLA-breached for 12 hours and has been escalated to you.",
-                                c.Id,
-                                c.CaseNumber,
-                                "Critical",
-                                0,
-                                ct
-                            );
-
-                            await _caseRepository.AddEventAsync(new CaseEvent
-                            {
-                                CaseId = c.Id,
-                                EventType = EventType.Escalate,
-                                Message = $"Case escalated to Head of Customer Experience ({headOfCx.Name}) after 12 hours of SLA breach.",
-                                CreatedAt = now,
-                                UserId = headOfCx.Id
-                            });
-                        }
-                        catch (Exception ex) { Console.WriteLine($"[SLA 12h Breach Escalation Error] {ex.Message}"); }
-                    }
-                }
+                    CaseId = c.Id,
+                    EventType = EventType.Note,
+                    Message = $"SLA reached 70% — reminder sent to assigned agent ({ownerName}).",
+                    IsInternal = true,
+                    CreatedAt = now,
+                    UserId = c.OwnerId
+                });
             }
         }
 
         await _context.SaveChangesAsync(ct);
+
+        foreach (var c in reminders)
+        {
+            try
+            {
+                await _notificationService.CreateNotificationAsync(
+                    c.OwnerId,
+                    "SLA_REMINDER_70",
+                    "SLA 70% Consumed",
+                    $"SLA has reached 70% consumption for Case {c.CaseNumber} ({c.Title}). Please take the required action before SLA breach.",
+                    c.Id,
+                    c.CaseNumber,
+                    "Medium",
+                    0,
+                    ct
+                );
+            }
+            catch (Exception ex) { Console.WriteLine($"[SLA 70% Reminder Error] {ex.Message}"); }
+        }
     }
 
     public async Task<EscalationMatrixResponseDto> GetEscalationMatrixConfigAsync(Guid? caseId = null, CancellationToken ct = default)
@@ -1646,7 +1923,7 @@ public class CaseService : ICaseService
         return new EscalationMatrixResponseDto
         {
             Title = "Escalation matrix",
-            Subtitle = "fully configurable — auto-fires from SLA consumption; all triggers audit-logged",
+            Subtitle = "manual escalation — cases are never escalated automatically; every escalation is audit-logged",
             CurrentLevel = currentLevel,
             NextLevel = nextLevel,
             NextTargetRole = nextRole,
@@ -1660,7 +1937,7 @@ public class CaseService : ICaseService
                     Name = "LEVEL 1",
                     Role = "Assigned Agent",
                     Trigger = "SLA 70% consumed",
-                    Action = "Reminder + queue flag",
+                    Action = "Reminder to assigned agent",
                     CurrentTargetUserName = lvl1User?.Name,
                     CurrentTargetUserId = lvl1User?.Id
                 },
@@ -1669,8 +1946,8 @@ public class CaseService : ICaseService
                     Level = 2,
                     Name = "LEVEL 2",
                     Role = "Team Lead",
-                    Trigger = "SLA 90% consumed",
-                    Action = "Auto-reassign option + huddle alert",
+                    Trigger = "Manual escalation",
+                    Action = "Reassign to team lead",
                     CurrentTargetUserName = lvl2User?.Name,
                     CurrentTargetUserId = lvl2User?.Id
                 },
@@ -1679,7 +1956,7 @@ public class CaseService : ICaseService
                     Level = 3,
                     Name = "LEVEL 3",
                     Role = "CX Supervisor",
-                    Trigger = "SLA breached",
+                    Trigger = "Manual escalation",
                     Action = "Breach review, customer callback",
                     CurrentTargetUserName = lvl3User?.Name,
                     CurrentTargetUserId = lvl3User?.Id
@@ -1689,12 +1966,432 @@ public class CaseService : ICaseService
                     Level = 4,
                     Name = "LEVEL 4",
                     Role = "Head of CX",
-                    Trigger = "Breach > 12h / VIP",
+                    Trigger = "Manual escalation",
                     Action = "Executive escalation + RCA required",
                     CurrentTargetUserName = lvl4User?.Name,
                     CurrentTargetUserId = lvl4User?.Id
                 }
             }
         };
+    }
+
+    // ======================== STATUS TRANSITION VALIDATION ========================
+
+    /// <summary>
+    /// Defines the approved status transitions. Resolved is only reachable through
+    /// ResolveCaseAsync. Escalated is only reachable through EscalateCaseAsync.
+    /// </summary>
+    private static readonly Dictionary<CaseStatus, CaseStatus[]> AllowedTransitions = new()
+    {
+        [CaseStatus.Open] = new[] { CaseStatus.InProgress, CaseStatus.WaitingOnCustomer },
+        [CaseStatus.InProgress] = new[] { CaseStatus.Open, CaseStatus.WaitingOnCustomer },
+        [CaseStatus.WaitingOnCustomer] = new[] { CaseStatus.Open, CaseStatus.InProgress },
+        [CaseStatus.Escalated] = new[] { CaseStatus.Open, CaseStatus.InProgress, CaseStatus.WaitingOnCustomer },
+        // Resolved and Closed are terminal via their dedicated workflows
+        [CaseStatus.Resolved] = Array.Empty<CaseStatus>(),
+        [CaseStatus.Closed] = Array.Empty<CaseStatus>(),
+        [CaseStatus.Cancelled] = Array.Empty<CaseStatus>(),
+    };
+
+    public static bool IsValidTransition(CaseStatus from, CaseStatus to)
+    {
+        if (AllowedTransitions.TryGetValue(from, out var allowed))
+            return allowed.Contains(to);
+        return false;
+    }
+
+    public static IEnumerable<string> GetAllowedTransitions(CaseStatus from)
+    {
+        if (AllowedTransitions.TryGetValue(from, out var allowed))
+            return allowed.Select(s => s.ToString());
+        return Enumerable.Empty<string>();
+    }
+
+    // ======================== DASHBOARD SUMMARY ========================
+
+    public async Task<DashboardSummaryDto> GetDashboardSummaryAsync(
+        Guid? departmentId, string? caseType, string? status, string? severity,
+        string? dateRange, string? customStartDate, string? customEndDate,
+        Guid? myCasesUserId, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+
+        // Build base filtered query without heavy includes
+        IQueryable<Case> query = _context.Cases.AsNoTracking();
+
+        if (departmentId.HasValue)
+            query = query.Where(c => c.DepartmentId == departmentId.Value);
+
+        if (!string.IsNullOrWhiteSpace(caseType))
+            query = query.Where(c => c.CaseType == caseType);
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (Enum.TryParse<CaseStatus>(status.Replace(" ", "").Replace("_", ""), true, out var cs))
+                query = query.Where(c => c.Status == cs);
+        }
+
+        if (!string.IsNullOrWhiteSpace(severity))
+            query = query.Where(c => c.Severity == severity);
+
+        if (myCasesUserId.HasValue)
+            query = query.Where(c => c.OwnerId == myCasesUserId.Value);
+
+        // Date range filtering
+        if (!string.IsNullOrWhiteSpace(dateRange) && dateRange != "all")
+        {
+            DateTime? start = null, end = null;
+            switch (dateRange)
+            {
+                case "today":
+                    start = now.Date;
+                    break;
+                case "this_week":
+                    var dayOfWeek = ((int)now.DayOfWeek + 6) % 7; // Monday = 0
+                    start = now.Date.AddDays(-dayOfWeek);
+                    break;
+                case "this_month":
+                    start = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+                    break;
+                case "this_quarter":
+                    var qMonth = ((now.Month - 1) / 3) * 3 + 1;
+                    start = new DateTime(now.Year, qMonth, 1, 0, 0, 0, DateTimeKind.Utc);
+                    break;
+                case "this_year":
+                    start = new DateTime(now.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                    break;
+                case "custom":
+                    if (DateTime.TryParse(customStartDate, out var cs2))
+                        start = DateTime.SpecifyKind(cs2.Date, DateTimeKind.Utc);
+                    if (DateTime.TryParse(customEndDate, out var ce))
+                        end = DateTime.SpecifyKind(ce.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
+                    break;
+            }
+            if (start.HasValue) query = query.Where(c => c.CreatedAt >= start.Value);
+            if (end.HasValue) query = query.Where(c => c.CreatedAt <= end.Value);
+        }
+
+        // Database aggregations — do not load all rows into memory
+        var emptyGuid = Guid.Empty;
+        var totalCount = await query.CountAsync(ct);
+        var statusCounts = await query.GroupBy(c => c.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+        var severityCounts = await query.GroupBy(c => c.Severity)
+            .Select(g => new { Severity = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+        var unassignedCount = await query.CountAsync(c => c.OwnerId == emptyGuid, ct);
+
+        var result = new DashboardSummaryDto
+        {
+            TotalCases = totalCount,
+            OpenCases = statusCounts.FirstOrDefault(s => s.Status == CaseStatus.Open)?.Count ?? 0,
+            InProgressCases = statusCounts.FirstOrDefault(s => s.Status == CaseStatus.InProgress)?.Count ?? 0,
+            WaitingOnCustomerCases = statusCounts.FirstOrDefault(s => s.Status == CaseStatus.WaitingOnCustomer)?.Count ?? 0,
+            EscalatedCases = statusCounts.FirstOrDefault(s => s.Status == CaseStatus.Escalated)?.Count ?? 0,
+            ResolvedCases = statusCounts.FirstOrDefault(s => s.Status == CaseStatus.Resolved)?.Count ?? 0,
+            UnassignedCases = unassignedCount,
+            CriticalCases = severityCounts.FirstOrDefault(s => s.Severity == "Critical")?.Count ?? 0,
+            HighCases = severityCounts.FirstOrDefault(s => s.Severity == "High")?.Count ?? 0,
+            MediumCases = severityCounts.FirstOrDefault(s => s.Severity == "Medium")?.Count ?? 0,
+            LowCases = severityCounts.FirstOrDefault(s => s.Severity == "Low")?.Count ?? 0,
+        };
+
+        // SLA calculations: fetch only lightweight scalar columns without joins
+        var slaRows = await query.Select(c => new
+        {
+            c.SlaStartTime,
+            c.SlaTargetHours,
+            c.SlaTotalPausedMinutes,
+            c.Status,
+            c.ResolvedAt
+        }).ToListAsync(ct);
+
+        int breached = 0;
+        int atRisk = 0;
+        foreach (var c in slaRows)
+        {
+            var slaStart = c.SlaStartTime;
+            var targetMs = c.SlaTargetHours * 3600.0 * 1000;
+            var pausedMs = c.SlaTotalPausedMinutes * 60.0 * 1000;
+            var effectiveDeadline = slaStart.AddMilliseconds(targetMs + pausedMs);
+            var isResolved = c.Status == CaseStatus.Resolved;
+            var checkTime = isResolved && c.ResolvedAt.HasValue ? c.ResolvedAt.Value : now;
+
+            if (checkTime > effectiveDeadline)
+                breached++;
+            else if (!isResolved && (effectiveDeadline - now).TotalHours < 2)
+                atRisk++;
+        }
+        result.SlaBreachedCases = breached;
+        result.SlaAtRiskCases = atRisk;
+        result.SlaHealthyCases = Math.Max(0, result.TotalCases - breached - atRisk);
+        result.SlaAdherencePercent = result.TotalCases > 0
+            ? Math.Round((decimal)(result.TotalCases - breached) / result.TotalCases * 100, 1)
+            : 100;
+
+        // Department breakdown via SQL GroupBy
+        result.CasesByDepartment = await query
+            .GroupBy(c => new { c.DepartmentId, Name = c.Department != null ? c.Department.Name : "General" })
+            .Select(g => new DepartmentCaseCount
+            {
+                DepartmentId = g.Key.DepartmentId,
+                DepartmentName = g.Key.Name,
+                Count = g.Count()
+            })
+            .OrderByDescending(d => d.Count)
+            .ToListAsync(ct);
+
+        // Case type breakdown via SQL GroupBy
+        result.CasesByType = await query
+            .GroupBy(c => c.CaseType)
+            .Select(g => new CaseTypeCaseCount
+            {
+                CaseType = g.Key ?? "Complaint",
+                Count = g.Count()
+            })
+            .OrderByDescending(t => t.Count)
+            .ToListAsync(ct);
+
+        // Resolved over time: Daily (last 7 days)
+        var sevenDaysAgo = now.Date.AddDays(-6);
+        var resolvedDates = await query
+            .Where(c => c.Status == CaseStatus.Resolved && c.ResolvedAt >= sevenDaysAgo)
+            .Select(c => c.ResolvedAt!.Value)
+            .ToListAsync(ct);
+
+        for (int i = 6; i >= 0; i--)
+        {
+            var day = now.Date.AddDays(-i);
+            result.ResolvedDaily.Add(new ResolvedTimePoint
+            {
+                Label = day.ToString("MMM d"),
+                Count = resolvedDates.Count(d => d.Date == day)
+            });
+        }
+
+        // Weekly (last 4 weeks)
+        var fourWeeksAgo = now.Date.AddDays(-28);
+        var resolvedMonthDates = await query
+            .Where(c => c.Status == CaseStatus.Resolved && c.ResolvedAt >= fourWeeksAgo)
+            .Select(c => c.ResolvedAt!.Value)
+            .ToListAsync(ct);
+
+        for (int i = 3; i >= 0; i--)
+        {
+            var weekStart = now.Date.AddDays(-((int)now.DayOfWeek == 0 ? 6 : (int)now.DayOfWeek - 1) - i * 7);
+            var weekEnd = weekStart.AddDays(7);
+            result.ResolvedWeekly.Add(new ResolvedTimePoint
+            {
+                Label = $"Wk {4 - i}",
+                Count = resolvedMonthDates.Count(d => d >= weekStart && d < weekEnd)
+            });
+        }
+
+        // Monthly (last 6 months)
+        var sixMonthsAgo = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-5);
+        var resolvedSixMonthDates = await query
+            .Where(c => c.Status == CaseStatus.Resolved && c.ResolvedAt >= sixMonthsAgo)
+            .Select(c => c.ResolvedAt!.Value)
+            .ToListAsync(ct);
+
+        for (int i = 5; i >= 0; i--)
+        {
+            var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-i);
+            var monthEnd = monthStart.AddMonths(1);
+            result.ResolvedMonthly.Add(new ResolvedTimePoint
+            {
+                Label = monthStart.ToString("MMM"),
+                Count = resolvedSixMonthDates.Count(d => d >= monthStart && d < monthEnd)
+            });
+        }
+
+        // Attention cases: SLA breached, at-risk, critical/high, unassigned — top 20 direct from DB
+        result.AttentionCases = await query
+            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled)
+            .OrderByDescending(c => c.Severity == "Critical")
+            .ThenByDescending(c => c.Severity == "High")
+            .ThenBy(c => c.SlaStartTime)
+            .Take(20)
+            .Select(c => new AttentionCaseSummary
+            {
+                Id = c.Id,
+                CaseNumber = c.CaseNumber,
+                Title = c.Title,
+                Status = c.Status.ToString(),
+                Severity = c.Severity,
+                OwnerName = c.Owner != null ? c.Owner.Name : string.Empty,
+                OwnerId = c.OwnerId,
+                DepartmentName = c.Department != null ? c.Department.Name : string.Empty,
+                SlaStartTime = c.SlaStartTime,
+                SlaTargetHours = c.SlaTargetHours,
+                SlaBreachedAt = c.SlaBreachedAt,
+                SlaPausedAt = c.SlaPausedAt,
+                SlaTotalPausedMinutes = c.SlaTotalPausedMinutes,
+                CustomerName = c.Customer != null ? c.Customer.FullName : string.Empty,
+                CreatedAt = c.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        // Recent cases: top 15 most recent cases direct from DB
+        result.RecentCases = await query
+            .OrderByDescending(c => c.CreatedAt)
+            .Take(15)
+            .Select(c => new AttentionCaseSummary
+            {
+                Id = c.Id,
+                CaseNumber = c.CaseNumber,
+                Title = c.Title,
+                Status = c.Status.ToString(),
+                Severity = c.Severity,
+                OwnerName = c.Owner != null ? c.Owner.Name : string.Empty,
+                OwnerId = c.OwnerId,
+                DepartmentName = c.Department != null ? c.Department.Name : string.Empty,
+                SlaStartTime = c.SlaStartTime,
+                SlaTargetHours = c.SlaTargetHours,
+                SlaBreachedAt = c.SlaBreachedAt,
+                SlaPausedAt = c.SlaPausedAt,
+                SlaTotalPausedMinutes = c.SlaTotalPausedMinutes,
+                CustomerName = c.Customer != null ? c.Customer.FullName : string.Empty,
+                CreatedAt = c.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        // Recent activity: latest 15 events direct from DB
+        result.RecentActivities = await _context.CaseEvents
+            .AsNoTracking()
+            .Include(e => e.Case)
+            .Include(e => e.User)
+            .OrderByDescending(e => e.CreatedAt)
+            .Take(15)
+            .Select(e => new RecentActivityItem
+            {
+                Id = $"act-{e.Id}",
+                Type = e.EventType.ToString().ToLower(),
+                Title = $"Case {(e.Case != null ? e.Case.CaseNumber : "")} {e.EventType}",
+                Sub = $"{e.Message} · {(e.User != null ? e.User.Name : "System")}",
+                CaseId = e.CaseId ?? Guid.Empty,
+                Timestamp = e.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        return result;
+    }
+
+    // ======================== TIMELINE PAGINATION ========================
+
+    public async Task<PagedResponseDto<CaseEventDto>> GetCaseTimelineEventsAsync(
+        Guid caseId, DateTime? before, int limit = 50, CancellationToken ct = default)
+    {
+        var query = _context.CaseEvents
+            .AsNoTracking()
+            .Include(e => e.User)
+            .Where(e => e.CaseId == caseId);
+
+        if (before.HasValue)
+            query = query.Where(e => e.CreatedAt < before.Value);
+
+        var totalCount = await query.CountAsync(ct);
+
+        var events = await query
+            .OrderByDescending(e => e.CreatedAt)
+            .Take(limit)
+            .Select(e => new CaseEventDto
+            {
+                Id = e.Id,
+                UserId = e.UserId,
+                EventType = e.EventType.ToString(),
+                Message = e.Message,
+                CreatedAt = e.CreatedAt,
+                UserName = e.User != null ? e.User.Name : string.Empty,
+                IsInternal = e.IsInternal,
+                Channel = e.Channel
+            })
+            .ToListAsync(ct);
+
+        return new PagedResponseDto<CaseEventDto>
+        {
+            Items = events,
+            TotalCount = totalCount,
+            Page = 1,
+            PageSize = limit
+        };
+    }
+
+    public async Task ValidateCreateCaseMetadataAsync(CreateCaseDto dto, CancellationToken ct = default)
+    {
+        // System invariants: CustomerId and DepartmentId are essential database relationships
+        if (dto.CustomerId == Guid.Empty)
+            throw new ArgumentException("A valid customer must be selected.");
+        if (dto.DepartmentId == Guid.Empty)
+            throw new ArgumentException("A valid department must be selected.");
+
+        var configs = await _context.FieldConfigurations
+            .AsNoTracking()
+            .Where(f => f.ModuleKey == "CaseManagement" && f.SectionKey == "CreateCase")
+            .ToListAsync(ct);
+
+        if (!configs.Any()) return;
+
+        foreach (var cfg in configs)
+        {
+            if (!cfg.IsVisible) continue; // Skip hidden fields
+
+            string? val = cfg.ApiField.ToLowerInvariant() switch
+            {
+                "casetype" => dto.CaseType,
+                "title" => dto.Title,
+                "description" => dto.Description,
+                "subcategory" => dto.Subcategory,
+                "preferredlanguage" => dto.PreferredLanguage,
+                "communicationchannel" => dto.CommunicationChannel,
+                "preferredcommunicationchannel" => dto.PreferredCommunicationChannel,
+                "sourcechannel" => dto.SourceChannel,
+                "severity" => dto.Severity,
+                "selectcustomer" => dto.CustomerId != Guid.Empty ? dto.CustomerId.ToString() : null,
+                "departmentid" => dto.DepartmentId != Guid.Empty ? dto.DepartmentId.ToString() : null,
+                _ => null
+            };
+
+            var strVal = val?.Trim();
+
+            // 1. Mandatory check
+            if (cfg.IsRequired && string.IsNullOrEmpty(strVal))
+            {
+                throw new ArgumentException($"{cfg.DisplayLabel} is required.");
+            }
+
+            if (!string.IsNullOrEmpty(strVal))
+            {
+                // 2. MinLength check
+                if (cfg.MinLength.HasValue && strVal.Length < cfg.MinLength.Value)
+                {
+                    throw new ArgumentException($"{cfg.DisplayLabel} must be at least {cfg.MinLength.Value} characters.");
+                }
+
+                // 3. MaxLength check
+                if (cfg.MaxLength.HasValue && strVal.Length > cfg.MaxLength.Value)
+                {
+                    throw new ArgumentException($"{cfg.DisplayLabel} cannot exceed {cfg.MaxLength.Value} characters.");
+                }
+
+                // 4. Regex check
+                if (!string.IsNullOrWhiteSpace(cfg.ValidationRegex))
+                {
+                    try
+                    {
+                        var regex = new System.Text.RegularExpressions.Regex(cfg.ValidationRegex);
+                        if (!regex.IsMatch(strVal))
+                        {
+                            throw new ArgumentException($"{cfg.DisplayLabel} format is invalid.");
+                        }
+                    }
+                    catch (System.Text.RegularExpressions.RegexParseException)
+                    {
+                        // Ignore invalid regex in configuration
+                    }
+                }
+            }
+        }
     }
 }

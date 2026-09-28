@@ -71,7 +71,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
 
   // Core Data States
-  const [allCases, setAllCases] = useState([]);
+  const [summaryData, setSummaryData] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -108,14 +108,9 @@ export function DashboardPage() {
   const [resolvedTimeframe, setResolvedTimeframe] = useState('daily');
   const [activeChartPoint, setActiveChartPoint] = useState(null);
 
-  // Fetch initial data
-  const fetchData = () => {
-    setIsLoading(true);
+  // Fetch initial configuration lookups
+  useEffect(() => {
     Promise.all([
-      caseService.getBoardCases(null, null).catch((err) => {
-        console.error('Failed to load board cases:', err);
-        return [];
-      }),
       departmentService.getAllDepartments(true).catch((err) => {
         console.error('Failed to load departments:', err);
         return [];
@@ -127,9 +122,7 @@ export function DashboardPage() {
       configurableSettingsService.getSeverities().catch(() => []),
       configurableSettingsService.getLookupValues('SLA_STATUS', true).catch(() => []),
     ])
-      .then(([casesData, deptData, qaData, drData, csData, ctData, sevData, slaData]) => {
-        const casesList = Array.isArray(casesData) ? casesData : casesData?.items || [];
-        setAllCases(casesList);
+      .then(([deptData, qaData, drData, csData, ctData, sevData, slaData]) => {
         setDepartments(Array.isArray(deptData) ? deptData : []);
         if (Array.isArray(qaData) && qaData.length > 0) setQuickActionsConfig(qaData);
         if (Array.isArray(drData) && drData.length > 0) setDateRangesConfig(drData);
@@ -138,13 +131,35 @@ export function DashboardPage() {
         if (Array.isArray(sevData) && sevData.length > 0) setSeverityConfig(sevData);
         if (Array.isArray(slaData) && slaData.length > 0) setSlaStatusConfig(slaData);
       })
-      .catch((err) => console.error('Failed to load dashboard data:', err))
+      .catch((err) => console.error('Failed to load dashboard configuration:', err));
+  }, []);
+
+  // Fetch server-side aggregated summary
+  const fetchDashboardData = useCallback(() => {
+    setIsLoading(true);
+    const params = {};
+    if (deptFilter !== 'all') params.departmentId = deptFilter;
+    if (caseTypeFilter !== 'all') params.caseType = caseTypeFilter;
+    if (statusFilter !== 'all') params.status = statusFilter;
+    if (severityFilter !== 'all') params.severity = severityFilter;
+    if (dateRange !== 'all') {
+      params.dateRange = dateRange;
+      if (dateRange === 'custom') {
+        if (customStartDate) params.customStartDate = customStartDate;
+        if (customEndDate) params.customEndDate = customEndDate;
+      }
+    }
+    if (myCasesOnly) params.myCasesOnly = true;
+
+    caseService.getDashboardSummary(params)
+      .then((data) => setSummaryData(data))
+      .catch((err) => console.error('Failed to load dashboard summary:', err))
       .finally(() => setIsLoading(false));
-  };
+  }, [deptFilter, caseTypeFilter, statusFilter, severityFilter, dateRange, customStartDate, customEndDate, myCasesOnly]);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   // Close Popover when clicking outside
   useEffect(() => {
@@ -157,176 +172,40 @@ export function DashboardPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter Logic
-  //
-  // Split into two passes on purpose. Everything here is time-independent, so it only re-runs
-  // when the data or a filter control actually changes — not on every tick of the `now` clock.
-  // The SLA filter, which is the only genuinely time-dependent predicate, is applied separately
-  // below. Filtering is a conjunction of predicates, so splitting it cannot change the result.
-  const baseFilteredCases = useMemo(() => {
-    return allCases.filter((c) => {
-      const createdDate = new Date(c.createdAt || c.slaStartTime || Date.now());
-
-      if (dateRange !== 'all') {
-        const nowDate = new Date();
-        if (dateRange === 'today') {
-          const startOfToday = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
-          if (createdDate < startOfToday) return false;
-        } else if (dateRange === 'this_week') {
-          const day = nowDate.getDay() || 7;
-          const startOfWeek = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - day + 1);
-          if (createdDate < startOfWeek) return false;
-        } else if (dateRange === 'last_week') {
-          const day = nowDate.getDay() || 7;
-          const startOfLastWeek = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - day - 6);
-          const endOfLastWeek = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - day);
-          if (createdDate < startOfLastWeek || createdDate > endOfLastWeek) return false;
-        } else if (dateRange === 'this_month') {
-          const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1);
-          if (createdDate < startOfMonth) return false;
-        } else if (dateRange === 'last_month') {
-          const startOfLastMonth = new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1);
-          const endOfLastMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 0);
-          if (createdDate < startOfLastMonth || createdDate > endOfLastMonth) return false;
-        } else if (dateRange === 'this_quarter') {
-          const currentQuarter = Math.floor(nowDate.getMonth() / 3);
-          const startOfQuarter = new Date(nowDate.getFullYear(), currentQuarter * 3, 1);
-          if (createdDate < startOfQuarter) return false;
-        } else if (dateRange === 'this_year') {
-          const startOfYear = new Date(nowDate.getFullYear(), 0, 1);
-          if (createdDate < startOfYear) return false;
-        } else if (dateRange === 'custom') {
-          if (customStartDate && createdDate < new Date(customStartDate)) return false;
-          if (customEndDate && createdDate > new Date(customEndDate + 'T23:59:59')) return false;
-        }
-      }
-
-      if (deptFilter !== 'all' && c.departmentId !== deptFilter && c.departmentName !== deptFilter) {
-        return false;
-      }
-
-      if (statusFilter !== 'all' && c.status !== statusFilter) {
-        return false;
-      }
-
-      if (caseTypeFilter !== 'all') {
-        const type =
-          c.caseType ||
-          (c.caseNumber?.startsWith('S-')
-            ? 'Service'
-            : c.caseNumber?.startsWith('I-') || c.caseNumber?.startsWith('E-')
-            ? 'Inquiry'
-            : 'Complaint');
-
-        const normFilter = caseTypeFilter === 'Enquiry' ? 'Inquiry' : caseTypeFilter;
-        const normType = type === 'Enquiry' ? 'Inquiry' : type;
-
-        if (normType !== normFilter) return false;
-      }
-
-      if (severityFilter !== 'all' && c.severity !== severityFilter) {
-        return false;
-      }
-
-      if (myCasesOnly && currentUser && c.ownerId !== currentUser.id) {
-        return false;
-      }
-
-      if (searchQuery.trim() !== '') {
-        const q = searchQuery.toLowerCase();
-        const matchesNumber = c.caseNumber?.toLowerCase().includes(q);
-        const matchesTitle = c.title?.toLowerCase().includes(q);
-        const matchesCustomer = c.customerName?.toLowerCase().includes(q);
-        const matchesAgent = c.ownerName?.toLowerCase().includes(q);
-        const matchesChildId = c.childRelations?.some((cr) => cr.childId?.toLowerCase().includes(q));
-        if (!matchesNumber && !matchesTitle && !matchesCustomer && !matchesAgent && !matchesChildId) return false;
-      }
-
-      return true;
-    });
-  }, [allCases, dateRange, customStartDate, customEndDate, deptFilter, statusFilter, caseTypeFilter, severityFilter, searchQuery, myCasesOnly, currentUser]);
-
-  // Time-dependent pass. When no SLA filter is selected — the default — this returns the base
-  // array unchanged, so its identity is stable across clock ticks and every memo below it stops
-  // recomputing on a timer. The predicate itself is byte-for-byte the one that used to live
-  // inside the single combined filter.
-  const filteredCases = useMemo(() => {
-    if (slaFilter === 'all') return baseFilteredCases;
-
-    return baseFilteredCases.filter((c) => {
-      const createdTime = new Date(c.slaStartTime || c.createdAt || Date.now()).getTime();
-      const { internalHours } = getSlaConfig(c.severity, c.slaTargetHours);
-      const targetDeadline = createdTime + internalHours * 3600 * 1000;
-      const isResolved = c.status === 'Resolved';
-      const resolvedTime = c.resolvedAt ? new Date(c.resolvedAt).getTime() : now;
-      const isBreached = isResolved
-        ? resolvedTime > targetDeadline
-        : now > targetDeadline;
-      const remainingMs = targetDeadline - now;
-      const isApproaching = !isResolved && !isBreached && remainingMs < 2 * 3600 * 1000;
-
-      if (slaFilter === 'breached' && !isBreached) return false;
-      if (slaFilter === 'approaching' && !isApproaching) return false;
-      if (slaFilter === 'healthy' && (isBreached || isApproaching)) return false;
-
-      return true;
-    });
-  }, [baseFilteredCases, slaFilter, now]);
-
-  // Dynamic KPI Metrics Calculations
+  // Server-side Aggregated KPI Metrics
   const metrics = useMemo(() => {
-    const total = filteredCases.length;
-    const openCases = filteredCases.filter((c) => c.status !== 'Resolved');
-    const assignedCases = filteredCases.filter(
-      (c) => c.ownerId && c.ownerId !== '00000000-0000-0000-0000-000000000000'
-    );
-    const resolvedCases = filteredCases.filter((c) => c.status === 'Resolved');
-    const inProgressCases = filteredCases.filter((c) => c.status === 'InProgress' || c.status === 'Working');
-
-    let breachedCount = 0;
-    filteredCases.forEach((c) => {
-      const createdTime = new Date(c.slaStartTime || c.createdAt || Date.now()).getTime();
-      const { internalHours } = getSlaConfig(c.severity, c.slaTargetHours);
-      const targetDeadline = createdTime + internalHours * 3600 * 1000;
-      const isResolved = c.status === 'Resolved';
-      const resolvedTime = c.resolvedAt ? new Date(c.resolvedAt).getTime() : now;
-
-      if (isResolved) {
-        if (resolvedTime > targetDeadline) breachedCount++;
-      } else {
-        if (now > targetDeadline) breachedCount++;
-      }
-    });
-
-    const withinSlaCount = Math.max(0, total - breachedCount);
-    const slaAdherencePct = total > 0 ? ((withinSlaCount / total) * 100).toFixed(1) : '100';
+    if (!summaryData) {
+      return {
+        total: 0,
+        openCount: 0,
+        assignedCount: 0,
+        resolvedCount: 0,
+        inProgressCount: 0,
+        slaAdherencePct: '100',
+        withinSlaCount: 0,
+        breachedCount: 0,
+      };
+    }
 
     return {
-      total,
-      openCount: openCases.length,
-      assignedCount: assignedCases.length,
-      resolvedCount: resolvedCases.length,
-      inProgressCount: inProgressCases.length,
-      slaAdherencePct,
-      withinSlaCount,
-      breachedCount,
+      total: summaryData.totalCases,
+      openCount: summaryData.openCases,
+      assignedCount: Math.max(0, summaryData.totalCases - summaryData.unassignedCases),
+      resolvedCount: summaryData.resolvedCases,
+      inProgressCount: summaryData.inProgressCases,
+      slaAdherencePct: summaryData.slaAdherencePercent != null ? summaryData.slaAdherencePercent.toFixed(1) : '100',
+      withinSlaCount: summaryData.slaHealthyCases,
+      breachedCount: summaryData.slaBreachedCases,
     };
-  }, [filteredCases, now]);
+  }, [summaryData]);
 
   // Analytics: Cases by Department (Horizontal Bar Chart Data)
   const deptChartData = useMemo(() => {
-    const counts = {};
-    filteredCases.forEach((c) => {
-      const dName = c.departmentName || 'General';
-      counts[dName] = (counts[dName] || 0) + 1;
-    });
-
-    const items = Object.entries(counts).map(([name, count]) => ({
-      name,
-      count,
+    if (!summaryData?.casesByDepartment) return [];
+    const items = summaryData.casesByDepartment.map((d) => ({
+      name: d.departmentName,
+      count: d.count,
     }));
-
-    items.sort((a, b) => b.count - a.count);
     const maxCount = Math.max(...items.map((i) => i.count), 1);
 
     return items.map((item, idx) => ({
@@ -334,119 +213,89 @@ export function DashboardPage() {
       percentage: Math.round((item.count / maxCount) * 100),
       colorVar: `var(--color-dept-${idx % 10})`,
     }));
-  }, [filteredCases]);
+  }, [summaryData]);
 
   // Analytics: Cases by Severity (Doughnut Chart Data)
   const severityChartData = useMemo(() => {
-    const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 };
-    filteredCases.forEach((c) => {
-      const sev = c.severity || 'Medium';
-      if (counts[sev] !== undefined) counts[sev]++;
-      else counts.Medium++;
-    });
-
-    const total = filteredCases.length || 1;
+    if (!summaryData) return [];
+    const total = summaryData.totalCases || 1;
     return [
-      { name: 'Critical', count: counts.Critical, color: '#ef4444', pct: Math.round((counts.Critical / total) * 100) },
-      { name: 'High', count: counts.High, color: '#f97316', pct: Math.round((counts.High / total) * 100) },
-      { name: 'Medium', count: counts.Medium, color: '#f59e0b', pct: Math.round((counts.Medium / total) * 100) },
-      { name: 'Low', count: counts.Low, color: '#10b981', pct: Math.round((counts.Low / total) * 100) },
+      { name: 'Critical', count: summaryData.criticalCases, color: '#ef4444', pct: Math.round((summaryData.criticalCases / total) * 100) },
+      { name: 'High', count: summaryData.highCases, color: '#f97316', pct: Math.round((summaryData.highCases / total) * 100) },
+      { name: 'Medium', count: summaryData.mediumCases, color: '#f59e0b', pct: Math.round((summaryData.mediumCases / total) * 100) },
+      { name: 'Low', count: summaryData.lowCases, color: '#10b981', pct: Math.round((summaryData.lowCases / total) * 100) },
     ];
-  }, [filteredCases]);
+  }, [summaryData]);
 
   // Analytics: Cases Resolved Over Time (Smooth Line Chart Data)
   const resolvedLineData = useMemo(() => {
-    const resolvedOnly = filteredCases.filter((c) => c.status === 'Resolved' && c.resolvedAt);
-    const intervalMap = {};
-    const now = new Date();
+    if (!summaryData) return [];
+    const list = resolvedTimeframe === 'daily'
+      ? summaryData.resolvedDaily
+      : resolvedTimeframe === 'weekly'
+      ? summaryData.resolvedWeekly
+      : summaryData.resolvedMonthly;
 
-    if (resolvedTimeframe === 'daily') {
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-        const key = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        intervalMap[key] = 0;
-      }
-      resolvedOnly.forEach((c) => {
-        const rDate = new Date(c.resolvedAt);
-        const key = rDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        if (intervalMap[key] !== undefined) intervalMap[key]++;
-      });
-    } else if (resolvedTimeframe === 'weekly') {
-      for (let i = 3; i >= 0; i--) {
-        const key = `Wk ${4 - i}`;
-        intervalMap[key] = 0;
-      }
-      resolvedOnly.forEach((c) => {
-        const rDate = new Date(c.resolvedAt);
-        const diffWeeks = Math.floor((now - rDate) / (7 * 24 * 3600 * 1000));
-        if (diffWeeks >= 0 && diffWeeks < 4) {
-          const key = `Wk ${4 - diffWeeks}`;
-          if (intervalMap[key] !== undefined) intervalMap[key]++;
-        }
-      });
-    } else {
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const key = d.toLocaleDateString('en-US', { month: 'short' });
-        intervalMap[key] = 0;
-      }
-      resolvedOnly.forEach((c) => {
-        const rDate = new Date(c.resolvedAt);
-        const key = rDate.toLocaleDateString('en-US', { month: 'short' });
-        if (intervalMap[key] !== undefined) intervalMap[key]++;
-      });
-    }
-
-    return Object.entries(intervalMap).map(([label, val]) => ({ label, val }));
-  }, [filteredCases, resolvedTimeframe]);
+    return (list || []).map((item) => ({ label: item.label, val: item.count }));
+  }, [summaryData, resolvedTimeframe]);
 
   // Operational: Recent Activity
   const recentActivities = useMemo(() => {
-    const activities = [];
-    filteredCases.forEach((c) => {
-      if (c.status === 'Resolved' && c.resolvedAt) {
-        activities.push({
-          id: `act-res-${c.id}`,
-          type: 'resolved',
-          title: `Case ${c.caseNumber} resolved`,
-          sub: `${c.title} · ${c.ownerName || 'Agent'}`,
-          time: new Date(c.resolvedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          caseId: c.id,
-        });
-      } else {
-        activities.push({
-          id: `act-cre-${c.id}`,
-          type: c.status === 'Escalated' ? 'escalated' : 'created',
-          title: `Case ${c.caseNumber} ${c.status === 'Escalated' ? 'escalated' : 'updated'}`,
-          sub: `${c.title} · Department: ${c.departmentName}`,
-          time: new Date(c.createdAt || c.slaStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          caseId: c.id,
-        });
-      }
-    });
-    return activities;
-  }, [filteredCases]);
+    if (!summaryData?.recentActivities) return [];
+    return summaryData.recentActivities.map((a) => ({
+      id: a.id,
+      type: a.type,
+      title: a.title,
+      sub: a.sub,
+      time: new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      caseId: a.caseId,
+    }));
+  }, [summaryData]);
 
   // Operational: Cases Requiring SLA Attention
   const attentionCases = useMemo(() => {
-    return filteredCases.filter((c) => {
-      if (c.status === 'Resolved') return false;
-      const createdTime = new Date(c.slaStartTime || c.createdAt || Date.now()).getTime();
-      const { internalHours } = getSlaConfig(c.severity, c.slaTargetHours);
-      const targetDeadline = createdTime + internalHours * 3600 * 1000;
-      const remainingMs = targetDeadline - now;
+    if (!summaryData?.attentionCases) return [];
+    let list = summaryData.attentionCases;
+    if (slaFilter !== 'all') {
+      list = list.filter((c) => {
+        const isBreached = Boolean(c.slaBreachedAt);
+        if (slaFilter === 'breached') return isBreached;
+        if (slaFilter === 'approaching') return !isBreached;
+        if (slaFilter === 'healthy') return false;
+        return true;
+      });
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((c) =>
+        c.caseNumber?.toLowerCase().includes(q) ||
+        c.title?.toLowerCase().includes(q) ||
+        c.customerName?.toLowerCase().includes(q) ||
+        c.ownerName?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [summaryData, slaFilter, searchQuery]);
 
-      const isBreached = remainingMs < 0;
-      const isApproaching = remainingMs > 0 && remainingMs < 3 * 3600 * 1000;
-      const isCritical = c.severity === 'Critical' || c.severity === 'High';
-      const isUnassigned = !c.ownerId || c.ownerId === '00000000-0000-0000-0000-000000000000';
+  // Operational: Recent Cases Table Overview
+  const recentCases = useMemo(() => {
+    if (!summaryData?.recentCases) return [];
+    let list = summaryData.recentCases;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((c) =>
+        c.caseNumber?.toLowerCase().includes(q) ||
+        c.title?.toLowerCase().includes(q) ||
+        c.customerName?.toLowerCase().includes(q) ||
+        c.ownerName?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [summaryData, searchQuery]);
 
-      return isBreached || isApproaching || isCritical || isUnassigned;
-    });
-  }, [filteredCases, now]);
+  const totalCasesCount = summaryData?.totalCases || 0;
 
-  // Stable handlers: a new function identity on every render would defeat the memo() on the
-  // extracted list components below.
+  // Stable handlers
   const handleSelectCase = useCallback((caseId) => navigate(`/case-management/${caseId}`), [navigate]);
   const handleViewBoard = useCallback(() => navigate('/case-management'), [navigate]);
 
@@ -923,7 +772,7 @@ export function DashboardPage() {
 
       {/* 4. MAIN CONTENT AREA */}
       <div className="dashboard-page__content">
-        {filteredCases.length === 0 ? (
+        {totalCasesCount === 0 ? (
           <EmptyState
             title="No cases match your filters"
             description="Try resetting your date range or filter criteria to view cases."
@@ -1207,7 +1056,7 @@ export function DashboardPage() {
                     </svg>
 
                     <div className="doughnut-center-text">
-                      <div className="doughnut-center-number">{filteredCases.length}</div>
+                      <div className="doughnut-center-number">{totalCasesCount}</div>
                       <div className="doughnut-center-label">TOTAL</div>
                     </div>
                   </div>
@@ -1242,7 +1091,7 @@ export function DashboardPage() {
               <AttentionCasesList cases={attentionCases} onSelectCase={handleSelectCase} />
 
               <RecentCasesTable
-                cases={filteredCases}
+                cases={recentCases}
                 onSelectCase={handleSelectCase}
                 onViewBoard={handleViewBoard}
               />

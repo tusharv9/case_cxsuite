@@ -25,14 +25,6 @@ export const CASE_STATUS_LABELS = {
   Resolved: 'Resolved',
 };
 
-export const CASE_STATUS_COLORS = {
-  Open: { color: 'var(--color-status-open)', bg: 'var(--color-status-open-bg)', border: 'var(--color-status-open-border)' },
-  InProgress: { color: 'var(--color-status-inprogress)', bg: 'var(--color-status-inprogress-bg)', border: 'var(--color-status-inprogress-border)' },
-  WaitingOnCustomer: { color: '#b45309', bg: '#fef3c7', border: '#fde68a' },
-  Escalated: { color: 'var(--color-status-escalated)', bg: 'var(--color-status-escalated-bg)', border: 'var(--color-status-escalated-border)' },
-  Resolved: { color: 'var(--color-status-resolved)', bg: 'var(--color-status-resolved-bg)', border: 'var(--color-status-resolved-border)' },
-};
-
 // Severity (Strictly: Low, Medium, High, Critical)
 export const SEVERITY = {
   LOW: 'Low',
@@ -53,18 +45,6 @@ export const SEVERITY_LABELS = {
   Bad: 'Critical',
 };
 
-export const SEVERITY_COLORS = {
-  Low: { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
-  Medium: { color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
-  High: { color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
-  Critical: { color: '#ffffff', bg: '#dc2626', border: '#dc2626' },
-  // Fallbacks
-  Ok: { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
-  Info: { color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
-  Warn: { color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
-  Bad: { color: '#ffffff', bg: '#dc2626', border: '#dc2626' },
-};
-
 // SLA Configurations (Internal SLA is 2 hours less than External SLA)
 export const SEVERITY_SLA_MAPPING = {
   Critical: { external: 4, internal: 2 },
@@ -76,12 +56,6 @@ export const SEVERITY_SLA_MAPPING = {
   Info: { external: 12, internal: 10 },
   Ok: { external: 24, internal: 22 },
 };
-
-// Agent Statuses
-export const AGENT_STATUSES = ['Available', 'Busy', 'Away'];
-
-// Preferred Languages
-export const PREFERRED_LANGUAGES = ['English', 'Bahasa Malaysia', 'Chinese'];
 
 // Event types
 export const EVENT_TYPE_LABELS = {
@@ -166,15 +140,6 @@ export const PREFERRED_COMMUNICATION_CHANNEL_OPTIONS = [
   { value: 'SMS', label: 'SMS' },
 ];
 
-// Predefined Escalation reasons (Without 'Other' duplicate since UI appends a single 'Other' option)
-export const ESCALATION_REASONS = [
-  'SLA Breach',
-  'Customer Complaint Repeat',
-  'Regulatory / BNM',
-  'Sharia Concern',
-  'Fraud Risk',
-];
-
 // Resolve dispositions
 export const RESOLVE_DISPOSITIONS = [
   'Resolved on First Contact',
@@ -205,3 +170,8 @@ export const SEARCH_DEBOUNCE_MS = 250;
 // How often the unread badge re-checks while the tab is visible. Polling is suspended while
 // the tab is hidden and resumes with an immediate refresh, so background tabs cost nothing.
 export const NOTIFICATION_POLL_INTERVAL_MS = 8000;
+
+// ===== CASE LIST VIEW PAGINATION =====
+// Rows per page in the Case Management List View (server-side pagination).
+export const CASE_LIST_DEFAULT_PAGE_SIZE = 10;
+export const CASE_LIST_PAGE_SIZE_OPTIONS = [10, 25, 50];

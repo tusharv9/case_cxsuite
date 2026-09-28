@@ -15,9 +15,9 @@ const NAV_ITEMS = [
 ];
 
 export function Sidebar() {
-  const { boardCases } = useCase();
+  const { caseStats } = useCase();
   const { isSidebarOpen, dispatch } = useApp();
-  const openCount = boardCases.filter((c) => c.status !== 'Resolved').length || null;
+  const openCount = caseStats?.openCount || null;
 
   if (!isSidebarOpen) return null;
 

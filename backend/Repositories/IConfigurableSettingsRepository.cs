@@ -40,8 +40,4 @@ public interface IConfigurableSettingsRepository
     Task<int> CountCasesBySeverityAsync(string severity, CancellationToken ct = default);
     Task<int> RenameCaseSeverityAsync(string oldSeverity, string newSeverity, CancellationToken ct = default);
 
-    Task<DepartmentEscalationTemplate?> GetEscalationTemplateAsync(Guid departmentId, string reason, CancellationToken ct = default);
-    Task<IEnumerable<DepartmentEscalationTemplate>> GetAllEscalationTemplatesAsync(Guid? departmentId = null, CancellationToken ct = default);
-    Task<DepartmentEscalationTemplate> SaveEscalationTemplateAsync(DepartmentEscalationTemplate template, CancellationToken ct = default);
-    Task<bool> DeleteEscalationTemplateAsync(Guid id, CancellationToken ct = default);
 }

@@ -21,12 +21,11 @@ public class AppDbContext : DbContext
     public DbSet<LookupValue> LookupValues { get; set; } = null!;
     public DbSet<CustomerCustomAttribute> CustomerCustomAttributes { get; set; } = null!;
     public DbSet<CaseAttachment> CaseAttachments { get; set; } = null!;
+    public DbSet<CaseCollaborationActivity> CaseCollaborationActivities { get; set; } = null!;
 
     public DbSet<CaseTypeConfig> CaseTypeConfigs { get; set; } = null!;
     public DbSet<DepartmentSubCategory> DepartmentSubCategories { get; set; } = null!;
     public DbSet<SlaConfiguration> SlaConfigurations { get; set; } = null!;
-    public DbSet<DepartmentEscalationTemplate> DepartmentEscalationTemplates { get; set; } = null!;
-    public DbSet<NotificationRule> NotificationRules { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -87,6 +86,28 @@ public class AppDbContext : DbContext
             .HasForeignKey(ca => ca.UploadedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<CaseCollaborationActivity>()
+            .HasOne(a => a.Case)
+            .WithMany()
+            .HasForeignKey(a => a.CaseId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<CaseCollaborationActivity>()
+            .HasOne(a => a.ActorUser)
+            .WithMany()
+            .HasForeignKey(a => a.ActorUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<CaseCollaborationActivity>()
+            .HasOne(a => a.TargetUser)
+            .WithMany()
+            .HasForeignKey(a => a.TargetUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<CaseCollaborationActivity>()
+            .HasIndex(a => new { a.CaseId, a.CreatedAt })
+            .IsDescending(false, true);
+
         // --- Performance indexes ---
         // Mirrored as idempotent CREATE INDEX IF NOT EXISTS statements in Program.cs, because
         // this project provisions with EnsureCreated() rather than Migrate(); the SQL block
@@ -100,6 +121,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Case>()
             .HasIndex(c => new { c.DepartmentId, c.CreatedAt })
             .IsDescending(false, true);
+
+        // List View / Board columns filter by status and page newest first.
+        modelBuilder.Entity<Case>()
+            .HasIndex(c => new { c.Status, c.CreatedAt })
+            .IsDescending(false, true);
+
+        modelBuilder.Entity<Case>()
+            .HasIndex(c => c.Severity);
 
         // Audit trail pages a global CreatedAt DESC ordering; case detail reads one case's timeline.
         modelBuilder.Entity<CaseEvent>()

@@ -7,14 +7,17 @@ using Microsoft.EntityFrameworkCore;
 
 public class NotificationService : INotificationService
 {
-    private const int SeedNotificationCount = 12;
-    private const int SeedUnreadCount = 3;
-
     private static DateTime _lastSlaCheckTime = DateTime.MinValue;
     private static readonly TimeSpan SlaCheckInterval = TimeSpan.FromMinutes(2);
     private static readonly object _slaLock = new();
 
     private const double SlaApproachingThresholdHours = 2;
+
+    // Fixed SLA notification behaviour. These used to be editable "Notification Rules" in
+    // Configurable Settings; that screen was removed, so the previous default values apply.
+    private sealed record SlaNotificationPolicy(string Priority, int CooldownMinutes, int MaxReminders, bool EnableAggregation, int AggregationThreshold);
+    private static readonly SlaNotificationPolicy BreachPolicy = new("High", 60, 3, true, 3);
+    private static readonly SlaNotificationPolicy ApproachingPolicy = new("Medium", 120, 2, true, 3);
 
     private readonly AppDbContext _context;
 
@@ -58,7 +61,6 @@ public class NotificationService : INotificationService
         if (page < 1) page = 1;
         if (pageSize < 1) pageSize = 15;
 
-        await EnsureSeedNotificationsForUserAsync(userId, ct);
         await CheckAndGenerateSlaNotificationsAsync(ct);
 
         var query = _context.Notifications
@@ -156,20 +158,12 @@ public class NotificationService : INotificationService
 
         var now = DateTime.UtcNow;
 
-        // Fetch rules
-        await EnsureSeedNotificationRulesAsync(ct);
-
-        var breachRule = await _context.NotificationRules.AsNoTracking().FirstOrDefaultAsync(r => r.EventType == "SLA_BREACHED", ct)
-            ?? new NotificationRule { EventType = "SLA_BREACHED", IsEnabled = true, Priority = "High", CooldownMinutes = 60, MaxReminders = 3, EnableAggregation = true, AggregationThreshold = 3 };
-
-        var approachingRule = await _context.NotificationRules.AsNoTracking().FirstOrDefaultAsync(r => r.EventType == "SLA_APPROACHING", ct)
-            ?? new NotificationRule { EventType = "SLA_APPROACHING", IsEnabled = true, Priority = "Medium", CooldownMinutes = 120, MaxReminders = 2, EnableAggregation = true, AggregationThreshold = 3 };
-
-        if (!breachRule.IsEnabled && !approachingRule.IsEnabled) return;
+        var breachRule = BreachPolicy;
+        var approachingRule = ApproachingPolicy;
 
         var activeCases = await _context.Cases
             .AsNoTracking()
-            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed)
+            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled)
             .Select(c => new SlaCandidate
             {
                 Id = c.Id,
@@ -189,11 +183,11 @@ public class NotificationService : INotificationService
             var slaTargetTime = c.SlaStartTime.AddHours(c.SlaTargetHours);
             var remainingHours = (slaTargetTime - now).TotalHours;
 
-            if (remainingHours <= 0 && breachRule.IsEnabled)
+            if (remainingHours <= 0)
             {
                 dueBreaches.Add(c);
             }
-            else if (remainingHours > 0 && remainingHours <= SlaApproachingThresholdHours && approachingRule.IsEnabled)
+            else if (remainingHours > 0 && remainingHours <= SlaApproachingThresholdHours)
             {
                 dueApproaching.Add(c);
             }
@@ -362,129 +356,6 @@ public class NotificationService : INotificationService
         }
     }
 
-    // Notification Rules Management Implementation
-    public async Task<IEnumerable<NotificationRuleDto>> GetNotificationRulesAsync(CancellationToken ct = default)
-    {
-        await EnsureSeedNotificationRulesAsync(ct);
-
-        var rules = await _context.NotificationRules
-            .AsNoTracking()
-            .OrderBy(r => r.Name)
-            .ToListAsync(ct);
-
-        return rules.Select(r => new NotificationRuleDto
-        {
-            Id = r.Id,
-            EventType = r.EventType,
-            Name = r.Name,
-            IsEnabled = r.IsEnabled,
-            Priority = r.Priority,
-            CooldownMinutes = r.CooldownMinutes,
-            MaxReminders = r.MaxReminders,
-            EnableAggregation = r.EnableAggregation,
-            AggregationThreshold = r.AggregationThreshold,
-            CreatedAt = r.CreatedAt,
-            UpdatedAt = r.UpdatedAt
-        });
-    }
-
-    public async Task<NotificationRuleDto?> UpdateNotificationRuleAsync(Guid id, UpdateNotificationRuleDto dto, Guid userId, CancellationToken ct = default)
-    {
-        var rule = await _context.NotificationRules.FirstOrDefaultAsync(r => r.Id == id, ct);
-        if (rule == null) return null;
-
-        var oldValue = $"Enabled={rule.IsEnabled}, Priority={rule.Priority}, Cooldown={rule.CooldownMinutes}m, Reminders={rule.MaxReminders}, Aggregation={rule.EnableAggregation} (Threshold: {rule.AggregationThreshold})";
-
-        rule.IsEnabled = dto.IsEnabled;
-        rule.Priority = string.IsNullOrWhiteSpace(dto.Priority) ? rule.Priority : dto.Priority.Trim();
-        rule.CooldownMinutes = dto.CooldownMinutes < 0 ? 0 : dto.CooldownMinutes;
-        rule.MaxReminders = dto.MaxReminders < 0 ? 0 : dto.MaxReminders;
-        rule.EnableAggregation = dto.EnableAggregation;
-        rule.AggregationThreshold = dto.AggregationThreshold < 1 ? 1 : dto.AggregationThreshold;
-        rule.UpdatedAt = DateTime.UtcNow;
-
-        var newValue = $"Enabled={rule.IsEnabled}, Priority={rule.Priority}, Cooldown={rule.CooldownMinutes}m, Reminders={rule.MaxReminders}, Aggregation={rule.EnableAggregation} (Threshold: {rule.AggregationThreshold})";
-
-        // Audit Log Entry
-        var audit = new CaseEvent
-        {
-            Id = Guid.NewGuid(),
-            CaseId = null,
-            EventType = EventType.Other,
-            Message = $"Updated Notification Rule '{rule.Name}' ({rule.EventType})",
-            CreatedAt = DateTime.UtcNow,
-            UserId = userId,
-            Module = "Configurable Settings",
-            EntityName = $"Notification Rule: {rule.Name}",
-            ActionType = "UPDATE",
-            OldValue = oldValue,
-            NewValue = newValue
-        };
-
-        _context.CaseEvents.Add(audit);
-        await _context.SaveChangesAsync(ct);
-
-        return new NotificationRuleDto
-        {
-            Id = rule.Id,
-            EventType = rule.EventType,
-            Name = rule.Name,
-            IsEnabled = rule.IsEnabled,
-            Priority = rule.Priority,
-            CooldownMinutes = rule.CooldownMinutes,
-            MaxReminders = rule.MaxReminders,
-            EnableAggregation = rule.EnableAggregation,
-            AggregationThreshold = rule.AggregationThreshold,
-            CreatedAt = rule.CreatedAt,
-            UpdatedAt = rule.UpdatedAt
-        };
-    }
-
-    public async Task<NotificationRuleDto?> ToggleNotificationRuleAsync(Guid id, Guid userId, CancellationToken ct = default)
-    {
-        var rule = await _context.NotificationRules.FirstOrDefaultAsync(r => r.Id == id, ct);
-        if (rule == null) return null;
-
-        var oldStatus = rule.IsEnabled ? "Enabled" : "Disabled";
-        rule.IsEnabled = !rule.IsEnabled;
-        rule.UpdatedAt = DateTime.UtcNow;
-        var newStatus = rule.IsEnabled ? "Enabled" : "Disabled";
-
-        // Audit Log Entry
-        var audit = new CaseEvent
-        {
-            Id = Guid.NewGuid(),
-            CaseId = null,
-            EventType = EventType.Other,
-            Message = $"{newStatus} Notification Rule '{rule.Name}'",
-            CreatedAt = DateTime.UtcNow,
-            UserId = userId,
-            Module = "Configurable Settings",
-            EntityName = $"Notification Rule: {rule.Name}",
-            ActionType = rule.IsEnabled ? "ENABLE" : "DISABLE",
-            OldValue = oldStatus,
-            NewValue = newStatus
-        };
-
-        _context.CaseEvents.Add(audit);
-        await _context.SaveChangesAsync(ct);
-
-        return new NotificationRuleDto
-        {
-            Id = rule.Id,
-            EventType = rule.EventType,
-            Name = rule.Name,
-            IsEnabled = rule.IsEnabled,
-            Priority = rule.Priority,
-            CooldownMinutes = rule.CooldownMinutes,
-            MaxReminders = rule.MaxReminders,
-            EnableAggregation = rule.EnableAggregation,
-            AggregationThreshold = rule.AggregationThreshold,
-            CreatedAt = rule.CreatedAt,
-            UpdatedAt = rule.UpdatedAt
-        };
-    }
-
     private sealed class SlaCandidate
     {
         public Guid Id { get; init; }
@@ -495,158 +366,11 @@ public class NotificationService : INotificationService
         public int SlaTargetHours { get; init; }
     }
 
-    private async Task EnsureSeedNotificationsForUserAsync(Guid userId, CancellationToken ct)
-    {
-        var hasAny = await _context.Notifications.AnyAsync(n => n.RecipientUserId == userId, ct);
-        if (hasAny) return;
-
-        var events = await _context.CaseEvents
-            .AsNoTracking()
-            .OrderByDescending(ce => ce.CreatedAt)
-            .Take(SeedNotificationCount)
-            .Select(ce => new
-            {
-                ce.EventType,
-                ce.Message,
-                ce.CaseId,
-                CaseNumber = ce.Case != null ? ce.Case.CaseNumber : null,
-                ce.CreatedAt
-            })
-            .ToListAsync(ct);
-
-        var newNotifications = new List<NotificationItem>();
-        var idx = 0;
-        foreach (var ev in events)
-        {
-            var type = ev.EventType switch
-            {
-                EventType.Create => "CASE_ASSIGNED",
-                EventType.Assign => "CASE_REASSIGNED",
-                EventType.Escalate => "CASE_ESCALATED",
-                EventType.Resolve => "CASE_RESOLVED",
-                _ => "AUDIT_EVENT"
-            };
-
-            var title = ev.EventType switch
-            {
-                EventType.Create => "New Case Created",
-                EventType.Assign => "Case Reassigned",
-                EventType.Escalate => "Case Escalated",
-                EventType.Resolve => "Case Resolved",
-                _ => "Case Activity"
-            };
-
-            newNotifications.Add(new NotificationItem
-            {
-                Id = Guid.NewGuid(),
-                RecipientUserId = userId,
-                Type = type,
-                Title = title,
-                Message = ev.Message,
-                CaseId = ev.CaseId,
-                CaseNumber = ev.CaseNumber,
-                Priority = "Medium",
-                IsRead = idx >= SeedUnreadCount,
-                CreatedAt = ev.CreatedAt,
-                ReadAt = idx >= SeedUnreadCount ? ev.CreatedAt.AddMinutes(10) : null
-            });
-            idx++;
-        }
-
-        if (newNotifications.Any())
-        {
-            _context.Notifications.AddRange(newNotifications);
-            await _context.SaveChangesAsync(ct);
-        }
-    }
-
-    private async Task EnsureSeedNotificationRulesAsync(CancellationToken ct)
-    {
-        var hasAny = await _context.NotificationRules.AnyAsync(ct);
-        if (hasAny) return;
-
-        var now = DateTime.UtcNow;
-        var defaultRules = new List<NotificationRule>
-        {
-            new NotificationRule
-            {
-                Id = Guid.NewGuid(),
-                EventType = "SLA_BREACHED",
-                Name = "SLA Breach Notification",
-                IsEnabled = true,
-                Priority = "High",
-                CooldownMinutes = 60,
-                MaxReminders = 3,
-                EnableAggregation = true,
-                AggregationThreshold = 3,
-                CreatedAt = now
-            },
-            new NotificationRule
-            {
-                Id = Guid.NewGuid(),
-                EventType = "SLA_APPROACHING",
-                Name = "SLA Approaching Warning",
-                IsEnabled = true,
-                Priority = "Medium",
-                CooldownMinutes = 120,
-                MaxReminders = 2,
-                EnableAggregation = true,
-                AggregationThreshold = 3,
-                CreatedAt = now
-            },
-            new NotificationRule
-            {
-                Id = Guid.NewGuid(),
-                EventType = "CASE_ASSIGNED",
-                Name = "Case Assignment Alert",
-                IsEnabled = true,
-                Priority = "Medium",
-                CooldownMinutes = 0,
-                MaxReminders = 0,
-                EnableAggregation = false,
-                AggregationThreshold = 5,
-                CreatedAt = now
-            },
-            new NotificationRule
-            {
-                Id = Guid.NewGuid(),
-                EventType = "CASE_ESCALATED",
-                Name = "Case Escalation Alert",
-                IsEnabled = true,
-                Priority = "Critical",
-                CooldownMinutes = 30,
-                MaxReminders = 3,
-                EnableAggregation = true,
-                AggregationThreshold = 2,
-                CreatedAt = now
-            },
-            new NotificationRule
-            {
-                Id = Guid.NewGuid(),
-                EventType = "CONFIG_CHANGED",
-                Name = "System Configuration Change",
-                IsEnabled = true,
-                Priority = "Info",
-                CooldownMinutes = 0,
-                MaxReminders = 0,
-                EnableAggregation = false,
-                AggregationThreshold = 5,
-                CreatedAt = now
-            }
-        };
-
-        _context.NotificationRules.AddRange(defaultRules);
-        await _context.SaveChangesAsync(ct);
-    }
-
     public async Task CreateConfigChangedNotificationAsync(string title, string message, CancellationToken ct = default)
     {
         try
         {
-            var configRule = await _context.NotificationRules.AsNoTracking().FirstOrDefaultAsync(r => r.EventType == "CONFIG_CHANGED", ct);
-            if (configRule != null && !configRule.IsEnabled) return;
-
-            var priority = configRule?.Priority ?? "Info";
+            const string priority = "Info";
 
             var adminUserIds = await _context.Users.AsNoTracking()
                 .Where(u => u.Role.Contains("Admin") || u.Role.Contains("Officer") || u.Role.Contains("Agent"))

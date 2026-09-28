@@ -92,8 +92,9 @@ export function CaseCard({ caseData, isSelected, onClick }) {
   } = caseData;
 
   const resolvedSlaStartTime = slaStartTime || createdAt;
-  const ownerInitials = ownerName ? getInitials(ownerName) : '?';
-  const ownerColor = ownerName ? getAvatarColor(ownerName) : { bg: '#94a3af', text: '#ffffff' };
+  const isAssigned = Boolean(ownerName && ownerName.trim() && ownerName.toLowerCase() !== 'unassigned');
+  const ownerInitials = isAssigned ? getInitials(ownerName) : '';
+  const ownerColor = isAssigned ? getAvatarColor(ownerName) : null;
 
   return (
     <article
@@ -123,19 +124,25 @@ export function CaseCard({ caseData, isSelected, onClick }) {
         <h4 className="case-card__title" title={title}>{title}</h4>
       </div>
 
-      {/* 3. Footer: Channel Pill + Dynamic Agent Avatar/Initials */}
+      {/* 3. Footer: Channel Pill + Dynamic Agent Avatar or Unassigned Badge */}
       <div className="case-card__footer">
         <ChannelBadge channel={sourceChannel || communicationChannel || 'Voice'} />
         
         <div className="case-card__agent-wrapper">
-          <span
-            className="case-card__agent-avatar"
-            style={{ backgroundColor: ownerColor.bg, color: ownerColor.text }}
-            title={`Assigned Agent: ${ownerName || 'Unassigned'}`}
-            aria-label={`Assigned Agent: ${ownerName || 'Unassigned'}`}
-          >
-            {ownerInitials}
-          </span>
+          {isAssigned ? (
+            <span
+              className="case-card__agent-avatar"
+              style={{ backgroundColor: ownerColor.bg, color: ownerColor.text }}
+              title={`Assigned Agent: ${ownerName}`}
+              aria-label={`Assigned Agent: ${ownerName}`}
+            >
+              {ownerInitials}
+            </span>
+          ) : (
+            <span className="case-card__unassigned-badge" title="Unassigned">
+              Unassigned
+            </span>
+          )}
         </div>
       </div>
     </article>

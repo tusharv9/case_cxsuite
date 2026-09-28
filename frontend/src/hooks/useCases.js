@@ -1,28 +1,33 @@
 // ===== useCases HOOK =====
+//
+// Case Management no longer downloads every case into the browser. The List View and the
+// Board page their data from the server (useCaseListPage / useInfiniteColumnCases); this hook
+// only loads the header counts (open / SLA breached), opens case details and broadcasts
+// refreshes so every paged view reloads itself.
 
 import { useCallback, useEffect } from 'react';
 import { caseService } from '../services/caseService.js';
 import { useCase } from '../contexts/CaseContext.jsx';
 import { useApp } from '../contexts/AppContext.jsx';
 
-export function useCases() {
+export function useCases({ autoLoadStats = false } = {}) {
   const { selectedDeptId, dispatch } = useCase();
   const { addToast } = useApp();
 
-  const loadBoard = useCallback(
-    (deptId) => {
-      dispatch({ type: 'SET_BOARD_LOADING', payload: true });
+  const loadStats = useCallback(
+    (deptId) =>
       caseService
-        .getBoardCases(deptId || null)
-        .then((cases) => dispatch({ type: 'SET_BOARD_CASES', payload: cases }))
-        .catch((err) => dispatch({ type: 'SET_BOARD_ERROR', payload: err.message }));
-    },
+        .getCaseStats(deptId || null)
+        .then((stats) => dispatch({ type: 'SET_CASE_STATS', payload: stats }))
+        .catch(() => {
+          // Header counts are informational; a failure must not block the page.
+        }),
     [dispatch]
   );
 
   useEffect(() => {
-    loadBoard(selectedDeptId);
-  }, [selectedDeptId, loadBoard]);
+    if (autoLoadStats) loadStats(selectedDeptId);
+  }, [autoLoadStats, selectedDeptId, loadStats]);
 
   const loadCaseDetails = useCallback(
     async (caseId) => {
@@ -38,9 +43,11 @@ export function useCases() {
     [dispatch, addToast]
   );
 
+  // Tells every paged view (List page, Board columns) to reload, and refreshes the counts.
   const refreshBoard = useCallback(() => {
-    loadBoard(selectedDeptId);
-  }, [selectedDeptId, loadBoard]);
+    dispatch({ type: 'REFRESH_BOARD' });
+    loadStats(selectedDeptId);
+  }, [selectedDeptId, loadStats, dispatch]);
 
   const refreshSelectedCase = useCallback(
     async (caseId) => {
@@ -55,5 +62,5 @@ export function useCases() {
     [dispatch]
   );
 
-  return { loadBoard, loadCaseDetails, refreshBoard, refreshSelectedCase };
+  return { loadStats, loadCaseDetails, refreshBoard, refreshSelectedCase };
 }

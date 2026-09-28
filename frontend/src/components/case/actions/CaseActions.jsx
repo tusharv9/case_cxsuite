@@ -6,10 +6,8 @@ import { Button } from '../../common/Button/Button.jsx';
 import { Input, Textarea, Select, Checkbox } from '../../common/Input/Input.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
 import { caseService } from '../../../services/caseService.js';
-import { configurableSettingsService } from '../../../services/configurableSettingsService.js';
 import { useToast } from '../../../hooks/useToast.js';
 import {
-  ESCALATION_REASONS,
   RESOLVE_DISPOSITIONS,
   LINK_RELATIONSHIPS,
 } from '../../../constants/index.js';
@@ -108,14 +106,14 @@ export function AssignModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <button
-            type="button"
-            className="action-btn--orange"
-            disabled={isLoading || !selectedUserId}
+          <Button
+            variant="primary"
+            isLoading={isLoading}
+            disabled={!selectedUserId}
             onClick={handleConfirm}
           >
             {isLoading ? 'Assigning...' : 'Assign'}
-          </button>
+          </Button>
         </>
       }
     >
@@ -255,14 +253,13 @@ export function TransferModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <button
-            type="button"
-            className="action-btn--orange"
-            disabled={isLoading}
+          <Button
+            variant="primary"
+            isLoading={isLoading}
             onClick={handleConfirm}
           >
             {isLoading ? 'Transferring...' : '⇄ Transfer Case'}
-          </button>
+          </Button>
         </>
       }
     >
@@ -483,19 +480,6 @@ export function CoworkerModal({
 // ============================================================
 // 4. ESCALATE MODAL
 // ============================================================
-/**
- * Substitutes the escalation template placeholders configured under
- * Configurable Settings -> Case Management -> Escalation Templates.
- * Unknown placeholders are left untouched so a typo is visible rather than silently dropped.
- */
-export function applyEscalationPlaceholders(template, values) {
-  if (!template) return '';
-  return template.replace(/\{(caseNumber|customerName|departmentName|severity)\}/g, (match, key) => {
-    const value = values[key];
-    return value === undefined || value === null || value === '' ? match : String(value);
-  });
-}
-
 export function EscalateModal({
   isOpen,
   onClose,
@@ -577,7 +561,7 @@ export function EscalateModal({
             Cancel
           </Button>
           <Button
-            variant="danger"
+            variant="primary"
             isLoading={isLoading}
             disabled={!selectedUserId}
             onClick={handleConfirm}

@@ -95,22 +95,6 @@ public class CreateDepartmentSubCategoryDto
     public int DisplayOrder { get; set; } = 1;
 }
 
-public class CreateOrUpdateSlaDto
-{
-    public string Severity { get; set; } = string.Empty;
-    public int InternalHours { get; set; }
-    public int ExternalHours { get; set; }
-    public int FirstResponseMinutes { get; set; } = 240;
-}
-
-public class CreateOrUpdateEscalationTemplateDto
-{
-    public Guid DepartmentId { get; set; }
-    public string EscalationReason { get; set; } = string.Empty;
-    public string SubjectTemplate { get; set; } = string.Empty;
-    public string BodyTemplate { get; set; } = string.Empty;
-}
-
 public class UpdateCaseTypeConfigDto
 {
     public string Code { get; set; } = string.Empty;
@@ -173,6 +157,8 @@ public class UpdateSeverityDto
 {
     public string Name { get; set; } = string.Empty;
     public int DisplayOrder { get; set; } = 0;
+    public int? InternalHours { get; set; }
+    public int? ExternalHours { get; set; }
     public int? FirstResponseMinutes { get; set; }
     public bool IsActive { get; set; } = true;
 }

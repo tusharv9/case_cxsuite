@@ -16,7 +16,6 @@ const initialState = {
   users: [],
   toasts: [],
   isLoadingUser: true,
-  isAIOpen: false,
   isSidebarOpen: true,
 };
 
@@ -33,8 +32,6 @@ function appReducer(state, action) {
       return { ...state, toasts: [...state.toasts, action.payload] };
     case 'REMOVE_TOAST':
       return { ...state, toasts: state.toasts.filter((t) => t.id !== action.payload) };
-    case 'SET_AI_OPEN':
-      return { ...state, isAIOpen: action.payload };
     case 'SET_SIDEBAR_OPEN':
       return { ...state, isSidebarOpen: action.payload };
     default:

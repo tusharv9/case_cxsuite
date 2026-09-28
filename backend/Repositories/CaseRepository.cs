@@ -63,7 +63,13 @@ public class CaseRepository : ICaseRepository
 
     public async Task UpdateAsync(Case caseToUpdate)
     {
-        _context.Cases.Update(caseToUpdate);
+        // Cases loaded through this context are already tracked, so change detection writes only
+        // the columns that changed. DbSet.Update would mark the whole loaded graph (owner,
+        // participants, links) as modified and rewrite every one of those rows.
+        if (_context.Entry(caseToUpdate).State == EntityState.Detached)
+        {
+            _context.Cases.Update(caseToUpdate);
+        }
         await _context.SaveChangesAsync();
     }
 
@@ -176,6 +182,124 @@ public class CaseRepository : ICaseRepository
             .ToListAsync(ct);
     }
 
+    public async Task<PagedResponseDto<CaseSummaryDto>> GetPaginatedBoardCasesAsync(
+        string? status = null,
+        int page = 1,
+        int pageSize = 30,
+        Guid? departmentId = null,
+        string? caseType = null,
+        string? search = null,
+        string? priority = null,
+        string? channel = null,
+        CancellationToken ct = default)
+    {
+        var query = _context.Cases.AsNoTracking();
+
+        if (departmentId.HasValue)
+        {
+            query = query.Where(c => c.DepartmentId == departmentId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(caseType) && !caseType.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            string norm = caseType.Trim();
+            if (norm.Equals("Enquiry", StringComparison.OrdinalIgnoreCase)) norm = "Inquiry";
+
+            bool isInquiry = norm.Equals("Inquiry", StringComparison.OrdinalIgnoreCase);
+            bool isService = norm.Equals("Service", StringComparison.OrdinalIgnoreCase);
+            bool isComplaint = norm.Equals("Complaint", StringComparison.OrdinalIgnoreCase);
+
+            query = query.Where(c => 
+                c.CaseType == norm || 
+                (isInquiry && (c.CaseNumber.StartsWith("I-") || c.CaseNumber.StartsWith("E-"))) ||
+                (isService && c.CaseNumber.StartsWith("S-")) ||
+                (isComplaint && c.CaseNumber.StartsWith("C-"))
+            );
+        }
+
+        if (!string.IsNullOrWhiteSpace(status) && !status.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            string normStatus = status.Trim().Replace(" ", "").Replace("_", "");
+            if (Enum.TryParse<CaseStatus>(normStatus, true, out var parsedStatus))
+            {
+                query = query.Where(c => c.Status == parsedStatus);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(priority) && !priority.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            string normPriority = priority.Trim().ToLower();
+            if (normPriority == "critical")
+            {
+                query = query.Where(c => c.Severity == "Critical" || c.Severity == "Bad");
+            }
+            else if (normPriority == "high")
+            {
+                query = query.Where(c => c.Severity == "High" || c.Severity == "Warn");
+            }
+            else if (normPriority == "medium")
+            {
+                query = query.Where(c => c.Severity == "Medium" || c.Severity == "Info");
+            }
+            else if (normPriority == "low")
+            {
+                query = query.Where(c => c.Severity == "Low" || c.Severity == "Ok");
+            }
+            else
+            {
+                query = query.Where(c => c.Severity.ToLower() == normPriority);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(channel) && !channel.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            string normChannel = channel.Trim().ToLower();
+            if (normChannel == "voice" || normChannel == "phone")
+            {
+                query = query.Where(c => 
+                    (c.SourceChannel != null && (c.SourceChannel.ToLower() == "voice" || c.SourceChannel.ToLower() == "phone")) ||
+                    (c.SourceChannel == null && (c.CommunicationChannel.ToLower() == "voice" || c.CommunicationChannel.ToLower() == "phone")));
+            }
+            else
+            {
+                query = query.Where(c => 
+                    (c.SourceChannel != null && c.SourceChannel.ToLower() == normChannel) ||
+                    (c.SourceChannel == null && c.CommunicationChannel.ToLower() == normChannel));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            string pattern = SqlSearchPattern.Contains(search.Trim());
+            query = query.Where(c => EF.Functions.ILike(c.CaseNumber, pattern)
+                || EF.Functions.ILike(c.Title, pattern)
+                || (c.Customer != null && EF.Functions.ILike(c.Customer.FullName, pattern))
+                || (c.Owner != null && EF.Functions.ILike(c.Owner.Name, pattern))
+                || c.ChildRelations.Any(cr => EF.Functions.ILike(cr.ChildId, pattern)));
+        }
+
+        int totalCount = await query.CountAsync(ct);
+
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 30;
+        if (pageSize > 100) pageSize = 100;
+
+        var items = await query
+            .OrderByDescending(c => c.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .MapToCaseSummary()
+            .ToListAsync(ct);
+
+        return new PagedResponseDto<CaseSummaryDto>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
     /// <summary>
     /// Header smart-search over cases. Matches the same fields the old client-side filter did
     /// (case number, title, and sub-case child ids), but in the database and capped to
@@ -259,6 +383,23 @@ public class CaseRepository : ICaseRepository
             .Where(cr => cr.ParentCaseId == parentCaseId && cr.RelationType == relationType)
             .Select(cr => cr.ChildId)
             .ToListAsync(ct);
+
+        // Sub-case rows outlive their relation when a link is removed, so their numbers must be
+        // counted too; otherwise re-linking would hand out an id that already exists in Cases.
+        var parentNumber = await _context.Cases.AsNoTracking()
+            .Where(c => c.Id == parentCaseId)
+            .Select(c => c.CaseNumber)
+            .FirstOrDefaultAsync(ct);
+
+        if (!string.IsNullOrEmpty(parentNumber))
+        {
+            var marker = parentNumber + (relationType == ChildRelationType.Link ? "-L" : "-R");
+            var subcaseNumbers = await _context.Cases.AsNoTracking()
+                .Where(c => c.ParentCaseId == parentCaseId && c.CaseNumber.StartsWith(marker))
+                .Select(c => c.CaseNumber)
+                .ToListAsync(ct);
+            existingChildIds.AddRange(subcaseNumbers);
+        }
 
         int maxSuffix = 0;
         foreach (var childId in existingChildIds)

@@ -107,17 +107,20 @@ public static class MappingExtensions
                 OpenCasesCount = c.Customer.Cases.Count(x => x.Status != CaseStatus.Resolved && x.Status != CaseStatus.Closed && x.Status != CaseStatus.Cancelled),
                 TotalCasesCount = c.Customer.Cases.Count()
             } : null!,
-            Events = c.Events.Select(e => new CaseEventDto
-            {
-                Id = e.Id,
-                UserId = e.UserId,
-                EventType = e.EventType.ToString(),
-                Message = e.Message,
-                CreatedAt = e.CreatedAt,
-                UserName = e.User != null ? e.User.Name : string.Empty,
-                IsInternal = e.IsInternal,
-                Channel = e.Channel
-            }).ToList(),
+            Events = c.Events
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(50)
+                .Select(e => new CaseEventDto
+                {
+                    Id = e.Id,
+                    UserId = e.UserId,
+                    EventType = e.EventType.ToString(),
+                    Message = e.Message,
+                    CreatedAt = e.CreatedAt,
+                    UserName = e.User != null ? e.User.Name : string.Empty,
+                    IsInternal = e.IsInternal,
+                    Channel = e.Channel
+                }).ToList(),
             Participants = c.Participants.Select(p => new ParticipantDto
             {
                 UserId = p.UserId,

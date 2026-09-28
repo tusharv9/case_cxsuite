@@ -29,6 +29,7 @@ import {
 import { CollaborationDrawer } from '../CollaborationDrawer/CollaborationDrawer.jsx';
 import { AttachmentsDrawer } from '../AttachmentsDrawer/AttachmentsDrawer.jsx';
 import { useCases } from '../../../hooks/useCases.js';
+import { useCase } from '../../../contexts/CaseContext.jsx';
 import { useUsers } from '../../../hooks/useUsers.js';
 import { useDepartments } from '../../../hooks/useDepartments.js';
 import { caseService } from '../../../services/caseService.js';
@@ -536,6 +537,7 @@ function LinkedCasesTab({ caseData, onUnlinkSuccess }) {
 // ---- Main Case Drawer ----
 export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
   const navigate = useNavigate();
+  const { dispatch } = useCase();
   const { refreshBoard, refreshSelectedCase } = useCases();
   const { users, reload: reloadUsers } = useUsers();
   const { departments, reload: reloadDepartments } = useDepartments();
@@ -587,6 +589,18 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
     try {
       setIsUpdatingStatus(true);
       await caseService.updateCaseStatus(caseData.id, { status: newStatus });
+      
+      // Notify only affected columns via CaseContext without full board refetch
+      dispatch({
+        type: 'CASE_STATUS_CHANGED',
+        payload: {
+          caseId: caseData.id,
+          fromStatus: caseData.status,
+          toStatus: newStatus,
+          updatedCase: { ...caseData, status: newStatus },
+        },
+      });
+
       if (newNorm === 'waitingoncustomer') {
         toast.info('Status updated to Waiting on Customer. SLA clock paused.');
       } else if (currentNorm === 'waitingoncustomer' || Boolean(caseData.slaPausedAt)) {
@@ -594,7 +608,10 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
       } else {
         toast.success(`Status updated to ${newStatus}.`);
       }
-      await handleSuccess();
+
+      if (caseData?.id) {
+        await refreshSelectedCase(caseData.id);
+      }
     } catch (err) {
       toast.error(err.message || 'Failed to update case status.');
     } finally {

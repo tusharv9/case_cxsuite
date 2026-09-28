@@ -25,6 +25,66 @@ export const caseService = {
   },
 
   /**
+   * Get paginated cases for a specific Kanban column with server-side filtering
+   */
+  getPaginatedBoardCases({
+    status,
+    page = 1,
+    pageSize = 30,
+    departmentId,
+    caseType,
+    search,
+    priority,
+    channel,
+    signal,
+  } = {}) {
+    const params = {
+      page,
+      pageSize,
+    };
+    if (status && status !== 'all') params.status = status;
+    if (departmentId && departmentId !== 'all') params.departmentId = departmentId;
+    if (caseType && caseType !== 'all') params.caseType = caseType;
+    if (search && search.trim() !== '') params.search = search.trim();
+    if (priority && priority !== 'all') params.priority = priority;
+    if (channel && channel !== 'all') params.channel = channel;
+
+    return api.get('/api/cases', { params, signal }).then((r) => r.data);
+  },
+
+  /**
+   * Open / SLA-breached counts for the Case Management header (computed server-side)
+   */
+  getCaseStats(departmentId) {
+    const params = {};
+    if (departmentId && departmentId !== 'all') params.departmentId = departmentId;
+    return api.get('/api/cases/stats', { params }).then((r) => r.data);
+  },
+
+  /**
+   * Server-side aggregated dashboard summary
+   */
+  getDashboardSummary(filters = {}) {
+    return api.get('/api/dashboard/summary', { params: filters }).then((r) => r.data);
+  },
+
+  /**
+   * Case Collaboration feed: collaborators + collaboration-only activity (newest first)
+   */
+  getCollaboration(caseId, { before, limit = 50 } = {}) {
+    const params = { limit };
+    if (before) params.before = before;
+    return api.get(`/api/cases/${caseId}/collaboration`, { params }).then((r) => r.data);
+  },
+
+  /**
+   * Post a note to the Case Collaboration feed
+   */
+  addCollaborationNote(caseId, content) {
+    return api.post(`/api/cases/${caseId}/collaboration/notes`, { content }).then((r) => r.data);
+  },
+
+  /**
    * Get full case details including events, participants, linked cases
    */
   getCaseDetails(caseId) {

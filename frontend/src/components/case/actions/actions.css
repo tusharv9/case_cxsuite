@@ -183,32 +183,6 @@
   font-weight: 600;
 }
 
-/* Orange Action Buttons (Assign & Transfer per Screenshots 1 & 2) */
-.action-btn--orange {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background-color: #ea580c;
-  color: #ffffff;
-  font-weight: 600;
-  font-size: 13.5px;
-  padding: 8px 18px;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  transition: background-color 0.18s ease, transform 0.1s ease;
-}
-
-.action-btn--orange:hover:not(:disabled) {
-  background-color: #c2410c;
-}
-
-.action-btn--orange:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 /* Agent Preview Box (Screenshot 1) */
 .agent-preview-card {
   background-color: #f8fafc;

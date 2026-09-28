@@ -3,21 +3,22 @@
 .case-card {
   background-color: var(--color-white, #ffffff);
   border: 1px solid var(--color-border, #e2e8f0);
-  border-radius: var(--radius-lg, 10px);
-  padding: 14px;
+  border-radius: var(--radius-lg, 12px);
+  padding: 14px 16px;
   cursor: pointer;
   transition: all var(--transition-fast, 0.15s ease);
   position: relative;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 10px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .case-card:hover {
-  border-color: var(--color-brand-primary, #1d4ed8);
-  box-shadow: 0 4px 12px rgba(29, 78, 216, 0.1);
+  border-color: #93c5fd;
+  box-shadow: 0 4px 14px rgba(29, 78, 216, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
   transform: translateY(-1px);
 }
 
@@ -32,6 +33,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: 24px;
 }
 
 /* Priority Badges */
@@ -39,12 +41,13 @@
   display: inline-flex;
   align-items: center;
   padding: 2px 7px;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm, 5px);
   font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .case-card-priority-badge--critical {
@@ -81,6 +84,8 @@
   font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .case-card-sla-badge--met {
@@ -113,26 +118,31 @@
 .case-card__body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
 }
 
 .case-card__id {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
-  color: var(--color-brand-primary, #1d4ed8);
+  color: #0f172a;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.01em;
 }
 
 .case-card__title {
   margin: 0;
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--color-text-primary, #1e293b);
-  line-height: 1.35;
+  color: #334155;
+  line-height: 1.4;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* 3. Card Footer */
@@ -141,8 +151,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 4px;
-  padding-top: 8px;
+  margin-top: auto;
+  padding-top: 10px;
   border-top: 1px solid var(--color-gray-100, #f1f5f9);
 }
 
@@ -150,13 +160,14 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .case-card__agent-avatar {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -164,4 +175,16 @@
   flex-shrink: 0;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   text-transform: uppercase;
+}
+
+.case-card__unassigned-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full, 9999px);
+  background-color: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid #e2e8f0;
 }

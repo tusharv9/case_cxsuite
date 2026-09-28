@@ -1,22 +1,22 @@
-/* ===== CASE LIST TABLE STYLING — OmniConnect Reference System ===== */
+/* ===== CASE LIST TABLE STYLING — Clean Enterprise CRM Reference System ===== */
 
 .case-list-container {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: auto;
-  background-color: var(--color-white, #ffffff);
-  border: 1px solid var(--color-border, #e2e8f0);
-  border-radius: var(--radius-lg, 10px);
-  margin: 0 var(--space-6, 24px) var(--space-6, 24px);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background-color: #ffffff;
+  border: 1px solid rgba(15, 33, 73, 0.08);
+  border-radius: 16px;
+  margin: 0 24px 24px 24px;
+  box-shadow: 0 1px 3px rgba(15, 33, 73, 0.05);
 }
 
 .case-list-table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  font-size: var(--font-size-sm, 13px);
+  font-size: 13px;
 }
 
 /* Header */
@@ -24,93 +24,100 @@
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: #fafbfc;
-  border-bottom: 1px solid var(--color-border, #e2e8f0);
+  background-color: #ffffff;
+  border-bottom: 1.5px solid rgba(15, 33, 73, 0.08);
 }
 
 .case-list-table th {
-  padding: 12px 14px;
-  font-size: 11px;
+  padding: 10px 12px;
+  font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #64748b;
+  letter-spacing: 0.08em;
+  color: #61708f;
   text-transform: uppercase;
   white-space: nowrap;
 }
 
 .th-checkbox {
-  width: 40px;
-  padding-left: 18px !important;
+  width: 36px;
+  padding-left: 16px !important;
+  padding-right: 6px !important;
 }
 
 .th-case {
-  min-width: 220px;
+  min-width: 170px;
 }
 
 .th-customer {
-  min-width: 180px;
+  min-width: 150px;
 }
 
 .th-channel {
-  min-width: 110px;
+  white-space: nowrap;
 }
 
 .th-priority {
-  min-width: 90px;
+  white-space: nowrap;
 }
 
 .th-status {
-  min-width: 140px;
+  white-space: nowrap;
 }
 
 .th-assignee {
-  min-width: 120px;
+  white-space: nowrap;
 }
 
 .th-sla {
-  min-width: 130px;
+  white-space: nowrap;
 }
 
 .th-created {
-  min-width: 130px;
+  white-space: nowrap;
+  padding-right: 16px !important;
 }
 
 /* Rows */
 .case-list-row {
-  border-bottom: 1px solid var(--color-gray-100, #f1f5f9);
-  transition: background-color var(--transition-fast, 0.15s ease);
+  border-bottom: 1px solid rgba(15, 33, 73, 0.07);
+  transition: background-color 0.15s ease;
   cursor: pointer;
 }
 
+.case-list-row:last-child {
+  border-bottom: none;
+}
+
 .case-list-row:hover {
-  background-color: #f8fafc;
+  background-color: #fbf7f1;
 }
 
 .case-list-row--active {
-  background-color: #eff6ff !important;
+  background-color: #f4f6fb !important;
 }
 
 .case-list-row--selected {
-  background-color: #f1f5f9;
+  background-color: #f1f4f9;
 }
 
 .case-list-table td {
-  padding: 12px 14px;
+  padding: 10px 12px;
   vertical-align: middle;
 }
 
 .td-checkbox {
-  padding-left: 18px !important;
-  width: 40px;
+  padding-left: 16px !important;
+  padding-right: 6px !important;
+  width: 36px;
 }
 
 .case-list-checkbox {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   border-radius: 4px;
-  border: 1.5px solid #cbd5e1;
+  border: 1.5px solid rgba(15, 33, 73, 0.2);
   cursor: pointer;
-  accent-color: var(--color-brand-primary, #1d4ed8);
+  accent-color: #e87722;
 }
 
 /* Case Cell */
@@ -122,19 +129,20 @@
 
 .case-cell__number {
   font-weight: 700;
-  font-size: 13px;
-  color: var(--color-brand-primary, #1d4ed8);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13.5px;
+  color: #0f2149;
+  letter-spacing: -0.01em;
 }
 
 .case-cell__title {
-  font-size: 12.5px;
-  color: #334155;
-  font-weight: 500;
+  font-size: 11.8px;
+  color: #61708f;
+  font-weight: 400;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 260px;
+  max-width: 200px;
+  line-height: 1.3;
 }
 
 /* Customer Cell */
@@ -155,6 +163,7 @@
   justify-content: center;
   flex-shrink: 0;
   text-transform: uppercase;
+  color: #ffffff;
 }
 
 .customer-cell__info {
@@ -166,61 +175,118 @@
 .customer-cell__name {
   font-size: 13px;
   font-weight: 600;
-  color: #1e293b;
+  color: #0f2149;
+  line-height: 1.25;
   white-space: nowrap;
 }
 
 .customer-cell__segment {
   font-size: 11px;
-  color: #64748b;
+  color: #61708f;
+  line-height: 1.2;
 }
 
-/* Priority Badge */
+/* Priority Badge (Soft pastel pill badges) */
 .case-list-priority {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2.5px 9px;
+  border-radius: 9999px;
+  font-size: 10.8px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   line-height: 1.2;
+  white-space: nowrap;
+  border: 1px solid transparent;
 }
 
 .case-list-priority--critical {
-  background-color: #fee2e2;
-  color: #dc2626;
-  border: 1px solid #fca5a5;
+  background-color: #fce9e7;
+  color: #c0362c;
+  border-color: rgba(192, 54, 44, 0.16);
 }
 
 .case-list-priority--high {
-  background-color: #fffbeb;
-  color: #d97706;
-  border: 1px solid #fde68a;
+  background-color: rgba(232, 119, 34, 0.10);
+  color: #e0470f;
+  border-color: rgba(224, 71, 15, 0.16);
 }
 
 .case-list-priority--medium {
-  background-color: #eff6ff;
-  color: #2563eb;
-  border: 1px solid #bfdbfe;
+  background-color: #fff3dd;
+  color: #b26a00;
+  border-color: rgba(178, 106, 0, 0.16);
 }
 
 .case-list-priority--low {
-  background-color: #f0fdf4;
-  color: #16a34a;
-  border: 1px solid #bbf7d0;
+  background-color: #eef0f5;
+  color: #61708f;
+  border-color: rgba(97, 112, 143, 0.16);
 }
 
-/* Status Badge */
+/* Status Badge & Escalation Level */
+.status-badge-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
 .case-list-status {
-  display: inline-block;
-  padding: 3px 9px;
-  border-radius: 12px;
-  font-size: 11.5px;
-  font-weight: 600;
-  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  padding: 2.5px 9px;
+  border-radius: 9999px;
+  font-size: 10.8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   line-height: 1.2;
   white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.case-list-status--open {
+  background-color: #e7eefb;
+  color: #16408f;
+  border-color: rgba(22, 64, 143, 0.16);
+}
+
+.case-list-status--inprogress {
+  background-color: rgba(232, 119, 34, 0.10);
+  color: #e0470f;
+  border-color: rgba(224, 71, 15, 0.16);
+}
+
+.case-list-status--waiting {
+  background-color: #fff3dd;
+  color: #b26a00;
+  border-color: rgba(178, 106, 0, 0.16);
+}
+
+.case-list-status--escalated {
+  background-color: #fce9e7;
+  color: #c0362c;
+  border-color: rgba(192, 54, 44, 0.16);
+}
+
+.case-list-status--resolved {
+  background-color: #e3f4eb;
+  color: #0e7c4a;
+  border-color: rgba(14, 124, 74, 0.16);
+}
+
+.case-list-esc-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 6px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 700;
+  background-color: #fce9e7;
+  color: #c0362c;
+  border: 1px solid rgba(192, 54, 44, 0.2);
+  line-height: 1.2;
+  letter-spacing: 0.02em;
 }
 
 /* Assignee Cell */
@@ -241,57 +307,74 @@
   justify-content: center;
   flex-shrink: 0;
   text-transform: uppercase;
+  color: #ffffff;
 }
 
 .assignee-cell__name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #334155;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0f2149;
+  white-space: nowrap;
 }
 
-/* SLA Badge */
+.assignee-unassigned-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 2px 8px;
+  font-size: 10.8px;
+  font-weight: 600;
+  background-color: #eef0f5;
+  color: #61708f;
+  border: 1px solid rgba(97, 112, 143, 0.12);
+  line-height: 1.2;
+}
+
+/* SLA Badge (Soft semantic colors with crisp icons) */
 .case-list-sla {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 8px;
+  padding: 2.5px 8px;
   border-radius: 9999px;
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 10.8px;
+  font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
 }
 
 .case-list-sla--met {
-  background-color: #dcfce7;
-  color: #15803d;
-  border: 1px solid #bbf7d0;
+  background-color: #e3f4eb;
+  color: #0e7c4a;
+  border-color: rgba(14, 124, 74, 0.18);
 }
 
 .case-list-sla--paused {
-  background-color: #f1f5f9;
-  color: #475569;
-  border: 1px solid #cbd5e1;
+  background-color: #eef0f5;
+  color: #61708f;
+  border-color: rgba(97, 112, 143, 0.18);
 }
 
 .case-list-sla--breached {
-  background-color: #fee2e2;
-  color: #b91c1c;
-  border: 1px solid #fca5a5;
+  background-color: #fce9e7;
+  color: #c0362c;
+  border-color: rgba(192, 54, 44, 0.18);
   font-variant-numeric: tabular-nums;
 }
 
 .case-list-sla--active {
-  background-color: #fef3c7;
-  color: #b45309;
-  border: 1px solid #fde68a;
+  background-color: #fff3dd;
+  color: #b26a00;
+  border-color: rgba(178, 106, 0, 0.18);
   font-variant-numeric: tabular-nums;
 }
 
 /* Created Cell */
 .created-cell {
-  font-size: 12px;
-  color: #64748b;
+  font-size: 11.5px;
+  color: #61708f;
   white-space: nowrap;
 }
 
@@ -301,29 +384,29 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
+  padding: 64px 20px;
   background-color: #ffffff;
-  border: 1px dashed var(--color-border, #e2e8f0);
-  border-radius: var(--radius-lg, 10px);
-  margin: 0 var(--space-6, 24px) var(--space-6, 24px);
+  border: 1px dashed rgba(15, 33, 73, 0.14);
+  border-radius: 16px;
+  margin: 0 24px 24px 24px;
   text-align: center;
 }
 
 .case-list-empty__icon {
-  color: #94a3b8;
+  color: #9aa6bf;
   margin-bottom: 12px;
 }
 
 .case-list-empty__title {
   font-size: 15px;
   font-weight: 600;
-  color: #1e293b;
+  color: #0f2149;
   margin: 0 0 6px;
 }
 
 .case-list-empty__desc {
   font-size: 13px;
-  color: #64748b;
+  color: #61708f;
   margin: 0;
   max-width: 360px;
 }

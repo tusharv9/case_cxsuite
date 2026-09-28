@@ -73,6 +73,45 @@ public class CustomerRepository : ICustomerRepository
             .ToListAsync(ct);
     }
 
+    public async Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedAsync(string? search, int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = _context.Customers.AsNoTracking().AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var pattern = SqlSearchPattern.Contains(search.Trim());
+            query = query.Where(c => EF.Functions.ILike(c.FullName, pattern)
+                                  || EF.Functions.ILike(c.NRIC, pattern)
+                                  || EF.Functions.ILike(c.PhoneNumber, pattern));
+        }
+
+        var totalCount = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderBy(c => c.FullName)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(c => new CustomerSummaryDto
+            {
+                Id = c.Id,
+                FullName = c.FullName,
+                NRIC = c.NRIC,
+                PhoneNumber = c.PhoneNumber,
+                DateOfBirth = c.DateOfBirth,
+                OpenCasesCount = c.Cases.Count(x => x.Status != CaseStatus.Resolved && x.Status != CaseStatus.Closed && x.Status != CaseStatus.Cancelled),
+                TotalCasesCount = c.Cases.Count()
+            })
+            .ToListAsync(ct);
+
+        return new PagedResponseDto<CustomerSummaryDto>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
     public async Task<CustomerDetailDto?> SearchCustomerAsync(CustomerSearchDto dto, CancellationToken ct = default)
     {
         var query = _context.Customers.AsNoTracking().AsQueryable();

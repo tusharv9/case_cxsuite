@@ -9,36 +9,9 @@ using Microsoft.AspNetCore.Mvc;
 public class ConfigurableSettingsController : BaseApiController
 {
     private readonly IConfigurableSettingsService _settingsService;
-    private readonly INotificationService _notificationService;
-
-    public ConfigurableSettingsController(IConfigurableSettingsService settingsService, INotificationService notificationService)
+    public ConfigurableSettingsController(IConfigurableSettingsService settingsService)
     {
         _settingsService = settingsService;
-        _notificationService = notificationService;
-    }
-
-    [HttpGet("notification-rules")]
-    public async Task<IActionResult> GetNotificationRules(CancellationToken ct = default)
-    {
-        var rules = await _notificationService.GetNotificationRulesAsync(ct);
-        return Ok(rules);
-    }
-
-    [HttpPut("notification-rules/{id:guid}")]
-    public async Task<IActionResult> UpdateNotificationRule(Guid id, [FromBody] UpdateNotificationRuleDto dto, CancellationToken ct = default)
-    {
-        if (dto == null) return BadRequest(new { message = "Request body is required." });
-        var updated = await _notificationService.UpdateNotificationRuleAsync(id, dto, GetCurrentUserIdSafe(), ct);
-        if (updated == null) return NotFound(new { message = "Notification rule not found." });
-        return Ok(updated);
-    }
-
-    [HttpPatch("notification-rules/{id:guid}/toggle")]
-    public async Task<IActionResult> ToggleNotificationRule(Guid id, CancellationToken ct = default)
-    {
-        var updated = await _notificationService.ToggleNotificationRuleAsync(id, GetCurrentUserIdSafe(), ct);
-        if (updated == null) return NotFound(new { message = "Notification rule not found." });
-        return Ok(updated);
     }
 
     [HttpGet("fields")]
@@ -214,25 +187,6 @@ public class ConfigurableSettingsController : BaseApiController
         return Ok(new { message = "Sub-category deleted successfully." });
     }
 
-    [HttpGet("sla")]
-    public async Task<IActionResult> GetSlaConfigurations(CancellationToken ct = default)
-    {
-        var slas = await _settingsService.GetSlaConfigurationsAsync(ct);
-        return Ok(slas);
-    }
-
-    [HttpPost("sla")]
-    public async Task<IActionResult> SaveSlaConfiguration([FromBody] CreateOrUpdateSlaDto dto, CancellationToken ct = default)
-    {
-        if (dto == null || string.IsNullOrWhiteSpace(dto.Severity))
-        {
-            return BadRequest(new { message = "Severity is required." });
-        }
-
-        var saved = await _settingsService.SaveSlaConfigurationAsync(dto, ct);
-        return Ok(saved);
-    }
-
     // Severity master data (drives SLA Configuration and the Create Case severity dropdown)
     [HttpGet("severities")]
     public async Task<IActionResult> GetSeverities(CancellationToken ct = default)
@@ -272,38 +226,5 @@ public class ConfigurableSettingsController : BaseApiController
         var success = await _settingsService.DeleteSeverityAsync(id, ct);
         if (!success) return NotFound(new { message = "Severity not found." });
         return Ok(new { message = "Severity deleted successfully." });
-    }
-
-    [HttpGet("escalation-templates")]
-    public async Task<IActionResult> GetEscalationTemplates([FromQuery] Guid? departmentId = null, [FromQuery] string? reason = null, CancellationToken ct = default)
-    {
-        if (departmentId.HasValue && !string.IsNullOrWhiteSpace(reason))
-        {
-            var template = await _settingsService.GetEscalationTemplateAsync(departmentId.Value, reason, ct);
-            return Ok(template);
-        }
-
-        var templates = await _settingsService.GetAllEscalationTemplatesAsync(departmentId, ct);
-        return Ok(templates);
-    }
-
-    [HttpPost("escalation-templates")]
-    public async Task<IActionResult> SaveEscalationTemplate([FromBody] CreateOrUpdateEscalationTemplateDto dto, CancellationToken ct = default)
-    {
-        if (dto == null || dto.DepartmentId == Guid.Empty || string.IsNullOrWhiteSpace(dto.EscalationReason))
-        {
-            return BadRequest(new { message = "DepartmentId and EscalationReason are required." });
-        }
-
-        var saved = await _settingsService.SaveEscalationTemplateAsync(dto, ct);
-        return Ok(saved);
-    }
-
-    [HttpDelete("escalation-templates/{id:guid}")]
-    public async Task<IActionResult> DeleteEscalationTemplate(Guid id, CancellationToken ct = default)
-    {
-        var success = await _settingsService.DeleteEscalationTemplateAsync(id, ct);
-        if (!success) return NotFound(new { message = "Escalation template not found." });
-        return Ok(new { message = "Escalation template deleted successfully." });
     }
 }

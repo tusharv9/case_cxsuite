@@ -1,74 +1,119 @@
-/* ===== CHANNEL BADGE STYLING ===== */
+/* ===== CHANNEL BADGE STYLING — Clean Enterprise CRM Reference System ===== */
 
 .channel-badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: var(--radius-full, 9999px);
+  gap: 6px;
+  padding: 2.5px 9px 2.5px 3.5px;
+  border-radius: 9999px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 700;
   line-height: 1;
   white-space: nowrap;
   width: fit-content;
+  border: 1px solid transparent;
+  transition: all 0.12s ease;
 }
 
-.channel-badge__icon {
-  display: flex;
+.channel-badge__icon-circle {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  line-height: 1;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.channel-badge__icon-circle svg {
+  display: block;
 }
 
 .channel-badge__label {
   line-height: 1;
+  font-size: 11px;
+  letter-spacing: 0.01em;
 }
 
-/* Specific Channel Variations (Subtle, elegant pastel tones matching OmniCX design) */
+/* Specific Channel Variations (Soft tinted backgrounds, matching text, crisp colored icon circle) */
 .channel-badge--voice {
-  background-color: #eff6ff;
-  color: #1d4ed8;
-  border: 1px solid #bfdbfe;
+  background-color: rgba(22, 64, 143, 0.08);
+  color: #16408f;
+  border-color: rgba(22, 64, 143, 0.12);
+}
+.channel-badge--voice .channel-badge__icon-circle {
+  background-color: #16408f;
 }
 
 .channel-badge--email {
-  background-color: #faf5ff;
-  color: #7e22ce;
-  border: 1px solid #e9d5ff;
+  background-color: rgba(124, 58, 174, 0.08);
+  color: #7c3aae;
+  border-color: rgba(124, 58, 174, 0.12);
+}
+.channel-badge--email .channel-badge__icon-circle {
+  background-color: #7c3aae;
 }
 
 .channel-badge--whatsapp {
-  background-color: #f0fdf4;
-  color: #15803d;
-  border: 1px solid #bbf7d0;
+  background-color: rgba(14, 124, 74, 0.08);
+  color: #0e7c4a;
+  border-color: rgba(14, 124, 74, 0.12);
+}
+.channel-badge--whatsapp .channel-badge__icon-circle {
+  background-color: #0e7c4a;
 }
 
 .channel-badge--sms {
-  background-color: #f8fafc;
-  color: #475569;
-  border: 1px solid #e2e8f0;
+  background-color: rgba(178, 106, 0, 0.08);
+  color: #b26a00;
+  border-color: rgba(178, 106, 0, 0.12);
+}
+.channel-badge--sms .channel-badge__icon-circle {
+  background-color: #b26a00;
 }
 
 .channel-badge--branch {
-  background-color: #ecfdf5;
-  color: #0f766e;
-  border: 1px solid #99f6e4;
+  background-color: rgba(13, 139, 139, 0.08);
+  color: #0d8b8b;
+  border-color: rgba(13, 139, 139, 0.12);
+}
+.channel-badge--branch .channel-badge__icon-circle {
+  background-color: #0d8b8b;
 }
 
 .channel-badge--webchat {
-  background-color: #fff7ed;
-  color: #c2410c;
-  border: 1px solid #ffedd5;
+  background-color: rgba(232, 119, 34, 0.08);
+  color: #e87722;
+  border-color: rgba(232, 119, 34, 0.12);
+}
+.channel-badge--webchat .channel-badge__icon-circle {
+  background-color: #e87722;
 }
 
 .channel-badge--social {
-  background-color: #fff1f2;
-  color: #be123c;
-  border: 1px solid #fecdd3;
+  background-color: rgba(192, 54, 44, 0.08);
+  color: #c0362c;
+  border-color: rgba(192, 54, 44, 0.12);
+}
+.channel-badge--social .channel-badge__icon-circle {
+  background-color: #c0362c;
+}
+
+.channel-badge--mobile {
+  background-color: rgba(74, 90, 184, 0.08);
+  color: #4a5ab8;
+  border-color: rgba(74, 90, 184, 0.12);
+}
+.channel-badge--mobile .channel-badge__icon-circle {
+  background-color: #4a5ab8;
 }
 
 .channel-badge--default {
-  background-color: #f1f5f9;
-  color: #64748b;
-  border: 1px solid #cbd5e1;
+  background-color: #eef0f5;
+  color: #61708f;
+  border-color: rgba(97, 112, 143, 0.12);
+}
+.channel-badge--default .channel-badge__icon-circle {
+  background-color: #61708f;
 }

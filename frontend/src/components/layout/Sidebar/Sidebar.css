@@ -116,18 +116,22 @@
   background-color: var(--color-sidebar-item-hover);
 }
 
-/* Active Item matching Reference Screenshots 1 & 2 */
+/* Active Item matching Clean Enterprise Reference Style */
 .sidebar__nav-item--active {
-  color: var(--color-sidebar-text-active);
-  background-color: var(--color-sidebar-item-active);
-  font-weight: var(--font-weight-semibold);
+  color: #0f2149;
+  background-color: #f1f4f9;
+  font-weight: 600;
+}
+
+.sidebar__nav-item--active .sidebar__nav-icon {
+  color: #16408f;
 }
 
 .sidebar__nav-icon {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  color: inherit;
+  color: #61708f;
 }
 
 .sidebar__nav-label {
@@ -144,13 +148,18 @@
   justify-content: center;
   min-width: 20px;
   height: 18px;
-  padding: 0 5px;
-  background-color: var(--color-brand-primary);
-  color: white;
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
-  border-radius: var(--radius-full);
+  padding: 0 6px;
+  background-color: rgba(22, 64, 143, 0.08);
+  color: #16408f;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: var(--radius-full, 9999px);
   flex-shrink: 0;
+}
+
+.sidebar__nav-item--active .sidebar__nav-badge {
+  background-color: rgba(22, 64, 143, 0.14);
+  color: #16408f;
 }
 
 /* Footer */

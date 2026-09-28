@@ -28,7 +28,6 @@ public interface IConfigurableSettingsService
     Task<bool> DeleteSubCategoryAsync(Guid id, CancellationToken ct = default);
 
     Task<IEnumerable<SlaConfigurationDto>> GetSlaConfigurationsAsync(CancellationToken ct = default);
-    Task<SlaConfigurationDto> SaveSlaConfigurationAsync(CreateOrUpdateSlaDto dto, CancellationToken ct = default);
 
     // Severity master data — kept in step with SLA Configuration and with stored cases.
     Task<IEnumerable<string>> GetSeveritiesAsync(CancellationToken ct = default);
@@ -37,8 +36,4 @@ public interface IConfigurableSettingsService
     Task<SeverityDto?> UpdateSeverityAsync(Guid id, UpdateSeverityDto dto, CancellationToken ct = default);
     Task<bool> DeleteSeverityAsync(Guid id, CancellationToken ct = default);
 
-    Task<DepartmentEscalationTemplateDto?> GetEscalationTemplateAsync(Guid departmentId, string reason, CancellationToken ct = default);
-    Task<IEnumerable<DepartmentEscalationTemplateDto>> GetAllEscalationTemplatesAsync(Guid? departmentId = null, CancellationToken ct = default);
-    Task<DepartmentEscalationTemplateDto> SaveEscalationTemplateAsync(CreateOrUpdateEscalationTemplateDto dto, CancellationToken ct = default);
-    Task<bool> DeleteEscalationTemplateAsync(Guid id, CancellationToken ct = default);
 }

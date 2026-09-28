@@ -210,22 +210,11 @@ public class EscalationMatrixLevelDto
 public class EscalationMatrixResponseDto
 {
     public string Title { get; set; } = "Escalation matrix";
-    public string Subtitle { get; set; } = "fully configurable — auto-fires from SLA consumption; all triggers audit-logged";
+    public string Subtitle { get; set; } = "manual escalation — cases are never escalated automatically; every escalation is audit-logged";
     public int CurrentLevel { get; set; } = 1;
     public int? NextLevel { get; set; }
     public string? NextTargetRole { get; set; }
     public string? NextTargetUserName { get; set; }
     public Guid? NextTargetUserId { get; set; }
     public List<EscalationMatrixLevelDto> Levels { get; set; } = new();
-}
-
-public class DepartmentEscalationTemplateDto
-{
-    public Guid Id { get; set; }
-    public Guid DepartmentId { get; set; }
-    public string DepartmentName { get; set; } = string.Empty;
-    public string EscalationReason { get; set; } = string.Empty;
-    public string SubjectTemplate { get; set; } = string.Empty;
-    public string BodyTemplate { get; set; } = string.Empty;
-    public bool IsActive { get; set; } = true;
 }

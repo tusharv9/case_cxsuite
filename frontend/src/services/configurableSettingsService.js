@@ -163,22 +163,6 @@ export const configurableSettingsService = {
     return response.data;
   },
 
-  async getSlaConfigurations() {
-    const response = await api.get('/api/ConfigurableSettings/sla');
-    return response.data;
-  },
-
-  async saveSlaConfiguration(severity, internalHours, externalHours, firstResponseMinutes) {
-    const payload = {
-      severity,
-      internalHours: Number(internalHours),
-      externalHours: Number(externalHours),
-      firstResponseMinutes: firstResponseMinutes !== undefined ? Number(firstResponseMinutes) : 240,
-    };
-    const response = await api.post('/api/ConfigurableSettings/sla', payload);
-    return response.data;
-  },
-
   // ===== SEVERITY MASTER DATA =====
   // A severity carries its own SLA hours: the API writes the master value and the SLA row
   // together, so the two can never drift apart.
@@ -208,49 +192,6 @@ export const configurableSettingsService = {
 
   async deleteSeverity(id) {
     const response = await api.delete(`/api/ConfigurableSettings/severities/${id}`);
-    return response.data;
-  },
-
-  async getEscalationTemplates(departmentId = null, reason = null) {
-    let url = '/api/ConfigurableSettings/escalation-templates';
-    const params = [];
-    if (departmentId) params.push(`departmentId=${encodeURIComponent(departmentId)}`);
-    if (reason) params.push(`reason=${encodeURIComponent(reason)}`);
-    if (params.length > 0) url += `?${params.join('&')}`;
-
-    const response = await api.get(url);
-    return response.data;
-  },
-
-  async saveEscalationTemplate(departmentId, reason, subjectTemplate, bodyTemplate) {
-    const payload = {
-      departmentId,
-      escalationReason: reason,
-      subjectTemplate: subjectTemplate || '',
-      bodyTemplate: bodyTemplate || '',
-    };
-    const response = await api.post('/api/ConfigurableSettings/escalation-templates', payload);
-    return response.data;
-  },
-
-  async deleteEscalationTemplate(id) {
-    const response = await api.delete(`/api/ConfigurableSettings/escalation-templates/${id}`);
-    return response.data;
-  },
-
-  // ===== NOTIFICATION RULES APIS =====
-  async getNotificationRules() {
-    const response = await api.get('/api/ConfigurableSettings/notification-rules');
-    return response.data;
-  },
-
-  async updateNotificationRule(id, ruleDto) {
-    const response = await api.put(`/api/ConfigurableSettings/notification-rules/${id}`, ruleDto);
-    return response.data;
-  },
-
-  async toggleNotificationRule(id) {
-    const response = await api.patch(`/api/ConfigurableSettings/notification-rules/${id}/toggle`);
     return response.data;
   },
 

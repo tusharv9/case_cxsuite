@@ -11,6 +11,9 @@ const initialState = {
   boardError: null,
   selectedDeptId: null, // null = All
   searchQuery: '',
+  lastStatusChange: null,
+  boardRefreshKey: 0,
+  caseStats: null, // { openCount, breachedCount } from GET /api/cases/stats
 };
 
 function caseReducer(state, action) {
@@ -35,6 +38,29 @@ function caseReducer(state, action) {
           c.id === action.payload.id ? { ...c, ...action.payload } : c
         ),
       };
+    case 'CASE_STATUS_CHANGED':
+      return {
+        ...state,
+        lastStatusChange: {
+          caseId: action.payload.caseId,
+          fromStatus: action.payload.fromStatus,
+          toStatus: action.payload.toStatus,
+          updatedCase: action.payload.updatedCase,
+          timestamp: Date.now(),
+        },
+        selectedCase: state.selectedCase?.id === action.payload.caseId
+          ? { ...state.selectedCase, status: action.payload.toStatus, ...(action.payload.updatedCase || {}) }
+          : state.selectedCase,
+        boardCases: state.boardCases.map((c) =>
+          c.id === action.payload.caseId
+            ? { ...c, status: action.payload.toStatus, ...(action.payload.updatedCase || {}) }
+            : c
+        ),
+      };
+    case 'SET_CASE_STATS':
+      return { ...state, caseStats: action.payload };
+    case 'REFRESH_BOARD':
+      return { ...state, boardRefreshKey: (state.boardRefreshKey || 0) + 1 };
     case 'SET_SELECTED_DEPT':
       return { ...state, selectedDeptId: action.payload };
     case 'SET_SEARCH_QUERY':

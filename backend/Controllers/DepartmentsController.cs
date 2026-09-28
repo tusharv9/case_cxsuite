@@ -39,14 +39,14 @@ public class DepartmentsController : BaseApiController
             return BadRequest(new { error = "Department name and code are required." });
         }
 
-        var department = await _departmentService.UpdateDepartmentAsync(id, dto);
+        var department = await _departmentService.UpdateDepartmentAsync(id, dto, CurrentUserId);
         return Ok(department);
     }
 
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> DeleteDepartment(Guid id)
     {
-        await _departmentService.DeleteDepartmentAsync(id);
+        await _departmentService.DeleteDepartmentAsync(id, CurrentUserId);
         return Ok(new { message = "Department deleted successfully." });
     }
 

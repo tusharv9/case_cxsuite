@@ -16,6 +16,7 @@ public interface ICaseRepository
     Task AddLinkedCaseAsync(LinkedCase linkedCase);
     Task RemoveLinkedCaseAsync(Guid caseId, Guid targetCaseId);
     Task<IEnumerable<CaseSummaryDto>> GetBoardCasesAsync(Guid? departmentId = null, string? caseType = null, CancellationToken ct = default);
+    Task<PagedResponseDto<CaseSummaryDto>> GetPaginatedBoardCasesAsync(string? status = null, int page = 1, int pageSize = 30, Guid? departmentId = null, string? caseType = null, string? search = null, string? priority = null, string? channel = null, CancellationToken ct = default);
     Task<CaseDetailDto?> GetCaseDetailAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>Header smart-search over cases, capped at <paramref name="limit"/> hits.</summary>
