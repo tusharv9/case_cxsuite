@@ -25,6 +25,13 @@ public class Case : AuditableEntity
     public DateTime? ResolvedAt { get; set; }
     public DateTime? SlaPausedAt { get; set; }
     public int SlaTotalPausedMinutes { get; set; } = 0;
+
+    // Resolution SLA Targets (Snapshot)
+    public int InternalResolutionTargetMinutes { get; set; } = 120;
+    public int ExternalResolutionTargetMinutes { get; set; } = 240;
+    public DateTime? InternalResolutionDueAt { get; set; }
+    public DateTime? ExternalResolutionDueAt { get; set; }
+    public int SlaConfigVersion { get; set; } = 1;
     
     // First Response SLA Tracking
     public int FirstResponseTargetMinutes { get; set; } = 240;

@@ -11,7 +11,8 @@ import {
   RESOLVE_DISPOSITIONS,
   LINK_RELATIONSHIPS,
 } from '../../../constants/index.js';
-import { AlertTriangle, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, ShieldAlert, ArrowRight, Layers } from 'lucide-react';
+import { slaRoutingService } from '../../../services/slaRoutingService.js';
 import './actions.css';
 
 // User Select Card Component for List Selection
@@ -494,23 +495,41 @@ export function EscalateModal({
   const [customReason, setCustomReason] = useState('');
   const [note, setNote] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [escalationStatus, setEscalationStatus] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && caseId) {
       setSelectedUserId('');
       setReason('SLA Breach / Risk');
       setCustomReason('');
       setNote('');
+      setStatusLoading(true);
+      slaRoutingService.getCaseEscalationStatus(caseId)
+        .then((status) => {
+          setEscalationStatus(status);
+          if (status?.nextTargetUserId) {
+            setSelectedUserId(status.nextTargetUserId);
+          }
+        })
+        .catch((err) => {
+          console.error('[EscalateModal Status Error]', err);
+        })
+        .finally(() => setStatusLoading(false));
     }
-  }, [isOpen]);
+  }, [isOpen, caseId]);
 
   const selectedUser = useMemo(() => {
     return users.find((u) => String(u.id) === String(selectedUserId));
   }, [users, selectedUserId]);
 
   const handleConfirm = async () => {
-    if (!selectedUserId) {
+    if (escalationStatus?.isMaxLevel) {
+      return toast.error('Case is already at maximum escalation level.');
+    }
+    const targetId = selectedUserId || escalationStatus?.nextTargetUserId;
+    if (!targetId) {
       return toast.error('Please select who to escalate this case to.');
     }
     if (!reason) {
@@ -526,7 +545,7 @@ export function EscalateModal({
       await caseService.escalateCase(caseId, {
         reason: finalReason,
         note: note.trim() || undefined,
-        targetUserId: selectedUserId,
+        targetUserId: targetId,
       });
       toast.success('Case escalated successfully.');
       onSuccess?.();
@@ -553,7 +572,7 @@ export function EscalateModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Escalate Case"
-      subtitle="Select who to escalate this case to and provide an escalation reason"
+      subtitle="Sequential escalation matrix — requires non-empty justification and logs audit record"
       size="md"
       footer={
         <>
@@ -563,7 +582,7 @@ export function EscalateModal({
           <Button
             variant="primary"
             isLoading={isLoading}
-            disabled={!selectedUserId}
+            disabled={statusLoading || escalationStatus?.isMaxLevel || (!selectedUserId && !escalationStatus?.nextTargetUserId)}
             onClick={handleConfirm}
           >
             Escalate Case
@@ -572,99 +591,141 @@ export function EscalateModal({
       }
     >
       <div className="action-modal-form">
-        {/* Step 1: Who to escalate to */}
-        <Select
-          label="Escalate To"
-          required
-          value={selectedUserId}
-          onChange={(e) => setSelectedUserId(e.target.value)}
-        >
-          <option value="">Select person to escalate to...</option>
-          {users.map((u) => {
-            const teamInfo = u.team ? ` — ${u.team}` : '';
-            const statusInfo = u.status ? ` (${u.status})` : '';
-            return (
-              <option key={u.id} value={u.id}>
-                {u.name} — {u.role || 'Agent'}{teamInfo}{statusInfo}
-              </option>
-            );
-          })}
-        </Select>
+        {statusLoading && (
+          <div style={{ padding: '12px', textAlign: 'center', fontSize: '13px', color: '#64748b' }}>
+            Checking escalation matrix status…
+          </div>
+        )}
 
-        {/* Selected User Preview */}
-        {selectedUser && (
-          <div className="agent-preview-card">
-            <div className="agent-preview-card__header">
-              <Avatar name={selectedUser.name} size="sm" />
-              <div className="agent-preview-card__name-group">
-                <span className="agent-preview-card__name">{selectedUser.name}</span>
-                <span className="agent-preview-card__status">
-                  <span
-                    className={`status-dot ${
-                      selectedUser.status?.toLowerCase() === 'available'
-                        ? 'status-dot--online'
-                        : selectedUser.status?.toLowerCase() === 'busy'
-                        ? 'status-dot--busy'
-                        : 'status-dot--away'
-                    }`}
-                  />
-                  {selectedUser.status || 'Available'}
-                </span>
-              </div>
-            </div>
-            <div className="agent-preview-card__details">
-              <div className="agent-preview-card__row">
-                <span className="agent-preview-card__label">Role:</span>
-                <span className="agent-preview-card__val">{selectedUser.role || 'Agent'}</span>
-              </div>
-              <div className="agent-preview-card__row">
-                <span className="agent-preview-card__label">Team:</span>
-                <span className="agent-preview-card__val">{selectedUser.team || '—'}</span>
-              </div>
-              <div className="agent-preview-card__row">
-                <span className="agent-preview-card__label">Queue:</span>
-                <span className="agent-preview-card__val">{selectedUser.queue || '—'}</span>
-              </div>
+        {/* Max Level Notice */}
+        {escalationStatus?.isMaxLevel && (
+          <div style={{ padding: '14px 18px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', color: '#b91c1c', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <ShieldAlert size={20} style={{ flexShrink: 0 }} />
+            <div>
+              <strong>Maximum Escalation Tier Reached</strong>
+              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#7f1d1d' }}>
+                {escalationStatus.maxLevelNotice || 'This case has reached the maximum configured escalation level and cannot be escalated further.'}
+              </p>
             </div>
           </div>
         )}
 
-        {/* Step 2: Escalation Reason */}
-        <Select
-          label="Escalation Reason"
-          required
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        >
-          {ESCALATION_OPTIONS.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </Select>
-
-        {reason === 'Other' && (
-          <Input
-            label="Please specify reason"
-            required
-            placeholder="Describe the escalation reason..."
-            value={customReason}
-            onChange={(e) => setCustomReason(e.target.value)}
-          />
+        {/* Sequential Escalation Trajectory Card */}
+        {escalationStatus && !escalationStatus.isMaxLevel && (
+          <div style={{ padding: '14px 18px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: '#1e40af', letterSpacing: '0.04em' }}>Current Tier</div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: '#1e3a8a' }}>{escalationStatus.currentLevelName || `Level ${escalationStatus.currentLevel}`}</div>
+            </div>
+            <ArrowRight size={20} color="#2563eb" />
+            <div>
+              <div style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: '#1e40af', letterSpacing: '0.04em' }}>Next Authority Tier</div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: '#1d4ed8' }}>
+                {escalationStatus.nextLevelName || `Level ${escalationStatus.nextLevel}`}
+              </div>
+              <div style={{ fontSize: '11px', color: '#4b5563' }}>Role: {escalationStatus.nextTargetRole}</div>
+            </div>
+          </div>
         )}
 
-        {/* Step 3: Additional Notes */}
-        <div>
-          <label className="form-label" style={{ marginBottom: 6, display: 'block', fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
-            Additional Notes / Justification (Optional)
-          </label>
-          <Textarea
-            rows={3}
-            placeholder="Add relevant context or notes for the escalation handler..."
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-        </div>
+        {/* Step 1: Who to escalate to */}
+        {!escalationStatus?.isMaxLevel && (
+          <>
+            <Select
+              label="Escalate To (Target Assignee)"
+              required
+              value={selectedUserId}
+              onChange={(e) => setSelectedUserId(e.target.value)}
+            >
+              <option value="">Select person to escalate to...</option>
+              {escalationStatus?.nextTargetUserId && (
+                <option value={escalationStatus.nextTargetUserId}>
+                  ★ Matrix Recommended: {escalationStatus.nextTargetUserName} ({escalationStatus.nextTargetRole})
+                </option>
+              )}
+              {users.map((u) => {
+                const teamInfo = u.team ? ` — ${u.team}` : '';
+                const statusInfo = u.status ? ` (${u.status})` : '';
+                return (
+                  <option key={u.id} value={u.id}>
+                    {u.name} — {u.role || 'Agent'}{teamInfo}{statusInfo}
+                  </option>
+                );
+              })}
+            </Select>
+
+            {/* Selected User Preview */}
+            {selectedUser && (
+              <div className="agent-preview-card">
+                <div className="agent-preview-card__header">
+                  <Avatar name={selectedUser.name} size="sm" />
+                  <div className="agent-preview-card__name-group">
+                    <span className="agent-preview-card__name">{selectedUser.name}</span>
+                    <span className="agent-preview-card__status">
+                      <span
+                        className={`status-dot ${
+                          selectedUser.status?.toLowerCase() === 'available'
+                            ? 'status-dot--online'
+                            : selectedUser.status?.toLowerCase() === 'busy'
+                            ? 'status-dot--busy'
+                            : 'status-dot--away'
+                        }`}
+                      />
+                      {selectedUser.status || 'Available'}
+                    </span>
+                  </div>
+                </div>
+                <div className="agent-preview-card__details">
+                  <div className="agent-preview-card__row">
+                    <span className="agent-preview-card__label">Role:</span>
+                    <span className="agent-preview-card__val">{selectedUser.role || 'Agent'}</span>
+                  </div>
+                  <div className="agent-preview-card__row">
+                    <span className="agent-preview-card__label">Team:</span>
+                    <span className="agent-preview-card__val">{selectedUser.team || '—'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: Escalation Reason */}
+            <Select
+              label="Escalation Reason (Mandatory)"
+              required
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            >
+              {ESCALATION_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </Select>
+
+            {reason === 'Other' && (
+              <Input
+                label="Please specify reason"
+                required
+                placeholder="Describe the escalation reason..."
+                value={customReason}
+                onChange={(e) => setCustomReason(e.target.value)}
+              />
+            )}
+
+            {/* Step 3: Additional Notes */}
+            <div>
+              <label className="form-label" style={{ marginBottom: 6, display: 'block', fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+                Additional Notes / Justification (Optional)
+              </label>
+              <Textarea
+                rows={3}
+                placeholder="Add context, actions already taken, or why this level is requested…"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );

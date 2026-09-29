@@ -1,7 +1,7 @@
 // ===== SIDEBAR =====
 
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, User, Briefcase, ChevronLeft, ShieldCheck, Settings } from 'lucide-react';
+import { LayoutDashboard, User, Briefcase, ChevronLeft, ShieldCheck, Settings, Sliders } from 'lucide-react';
 import { useCase } from '../../../contexts/CaseContext.jsx';
 import { useApp } from '../../../contexts/AppContext.jsx';
 import './Sidebar.css';
@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/customer360', label: 'Customer 360', icon: User },
   { to: '/case-management', label: 'Case Management', icon: Briefcase, showBoardCount: true },
+  { to: '/cases-sla-routing', label: 'Cases SLA & Routing', icon: Sliders },
   { to: '/case-audit', label: 'Audit Logs', icon: ShieldCheck },
   { to: '/configurable-settings', label: 'Configurable Settings', icon: Settings },
 ];

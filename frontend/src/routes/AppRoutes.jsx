@@ -11,6 +11,7 @@ const Customer360Page      = lazy(() => import('../pages/Customer360/Customer360
 const CaseManagementPage   = lazy(() => import('../pages/CaseManagement/CaseManagementPage.jsx').then(m => ({ default: m.CaseManagementPage })));
 const CaseAuditTrailPage   = lazy(() => import('../pages/CaseAuditTrail/CaseAuditTrailPage.jsx').then(m => ({ default: m.CaseAuditTrailPage })));
 const ConfigurableSettingsPage = lazy(() => import('../pages/ConfigurableSettings/ConfigurableSettingsPage.jsx').then(m => ({ default: m.ConfigurableSettingsPage })));
+const CasesSlaRoutingPage = lazy(() => import('../pages/CasesSlaRouting/CasesSlaRoutingPage.jsx').then(m => ({ default: m.CasesSlaRoutingPage })));
 
 function PageLoader() {
   return (
@@ -37,6 +38,9 @@ export function AppRoutes() {
           {/* Case Management */}
           <Route path="/case-management" element={<CaseManagementPage />} />
           <Route path="/case-management/:caseId" element={<CaseManagementPage />} />
+
+          {/* Cases SLA & Routing Configuration */}
+          <Route path="/cases-sla-routing" element={<CasesSlaRoutingPage />} />
 
           {/* Case Audit Trail */}
           <Route path="/case-audit" element={<CaseAuditTrailPage />} />

@@ -19,6 +19,8 @@ public class CaseService : ICaseService
     private readonly IWebHostEnvironment _env;
     private readonly AttachmentOptions _attachmentOptions;
     private readonly IPiiMaskingService? _piiMasking;
+    private readonly IBusinessTimeService? _businessTimeService;
+    private readonly ISlaRoutingService? _slaRoutingService;
 
     public CaseService(
         ICaseRepository caseRepository,
@@ -27,7 +29,9 @@ public class CaseService : ICaseService
         AppDbContext context,
         IWebHostEnvironment env,
         IOptions<AttachmentOptions>? attachmentOptions = null,
-        IPiiMaskingService? piiMasking = null)
+        IPiiMaskingService? piiMasking = null,
+        IBusinessTimeService? businessTimeService = null,
+        ISlaRoutingService? slaRoutingService = null)
     {
         _caseRepository = caseRepository;
         _notificationService = notificationService;
@@ -36,6 +40,8 @@ public class CaseService : ICaseService
         _env = env;
         _attachmentOptions = attachmentOptions?.Value ?? new AttachmentOptions();
         _piiMasking = piiMasking;
+        _businessTimeService = businessTimeService;
+        _slaRoutingService = slaRoutingService;
     }
 
     /// <summary>
@@ -86,7 +92,10 @@ public class CaseService : ICaseService
     {
         await ValidateCreateCaseMetadataAsync(dto);
 
-        var severity = await ResolveSeverityAsync(dto.Severity);
+        // 1. Resolve Effective Priority: Category mapping takes authoritative precedence
+        var effectivePriority = _slaRoutingService != null
+            ? await _slaRoutingService.ResolveEffectivePriorityAsync(dto.Severity, dto.Subcategory)
+            : await ResolveSeverityAsync(dto.Severity);
 
         string caseTypeInput = dto.CaseType?.Trim() ?? "";
         string prefix = "C-";
@@ -126,8 +135,41 @@ public class CaseService : ICaseService
         int seq = await _caseRepository.GetNextCaseSequenceAsync();
         string caseNumber = $"{prefix}{seq:D5}";
 
-        int slaTargetHours = await GetSlaTargetHoursAsync(severity);
-        int frMinutes = await GetFirstResponseTargetMinutesAsync(severity);
+        // 2. Resolve Active SLA Matrix Targets & Version
+        int frMinutes = 30;
+        int intMinutes = 120;
+        int extMinutes = 240;
+        int configVersion = 1;
+
+        if (_slaRoutingService != null)
+        {
+            var slaRule = await _slaRoutingService.GetActivePrioritySlaRuleAsync(effectivePriority);
+            frMinutes = slaRule.FirstResponseMinutes;
+            intMinutes = slaRule.InternalResolutionMinutes;
+            extMinutes = slaRule.ExternalResolutionMinutes;
+            configVersion = slaRule.Version;
+        }
+        else
+        {
+            int extHours = await GetSlaTargetHoursAsync(effectivePriority);
+            frMinutes = await GetFirstResponseTargetMinutesAsync(effectivePriority);
+            extMinutes = extHours * 60;
+            intMinutes = Math.Max(60, extMinutes - 120);
+        }
+
+        // 3. Calculate SLA Deadlines using configured Business Hours and Public Holidays
+        DateTime now = DateTime.UtcNow;
+        DateTime frDueAt = _businessTimeService != null
+            ? await _businessTimeService.AddBusinessMinutesAsync(now, frMinutes)
+            : now.AddMinutes(frMinutes);
+
+        DateTime intDueAt = _businessTimeService != null
+            ? await _businessTimeService.AddBusinessMinutesAsync(now, intMinutes)
+            : now.AddMinutes(intMinutes);
+
+        DateTime extDueAt = _businessTimeService != null
+            ? await _businessTimeService.AddBusinessMinutesAsync(now, extMinutes)
+            : now.AddMinutes(extMinutes);
 
         string sourceChannel = !string.IsNullOrWhiteSpace(dto.SourceChannel)
             ? dto.SourceChannel
@@ -146,20 +188,25 @@ public class CaseService : ICaseService
             CustomerId = dto.CustomerId,
             DepartmentId = dto.DepartmentId,
             OwnerId = createdByUserId,
-            Severity = severity,
+            Severity = effectivePriority,
             Status = CaseStatus.Open,
             SourceChannel = sourceChannel,
             PreferredCommunicationChannel = preferredChannel,
             CommunicationChannel = sourceChannel,
             Subcategory = string.IsNullOrWhiteSpace(dto.Subcategory) ? "General Inquiry" : dto.Subcategory,
-            SlaStartTime = DateTime.UtcNow,
-            SlaTargetHours = slaTargetHours,
+            SlaStartTime = now,
+            SlaTargetHours = (int)Math.Ceiling(extMinutes / 60.0),
             SlaTotalPausedMinutes = 0,
             SlaPausedAt = null,
             FirstResponseTargetMinutes = frMinutes,
-            FirstResponseDueAt = DateTime.UtcNow.AddMinutes(frMinutes),
+            FirstResponseDueAt = frDueAt,
             FirstResponseActualAt = null,
             FirstResponseStatus = "Pending",
+            InternalResolutionTargetMinutes = intMinutes,
+            ExternalResolutionTargetMinutes = extMinutes,
+            InternalResolutionDueAt = intDueAt,
+            ExternalResolutionDueAt = extDueAt,
+            SlaConfigVersion = configVersion,
             EscalationLevel = 1,
         };
 
@@ -1667,26 +1714,27 @@ public class CaseService : ICaseService
 
         if (existingCase == null) throw new ArgumentException("Case not found.");
 
-        if (existingCase.Status == CaseStatus.Resolved)
-            throw new InvalidOperationException("Cannot escalate a resolved case.");
+        if (existingCase.Status == CaseStatus.Resolved || existingCase.Status == CaseStatus.Closed || existingCase.Status == CaseStatus.Cancelled)
+            throw new InvalidOperationException($"Cannot escalate a case in '{existingCase.Status}' status.");
+
+        if (string.IsNullOrWhiteSpace(dto.Reason))
+            throw new ArgumentException("An escalation reason is required for manual escalation.");
 
         // Determine current escalation level
         int currentLevel = existingCase.EscalationLevel > 0 ? existingCase.EscalationLevel : 1;
 
-        // Check if current user or owner is already at an escalated role
-        var currentUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
-        if (currentUser != null)
+        // Query maximum configured escalation level from database
+        var allLevels = await _context.EscalationLevelConfigs.OrderBy(l => l.LevelNumber).ToListAsync();
+        int maxLevel = allLevels.Count > 0 ? allLevels.Max(l => l.LevelNumber) : 4;
+
+        if (currentLevel >= maxLevel)
         {
-            var roleLower = currentUser.Role.ToLowerInvariant();
-            if (roleLower.Contains("supervisor") && currentLevel < 3)
-            {
-                currentLevel = 3;
-            }
-            else if ((roleLower.Contains("team lead") || roleLower.Contains("lead")) && currentLevel < 2)
-            {
-                currentLevel = 2;
-            }
+            var maxLevelName = allLevels.FirstOrDefault(l => l.LevelNumber == maxLevel)?.Name ?? $"Level {maxLevel}";
+            throw new InvalidOperationException($"Case has reached the maximum escalation level ({maxLevelName}) and cannot be escalated further.");
         }
+
+        int nextLevel = currentLevel + 1;
+        var nextConfig = allLevels.FirstOrDefault(l => l.LevelNumber == nextLevel);
 
         User? targetUser = null;
         if (dto.TargetUserId.HasValue)
@@ -1694,7 +1742,11 @@ public class CaseService : ICaseService
             targetUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == dto.TargetUserId.Value);
         }
 
-        int nextLevel = Math.Min(currentLevel + 1, 4);
+        if (targetUser == null)
+        {
+            targetUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(existingCase, nextLevel);
+        }
+
         if (targetUser == null)
         {
             targetUser = await ResolveEscalationTargetAsync(existingCase, nextLevel);
@@ -1708,11 +1760,16 @@ public class CaseService : ICaseService
 
         if (targetUser == null)
         {
-            throw new InvalidOperationException("No active user found for escalation.");
+            throw new InvalidOperationException("No active user found for escalation target.");
         }
 
         var oldOwnerName = existingCase.Owner?.Name ?? "Agent";
-        existingCase.OwnerId = targetUser.Id;
+        bool shouldReassign = nextConfig == null || nextConfig.ReassignOwner;
+        if (shouldReassign)
+        {
+            existingCase.OwnerId = targetUser.Id;
+        }
+
         existingCase.EscalationLevel = nextLevel;
         existingCase.Status = CaseStatus.Escalated;
         if (nextLevel >= 2) existingCase.Sla90Escalated = true;
@@ -1726,17 +1783,13 @@ public class CaseService : ICaseService
             existingCase.SlaPausedAt = null;
         }
 
-        var nextLevelRoleName = nextLevel switch
-        {
-            2 => "Team Lead",
-            3 => "CX Supervisor",
-            4 => "Head of Customer Experience",
-            _ => "Senior Specialist"
-        };
+        var nextLevelName = nextConfig?.Name ?? $"Level {nextLevel}";
+        var targetRoleName = nextConfig?.TargetRole ?? "Escalation Manager";
+        var reasonText = dto.Reason.Trim();
+        var noteText = !string.IsNullOrWhiteSpace(dto.Note) ? $" Note: {dto.Note.Trim()}" : "";
+        var message = $"[Manual Escalation] Case escalated to {nextLevelName} ({targetRoleName}: {targetUser.Name}) from {oldOwnerName}. Reason: {reasonText}.{noteText}";
 
-        var reasonText = !string.IsNullOrWhiteSpace(dto.Reason) ? dto.Reason : "Manual escalation requested";
-        var noteText = !string.IsNullOrWhiteSpace(dto.Note) ? $" Note: {dto.Note}" : "";
-        var message = $"Case escalated to {nextLevelRoleName} ({targetUser.Name}) from {oldOwnerName}. Reason: {reasonText}.{noteText}";
+        var currentUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
 
         var caseEvent = new CaseEvent
         {
@@ -1758,7 +1811,7 @@ public class CaseService : ICaseService
             await _notificationService.CreateNotificationAsync(
                 targetUser.Id,
                 "CASE_ESCALATED",
-                $"Case Escalated ({nextLevelRoleName})",
+                $"Case Escalated ({nextLevelName})",
                 $"Case {existingCase.CaseNumber} has been escalated to you by {currentUser?.Name ?? "User"}. Reason: {reasonText}",
                 existingCase.Id,
                 existingCase.CaseNumber,
@@ -1772,31 +1825,36 @@ public class CaseService : ICaseService
     }
 
     /// <summary>
-    /// SLA monitoring. Sends the 70% consumption reminder, stamps first-response breaches and
-    /// records the moment the resolution SLA is breached.
-    ///
-    /// It deliberately never reassigns a case or changes its status: escalation is a manual
-    /// action only (POST /api/cases/{id}/escalate). Only cases that still have something to
-    /// evaluate are loaded, so the cost does not grow with the number of already-processed cases.
+    /// SLA monitoring and evaluation. Evaluates active cases against configured SLA thresholds,
+    /// marks breaches, sends reminder notifications, and triggers automatic escalations when configured.
     /// </summary>
     public async Task EvaluateSlaEscalationsAsync(Guid? caseId = null, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        var escalationLevels = await _context.EscalationLevelConfigs.OrderBy(l => l.LevelNumber).ToListAsync(ct);
+        int maxLevel = escalationLevels.Count > 0 ? escalationLevels.Max(l => l.LevelNumber) : 4;
+
         var query = _context.Cases
-            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled)
-            .Where(c => !c.Sla70ReminderSent
-                     || c.SlaBreachedAt == null
-                     || (c.FirstResponseActualAt == null && c.FirstResponseDueAt != null && c.FirstResponseStatus != "Breached"));
+            .Include(c => c.Owner)
+            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled);
 
         if (caseId.HasValue)
         {
             query = query.Where(c => c.Id == caseId.Value);
+        }
+        else
+        {
+            query = query.Where(c => !c.Sla70ReminderSent
+                                  || c.SlaBreachedAt == null
+                                  || (c.FirstResponseActualAt == null && c.FirstResponseDueAt != null && c.FirstResponseStatus != "Breached")
+                                  || c.EscalationLevel < maxLevel);
         }
 
         var cases = await query.ToListAsync(ct);
         if (cases.Count == 0) return;
 
         var reminders = new List<Case>();
+        var autoEscalations = new List<(Guid targetUserId, Guid caseId, string caseNumber, string levelName, string reason)>();
 
         foreach (var c in cases)
         {
@@ -1818,7 +1876,18 @@ public class CaseService : ICaseService
             }
 
             // 3. Resolution SLA consumption
-            double totalTargetMinutes = Math.Max(1, c.SlaTargetHours * 60);
+            double totalTargetMinutes = c.InternalResolutionTargetMinutes > 0
+                ? c.InternalResolutionTargetMinutes
+                : Math.Max(1, c.SlaTargetHours * 60);
+
+            DateTime? effectiveResolutionDue = c.InternalResolutionDueAt ?? (c.SlaStartTime.AddMinutes(totalTargetMinutes).AddMinutes(totalPaused));
+            bool isResolutionBreached = (effectiveResolutionDue.HasValue && now >= effectiveResolutionDue.Value) || c.SlaBreachedAt.HasValue;
+
+            if (isResolutionBreached && !c.SlaBreachedAt.HasValue)
+            {
+                c.SlaBreachedAt = effectiveResolutionDue ?? now;
+            }
+
             double elapsedMinutes = Math.Max(0, (now - c.SlaStartTime).TotalMinutes - totalPaused);
             double consumptionPercent = (elapsedMinutes / totalTargetMinutes) * 100.0;
 
@@ -1828,10 +1897,85 @@ public class CaseService : ICaseService
                 reminders.Add(c);
             }
 
-            // Breach is only recorded (reporting / notifications). The case keeps its owner and status.
-            if (consumptionPercent >= 100.0 && !c.SlaBreachedAt.HasValue)
+            // 4. Automatic Escalation Evaluation against dynamic EscalationLevelConfigs
+            int currentLevel = c.EscalationLevel > 0 ? c.EscalationLevel : 1;
+            var nextEligibleConfigs = escalationLevels
+                .Where(l => l.LevelNumber > currentLevel)
+                .OrderBy(l => l.LevelNumber)
+                .ToList();
+
+            foreach (var nextCfg in nextEligibleConfigs)
             {
-                c.SlaBreachedAt = now;
+                if (string.Equals(nextCfg.TriggerType, "ManualOnly", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue; // Skip manual-only levels during automated worker run
+                }
+
+                bool triggerMet = false;
+                string triggerReason = "";
+
+                if (string.Equals(nextCfg.TriggerType, "SlaPercentage", StringComparison.OrdinalIgnoreCase))
+                {
+                    double threshold = (double)(nextCfg.TriggerValue ?? 70m);
+                    if (consumptionPercent >= threshold)
+                    {
+                        triggerMet = true;
+                        triggerReason = $"SLA consumption reached {Math.Round(consumptionPercent, 1)}% (Threshold: {threshold}%)";
+                    }
+                }
+                else if (string.Equals(nextCfg.TriggerType, "SlaBreached", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (isResolutionBreached)
+                    {
+                        triggerMet = true;
+                        triggerReason = "Resolution SLA breached";
+                    }
+                }
+                else if (string.Equals(nextCfg.TriggerType, "SlaPostBreachHours", StringComparison.OrdinalIgnoreCase))
+                {
+                    double postHours = (double)(nextCfg.TriggerValue ?? 12m);
+                    if (c.SlaBreachedAt.HasValue && now >= c.SlaBreachedAt.Value.AddHours(postHours))
+                    {
+                        triggerMet = true;
+                        triggerReason = $"Resolution SLA breached for more than {postHours} hours";
+                    }
+                }
+
+                if (triggerMet)
+                {
+                    var oldOwnerName = c.Owner?.Name ?? "Agent";
+                    c.EscalationLevel = nextCfg.LevelNumber;
+                    c.Status = CaseStatus.Escalated;
+                    if (nextCfg.LevelNumber >= 2) c.Sla90Escalated = true;
+                    if (nextCfg.LevelNumber >= 3) c.SlaBreachedEscalated = true;
+                    if (nextCfg.LevelNumber >= 4) c.Sla12hBreachedEscalated = true;
+
+                    User? targetUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(c, nextCfg.LevelNumber, ct);
+                    targetUser ??= await ResolveEscalationTargetAsync(c, nextCfg.LevelNumber);
+
+                    if (targetUser != null && nextCfg.ReassignOwner)
+                    {
+                        c.OwnerId = targetUser.Id;
+                    }
+
+                    var autoMsg = $"[Automatic Escalation] Escalated to {nextCfg.Name} ({nextCfg.TargetRole}{(targetUser != null ? ": " + targetUser.Name : "")}) from {oldOwnerName}. Trigger: {triggerReason}. Action: {nextCfg.ActionDescription}";
+
+                    _context.CaseEvents.Add(new CaseEvent
+                    {
+                        CaseId = c.Id,
+                        EventType = EventType.Escalate,
+                        Message = autoMsg,
+                        IsInternal = true,
+                        CreatedAt = now,
+                        UserId = targetUser?.Id ?? c.OwnerId
+                    });
+
+                    if (targetUser != null)
+                    {
+                        autoEscalations.Add((targetUser.Id, c.Id, c.CaseNumber, nextCfg.Name, triggerReason));
+                    }
+                    break; // Progress one level per evaluation cycle
+                }
             }
         }
 
@@ -1877,6 +2021,25 @@ public class CaseService : ICaseService
             }
             catch (Exception ex) { Console.WriteLine($"[SLA 70% Reminder Error] {ex.Message}"); }
         }
+
+        foreach (var item in autoEscalations)
+        {
+            try
+            {
+                await _notificationService.CreateNotificationAsync(
+                    item.targetUserId,
+                    "CASE_AUTOMATICALLY_ESCALATED",
+                    $"Automatic Escalation ({item.levelName})",
+                    $"Case {item.caseNumber} has been automatically escalated to you. Trigger: {item.reason}",
+                    item.caseId,
+                    item.caseNumber,
+                    "Critical",
+                    0,
+                    ct
+                );
+            }
+            catch (Exception ex) { Console.WriteLine($"[Auto-Escalate Notification Error] {ex.Message}"); }
+        }
     }
 
     public async Task<EscalationMatrixResponseDto> GetEscalationMatrixConfigAsync(Guid? caseId = null, CancellationToken ct = default)
@@ -1890,88 +2053,54 @@ public class CaseService : ICaseService
                 .FirstOrDefaultAsync(x => x.Id == caseId.Value, ct);
         }
 
+        var dbLevels = await _context.EscalationLevelConfigs
+            .Include(l => l.TargetUser)
+            .OrderBy(l => l.LevelNumber)
+            .ToListAsync(ct);
+
         int currentLevel = c != null && c.EscalationLevel > 0 ? c.EscalationLevel : 1;
-        int? nextLevel = currentLevel < 4 ? currentLevel + 1 : null;
+        int maxLevel = dbLevels.Count > 0 ? dbLevels.Max(l => l.LevelNumber) : 4;
+        int? nextLevel = currentLevel < maxLevel ? currentLevel + 1 : null;
 
-        User? lvl1User = c?.Owner;
-        User? lvl2User = c != null ? await ResolveEscalationTargetAsync(c, 2) : null;
-        User? lvl3User = c != null ? await ResolveEscalationTargetAsync(c, 3) : null;
-        User? lvl4User = c != null ? await ResolveEscalationTargetAsync(c, 4) : null;
-
-        var allUsers = await _context.Users.ToListAsync(ct);
-        lvl1User ??= allUsers.FirstOrDefault(u => u.Role.Contains("Agent", StringComparison.OrdinalIgnoreCase));
-        lvl2User ??= allUsers.FirstOrDefault(u => u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase));
-        lvl3User ??= allUsers.FirstOrDefault(u => u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase));
-        lvl4User ??= allUsers.FirstOrDefault(u => u.Role.Contains("Head", StringComparison.OrdinalIgnoreCase));
-
-        User? nextUser = nextLevel.HasValue ? (nextLevel.Value switch
+        var nextConfig = nextLevel.HasValue ? dbLevels.FirstOrDefault(l => l.LevelNumber == nextLevel.Value) : null;
+        User? nextUser = null;
+        if (nextLevel.HasValue && c != null)
         {
-            2 => lvl2User,
-            3 => lvl3User,
-            4 => lvl4User,
-            _ => null
-        }) : null;
+            nextUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(c, nextLevel.Value, ct);
+        }
 
-        string? nextRole = nextLevel.HasValue ? (nextLevel.Value switch
+        var levelDtos = new List<EscalationMatrixLevelDto>();
+        foreach (var lvl in dbLevels)
         {
-            2 => "Team Lead",
-            3 => "CX Supervisor",
-            4 => "Head of Customer Experience",
-            _ => null
-        }) : null;
+            User? targetUser = null;
+            if (c != null)
+            {
+                targetUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(c, lvl.LevelNumber, ct);
+            }
+            targetUser ??= lvl.TargetUser;
+
+            levelDtos.Add(new EscalationMatrixLevelDto
+            {
+                Level = lvl.LevelNumber,
+                Name = lvl.Name,
+                Role = lvl.TargetRole,
+                Trigger = lvl.TriggerDescription,
+                Action = lvl.ActionDescription,
+                CurrentTargetUserName = targetUser?.Name,
+                CurrentTargetUserId = targetUser?.Id
+            });
+        }
 
         return new EscalationMatrixResponseDto
         {
-            Title = "Escalation matrix",
-            Subtitle = "manual escalation — cases are never escalated automatically; every escalation is audit-logged",
+            Title = "Escalation Matrix",
+            Subtitle = "Sequential escalation architecture with dynamic database configuration, audit logs, and automatic/manual routing.",
             CurrentLevel = currentLevel,
             NextLevel = nextLevel,
-            NextTargetRole = nextRole,
+            NextTargetRole = nextConfig?.TargetRole,
             NextTargetUserName = nextUser?.Name,
             NextTargetUserId = nextUser?.Id,
-            Levels = new List<EscalationMatrixLevelDto>
-            {
-                new()
-                {
-                    Level = 1,
-                    Name = "LEVEL 1",
-                    Role = "Assigned Agent",
-                    Trigger = "SLA 70% consumed",
-                    Action = "Reminder to assigned agent",
-                    CurrentTargetUserName = lvl1User?.Name,
-                    CurrentTargetUserId = lvl1User?.Id
-                },
-                new()
-                {
-                    Level = 2,
-                    Name = "LEVEL 2",
-                    Role = "Team Lead",
-                    Trigger = "Manual escalation",
-                    Action = "Reassign to team lead",
-                    CurrentTargetUserName = lvl2User?.Name,
-                    CurrentTargetUserId = lvl2User?.Id
-                },
-                new()
-                {
-                    Level = 3,
-                    Name = "LEVEL 3",
-                    Role = "CX Supervisor",
-                    Trigger = "Manual escalation",
-                    Action = "Breach review, customer callback",
-                    CurrentTargetUserName = lvl3User?.Name,
-                    CurrentTargetUserId = lvl3User?.Id
-                },
-                new()
-                {
-                    Level = 4,
-                    Name = "LEVEL 4",
-                    Role = "Head of CX",
-                    Trigger = "Manual escalation",
-                    Action = "Executive escalation + RCA required",
-                    CurrentTargetUserName = lvl4User?.Name,
-                    CurrentTargetUserId = lvl4User?.Id
-                }
-            }
+            Levels = levelDtos
         };
     }
 

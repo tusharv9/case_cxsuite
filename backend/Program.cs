@@ -52,6 +52,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContextPool<AppDbContext>(options =>
     options.UseNpgsql(connectionString, npgsqlOptions => 
     {
+        npgsqlOptions.CommandTimeout(90);
         npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorCodesToAdd: null);
     }));
 
@@ -69,6 +70,8 @@ builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IConfigurableSettingsService, ConfigurableSettingsService>();
 builder.Services.AddScoped<IPiiMaskingService, PiiMaskingService>();
+builder.Services.AddScoped<IBusinessTimeService, BusinessTimeService>();
+builder.Services.AddScoped<ISlaRoutingService, SlaRoutingService>();
 
 // Register SLA Escalation Background Worker
 builder.Services.AddHostedService<SlaEscalationBackgroundService>();
@@ -153,6 +156,87 @@ using (var scope = app.Services.CreateScope())
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Sla12hBreachedEscalated"" boolean DEFAULT false;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaBreachedAt"" timestamp with time zone NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""SlaConfigurations"" ADD COLUMN IF NOT EXISTS ""FirstResponseMinutes"" integer DEFAULT 240;");
+
+        // SLA Snapshot & Routing Columns
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""InternalResolutionTargetMinutes"" integer DEFAULT 120;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""ExternalResolutionTargetMinutes"" integer DEFAULT 240;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""InternalResolutionDueAt"" timestamp with time zone NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""ExternalResolutionDueAt"" timestamp with time zone NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaConfigVersion"" integer DEFAULT 1;");
+
+        // Cases SLA & Routing Tables
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""PrioritySlaRules"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_PrioritySlaRules"" PRIMARY KEY,
+                ""Priority"" text NOT NULL,
+                ""FirstResponseValue"" integer NOT NULL DEFAULT 30,
+                ""FirstResponseUnit"" text NOT NULL DEFAULT 'Minutes',
+                ""FirstResponseMinutes"" integer NOT NULL DEFAULT 30,
+                ""InternalResolutionValue"" integer NOT NULL DEFAULT 2,
+                ""InternalResolutionUnit"" text NOT NULL DEFAULT 'Hours',
+                ""InternalResolutionMinutes"" integer NOT NULL DEFAULT 120,
+                ""ExternalResolutionValue"" integer NOT NULL DEFAULT 4,
+                ""ExternalResolutionUnit"" text NOT NULL DEFAULT 'Hours',
+                ""ExternalResolutionMinutes"" integer NOT NULL DEFAULT 240,
+                ""Version"" integer NOT NULL DEFAULT 1,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PrioritySlaRules_Priority"" ON ""PrioritySlaRules"" (""Priority"");
+
+            CREATE TABLE IF NOT EXISTS ""PriorityCategoryMappings"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_PriorityCategoryMappings"" PRIMARY KEY,
+                ""PrioritySlaRuleId"" uuid NOT NULL CONSTRAINT ""FK_PriorityCategoryMappings_PrioritySlaRules"" REFERENCES ""PrioritySlaRules"" (""Id"") ON DELETE CASCADE,
+                ""Priority"" text NOT NULL DEFAULT 'Medium',
+                ""CategoryName"" text NOT NULL,
+                ""DepartmentSubCategoryId"" uuid NULL,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PriorityCategoryMappings_CategoryName"" ON ""PriorityCategoryMappings"" (""CategoryName"");
+            CREATE INDEX IF NOT EXISTS ""IX_PriorityCategoryMappings_PrioritySlaRuleId"" ON ""PriorityCategoryMappings"" (""PrioritySlaRuleId"");
+
+            CREATE TABLE IF NOT EXISTS ""BusinessHours"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_BusinessHours"" PRIMARY KEY,
+                ""DayOfWeek"" integer NOT NULL,
+                ""DayName"" text NOT NULL,
+                ""IsEnabled"" boolean NOT NULL DEFAULT true,
+                ""StartTime"" interval NOT NULL DEFAULT '09:00:00',
+                ""EndTime"" interval NOT NULL DEFAULT '17:00:00',
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_BusinessHours_DayOfWeek"" ON ""BusinessHours"" (""DayOfWeek"");
+
+            CREATE TABLE IF NOT EXISTS ""PublicHolidays"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_PublicHolidays"" PRIMARY KEY,
+                ""HolidayDate"" timestamp with time zone NOT NULL,
+                ""Name"" text NOT NULL,
+                ""IsActive"" boolean NOT NULL DEFAULT true,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PublicHolidays_HolidayDate"" ON ""PublicHolidays"" (""HolidayDate"");
+
+            CREATE TABLE IF NOT EXISTS ""EscalationLevelConfigs"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_EscalationLevelConfigs"" PRIMARY KEY,
+                ""LevelNumber"" integer NOT NULL,
+                ""Name"" text NOT NULL,
+                ""AssignmentType"" text NOT NULL DEFAULT 'Role',
+                ""TargetRole"" text NOT NULL DEFAULT 'Team Lead',
+                ""TargetUserId"" uuid NULL CONSTRAINT ""FK_EscalationLevelConfigs_Users"" REFERENCES ""Users"" (""Id"") ON DELETE SET NULL,
+                ""TriggerType"" text NOT NULL DEFAULT 'SlaPercentage',
+                ""TriggerValue"" numeric NULL,
+                ""TriggerDescription"" text NOT NULL DEFAULT '',
+                ""ActionDescription"" text NOT NULL DEFAULT '',
+                ""ReassignOwner"" boolean NOT NULL DEFAULT false,
+                ""DisplayOrder"" integer NOT NULL DEFAULT 1,
+                ""IsActive"" boolean NOT NULL DEFAULT true,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_EscalationLevelConfigs_LevelNumber"" ON ""EscalationLevelConfigs"" (""LevelNumber"");
+        ");
         
         db.Database.ExecuteSqlRaw(@"
             CREATE TABLE IF NOT EXISTS ""CaseChildRelations"" (

@@ -18,6 +18,7 @@ public static class DbSeeder
             SeedPassportCustomer(context);
             EnsureCaseChannelsAndStatuses(context);
             EnsureFirstResponseAndEscalationMatrix(context);
+            EnsureSlaAndEscalationMatrix(context);
             return;
         }
 
@@ -792,6 +793,282 @@ public static class DbSeeder
         catch (Exception ex)
         {
             Console.WriteLine($"[EnsureFirstResponseAndEscalationMatrix Error] {ex.Message}");
+        }
+    }
+
+    private static void EnsureSlaAndEscalationMatrix(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            // 1. Seed PrioritySlaRules if empty
+            if (!context.PrioritySlaRules.Any())
+            {
+                var critical = new PrioritySlaRule
+                {
+                    Id = Guid.NewGuid(),
+                    Priority = "Critical",
+                    FirstResponseValue = 30,
+                    FirstResponseUnit = "Minutes",
+                    FirstResponseMinutes = 30,
+                    InternalResolutionValue = 2,
+                    InternalResolutionUnit = "Hours",
+                    InternalResolutionMinutes = 120,
+                    ExternalResolutionValue = 4,
+                    ExternalResolutionUnit = "Hours",
+                    ExternalResolutionMinutes = 240,
+                    Version = 1,
+                    CreatedAt = now
+                };
+
+                var high = new PrioritySlaRule
+                {
+                    Id = Guid.NewGuid(),
+                    Priority = "High",
+                    FirstResponseValue = 1,
+                    FirstResponseUnit = "Hours",
+                    FirstResponseMinutes = 60,
+                    InternalResolutionValue = 6,
+                    InternalResolutionUnit = "Hours",
+                    InternalResolutionMinutes = 360,
+                    ExternalResolutionValue = 8,
+                    ExternalResolutionUnit = "Hours",
+                    ExternalResolutionMinutes = 480,
+                    Version = 1,
+                    CreatedAt = now
+                };
+
+                var medium = new PrioritySlaRule
+                {
+                    Id = Guid.NewGuid(),
+                    Priority = "Medium",
+                    FirstResponseValue = 4,
+                    FirstResponseUnit = "Hours",
+                    FirstResponseMinutes = 240,
+                    InternalResolutionValue = 10,
+                    InternalResolutionUnit = "Hours",
+                    InternalResolutionMinutes = 600,
+                    ExternalResolutionValue = 12,
+                    ExternalResolutionUnit = "Hours",
+                    ExternalResolutionMinutes = 720,
+                    Version = 1,
+                    CreatedAt = now
+                };
+
+                var low = new PrioritySlaRule
+                {
+                    Id = Guid.NewGuid(),
+                    Priority = "Low",
+                    FirstResponseValue = 8,
+                    FirstResponseUnit = "Hours",
+                    FirstResponseMinutes = 480,
+                    InternalResolutionValue = 22,
+                    InternalResolutionUnit = "Hours",
+                    InternalResolutionMinutes = 1320,
+                    ExternalResolutionValue = 24,
+                    ExternalResolutionUnit = "Hours",
+                    ExternalResolutionMinutes = 1440,
+                    Version = 1,
+                    CreatedAt = now
+                };
+
+                context.PrioritySlaRules.AddRange(critical, high, medium, low);
+                context.SaveChanges();
+
+                // 2. Ensure initial Department Subcategories exist for category mapping
+                var allDepts = context.Departments.ToList();
+                var fiDept = allDepts.FirstOrDefault(d => d.Code == "FI") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Fraud", StringComparison.OrdinalIgnoreCase));
+                var ccDept = allDepts.FirstOrDefault(d => d.Code == "CC") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Contact", StringComparison.OrdinalIgnoreCase));
+                var mfDept = allDepts.FirstOrDefault(d => d.Code == "MF") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Micro", StringComparison.OrdinalIgnoreCase));
+
+                var initialCategories = new List<(string Name, string Code, Guid? DeptId)>
+                {
+                    ("Fraud", "FRD", fiDept?.Id),
+                    ("Security Incident", "SEC", fiDept?.Id),
+                    ("Payment Issue", "PAY", ccDept?.Id),
+                    ("Account Access", "ACC", ccDept?.Id),
+                    ("Card Dispute", "DIS", ccDept?.Id),
+                    ("Loan Inquiry", "LON", mfDept?.Id),
+                    ("General Inquiry", "GEN", ccDept?.Id)
+                };
+
+                foreach (var (name, code, deptId) in initialCategories)
+                {
+                    if (deptId.HasValue && !context.DepartmentSubCategories.Any(s => s.Name == name))
+                    {
+                        context.DepartmentSubCategories.Add(new DepartmentSubCategory
+                        {
+                            Id = Guid.NewGuid(),
+                            Name = name,
+                            Code = code,
+                            DepartmentId = deptId.Value,
+                            DisplayOrder = 1,
+                            IsActive = true,
+                            CreatedAt = now
+                        });
+                    }
+                }
+                context.SaveChanges();
+
+                // 3. Seed PriorityCategoryMappings
+                var categoryMappings = new (string Category, PrioritySlaRule Rule)[]
+                {
+                    ("Fraud", critical),
+                    ("Security Incident", critical),
+                    ("Payment Issue", high),
+                    ("Account Access", high),
+                    ("Card Dispute", medium),
+                    ("Loan Inquiry", low)
+                };
+
+                foreach (var (cat, r) in categoryMappings)
+                {
+                    if (!context.PriorityCategoryMappings.Any(m => m.CategoryName == cat))
+                    {
+                        var subCat = context.DepartmentSubCategories.FirstOrDefault(s => s.Name == cat);
+                        context.PriorityCategoryMappings.Add(new PriorityCategoryMapping
+                        {
+                            Id = Guid.NewGuid(),
+                            PrioritySlaRuleId = r.Id,
+                            Priority = r.Priority,
+                            CategoryName = cat,
+                            DepartmentSubCategoryId = subCat?.Id,
+                            CreatedAt = now
+                        });
+                    }
+                }
+                context.SaveChanges();
+            }
+
+            // 4. Seed BusinessHours (7 days) if empty
+            if (!context.BusinessHours.Any())
+            {
+                var days = new[]
+                {
+                    (DayOfWeek.Monday, "Monday", true, new TimeSpan(9, 0, 0), new TimeSpan(17, 0, 0)),
+                    (DayOfWeek.Tuesday, "Tuesday", true, new TimeSpan(9, 0, 0), new TimeSpan(17, 0, 0)),
+                    (DayOfWeek.Wednesday, "Wednesday", true, new TimeSpan(9, 0, 0), new TimeSpan(17, 0, 0)),
+                    (DayOfWeek.Thursday, "Thursday", true, new TimeSpan(9, 0, 0), new TimeSpan(17, 0, 0)),
+                    (DayOfWeek.Friday, "Friday", true, new TimeSpan(9, 0, 0), new TimeSpan(17, 0, 0)),
+                    (DayOfWeek.Saturday, "Saturday", false, new TimeSpan(9, 0, 0), new TimeSpan(17, 0, 0)),
+                    (DayOfWeek.Sunday, "Sunday", false, new TimeSpan(9, 0, 0), new TimeSpan(17, 0, 0)),
+                };
+
+                foreach (var (day, name, enabled, start, end) in days)
+                {
+                    context.BusinessHours.Add(new BusinessHour
+                    {
+                        Id = Guid.NewGuid(),
+                        DayOfWeek = day,
+                        DayName = name,
+                        IsEnabled = enabled,
+                        StartTime = start,
+                        EndTime = end,
+                        CreatedAt = now
+                    });
+                }
+                context.SaveChanges();
+            }
+
+            // 5. Seed EscalationLevelConfigs (default 4 levels) if empty
+            if (!context.EscalationLevelConfigs.Any())
+            {
+                var allUsers = context.Users.ToList();
+                var lvl1User = allUsers.FirstOrDefault(u => u.Role.Contains("Agent", StringComparison.OrdinalIgnoreCase));
+                var lvl2User = allUsers.FirstOrDefault(u => u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase));
+                var lvl3User = allUsers.FirstOrDefault(u => u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase));
+                var lvl4User = allUsers.FirstOrDefault(u => u.Role.Contains("Head", StringComparison.OrdinalIgnoreCase));
+
+                context.EscalationLevelConfigs.AddRange(
+                    new EscalationLevelConfig
+                    {
+                        Id = Guid.NewGuid(),
+                        LevelNumber = 1,
+                        Name = "Level 1",
+                        AssignmentType = "Role",
+                        TargetRole = "Assigned Agent",
+                        TargetUserId = lvl1User?.Id,
+                        TriggerType = "SlaPercentage",
+                        TriggerValue = 70,
+                        TriggerDescription = "SLA 70% consumed",
+                        ActionDescription = "Reminder to assigned agent",
+                        ReassignOwner = false,
+                        DisplayOrder = 1,
+                        IsActive = true,
+                        CreatedAt = now
+                    },
+                    new EscalationLevelConfig
+                    {
+                        Id = Guid.NewGuid(),
+                        LevelNumber = 2,
+                        Name = "Level 2",
+                        AssignmentType = "Role",
+                        TargetRole = "Team Lead",
+                        TargetUserId = lvl2User?.Id,
+                        TriggerType = "SlaPercentage",
+                        TriggerValue = 90,
+                        TriggerDescription = "SLA 90% consumed",
+                        ActionDescription = "Reassign to team lead",
+                        ReassignOwner = true,
+                        DisplayOrder = 2,
+                        IsActive = true,
+                        CreatedAt = now
+                    },
+                    new EscalationLevelConfig
+                    {
+                        Id = Guid.NewGuid(),
+                        LevelNumber = 3,
+                        Name = "Level 3",
+                        AssignmentType = "Role",
+                        TargetRole = "CX Supervisor",
+                        TargetUserId = lvl3User?.Id,
+                        TriggerType = "SlaBreached",
+                        TriggerValue = 100,
+                        TriggerDescription = "SLA Breached",
+                        ActionDescription = "Breach review and customer callback",
+                        ReassignOwner = true,
+                        DisplayOrder = 3,
+                        IsActive = true,
+                        CreatedAt = now
+                    },
+                    new EscalationLevelConfig
+                    {
+                        Id = Guid.NewGuid(),
+                        LevelNumber = 4,
+                        Name = "Level 4",
+                        AssignmentType = "Role",
+                        TargetRole = "Head of Customer Experience",
+                        TargetUserId = lvl4User?.Id,
+                        TriggerType = "SlaPostBreachHours",
+                        TriggerValue = 12,
+                        TriggerDescription = "SLA 12h Breached",
+                        ActionDescription = "Executive escalation and RCA required",
+                        ReassignOwner = true,
+                        DisplayOrder = 4,
+                        IsActive = true,
+                        CreatedAt = now
+                    }
+                );
+                context.SaveChanges();
+            }
+
+            // 6. Backfill existing cases with snapshot fields without altering historical behavior
+            var casesWithoutSnapshots = context.Cases.Where(c => c.ExternalResolutionDueAt == null).ToList();
+            foreach (var c in casesWithoutSnapshots)
+            {
+                int extHours = c.SlaTargetHours > 0 ? c.SlaTargetHours : 24;
+                c.ExternalResolutionTargetMinutes = extHours * 60;
+                c.InternalResolutionTargetMinutes = Math.Max(60, (extHours - 2) * 60);
+                c.ExternalResolutionDueAt = c.SlaStartTime.AddHours(extHours).AddMinutes(c.SlaTotalPausedMinutes);
+                c.InternalResolutionDueAt = c.SlaStartTime.AddHours(Math.Max(1, extHours - 2)).AddMinutes(c.SlaTotalPausedMinutes);
+                c.SlaConfigVersion = 1;
+            }
+            if (casesWithoutSnapshots.Count > 0) context.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EnsureSlaAndEscalationMatrix Error] {ex.Message}");
         }
     }
 }

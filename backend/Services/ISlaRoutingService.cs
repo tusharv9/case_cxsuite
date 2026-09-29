@@ -1,0 +1,22 @@
+namespace CaseManagement.Api.Services;
+
+using CaseManagement.Api.DTOs;
+using CaseManagement.Api.Models;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+public interface ISlaRoutingService
+{
+    Task<SlaRoutingConfigResponseDto> GetFullConfigurationAsync(CancellationToken ct = default);
+    Task<bool> UpdateConfigurationAsync(UpdateSlaRoutingConfigRequestDto request, Guid actingUserId, CancellationToken ct = default);
+
+    Task<PublicHolidayDto> AddPublicHolidayAsync(CreatePublicHolidayDto dto, Guid actingUserId, CancellationToken ct = default);
+    Task<PublicHolidayDto?> UpdatePublicHolidayAsync(Guid id, UpdatePublicHolidayDto dto, Guid actingUserId, CancellationToken ct = default);
+    Task<bool> DeletePublicHolidayAsync(Guid id, Guid actingUserId, CancellationToken ct = default);
+
+    Task<string> ResolveEffectivePriorityAsync(string? requestedSeverity, string? categoryName, CancellationToken ct = default);
+    Task<PrioritySlaRule> GetActivePrioritySlaRuleAsync(string priority, CancellationToken ct = default);
+    Task<CaseEscalationStatusDto?> GetCaseEscalationStatusAsync(Guid caseId, CancellationToken ct = default);
+    Task<User?> ResolveNextEscalationTargetAsync(Case c, int targetLevel, CancellationToken ct = default);
+}

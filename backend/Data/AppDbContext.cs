@@ -27,6 +27,13 @@ public class AppDbContext : DbContext
     public DbSet<DepartmentSubCategory> DepartmentSubCategories { get; set; } = null!;
     public DbSet<SlaConfiguration> SlaConfigurations { get; set; } = null!;
 
+    // Cases SLA & Routing
+    public DbSet<PrioritySlaRule> PrioritySlaRules { get; set; } = null!;
+    public DbSet<PriorityCategoryMapping> PriorityCategoryMappings { get; set; } = null!;
+    public DbSet<BusinessHour> BusinessHours { get; set; } = null!;
+    public DbSet<PublicHoliday> PublicHolidays { get; set; } = null!;
+    public DbSet<EscalationLevelConfig> EscalationLevelConfigs { get; set; } = null!;
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -240,6 +247,47 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<User>()
             .Property(u => u.Status)
             .HasConversion(userStatusConverter);
+
+        // Cases SLA & Routing Configurations
+        modelBuilder.Entity<PrioritySlaRule>()
+            .HasIndex(r => r.Priority)
+            .IsUnique();
+
+        modelBuilder.Entity<PriorityCategoryMapping>()
+            .HasIndex(m => m.CategoryName)
+            .IsUnique();
+
+        modelBuilder.Entity<PriorityCategoryMapping>()
+            .HasOne(m => m.PrioritySlaRule)
+            .WithMany(r => r.CategoryMappings)
+            .HasForeignKey(m => m.PrioritySlaRuleId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<PriorityCategoryMapping>()
+            .HasOne(m => m.DepartmentSubCategory)
+            .WithMany()
+            .HasForeignKey(m => m.DepartmentSubCategoryId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<BusinessHour>()
+            .HasIndex(b => b.DayOfWeek)
+            .IsUnique();
+
+        modelBuilder.Entity<PublicHoliday>()
+            .HasIndex(h => h.HolidayDate)
+            .IsUnique();
+
+        modelBuilder.Entity<EscalationLevelConfig>()
+            .HasIndex(e => e.LevelNumber)
+            .IsUnique();
+
+        modelBuilder.Entity<EscalationLevelConfig>()
+            .HasOne(e => e.TargetUser)
+            .WithMany()
+            .HasForeignKey(e => e.TargetUserId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 
     public override int SaveChanges()

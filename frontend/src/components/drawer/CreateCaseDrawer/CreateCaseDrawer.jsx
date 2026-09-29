@@ -10,6 +10,7 @@ import { caseService } from '../../../services/caseService.js';
 import { customerService } from '../../../services/customerService.js';
 import { departmentService } from '../../../services/departmentService.js';
 import { configurableSettingsService } from '../../../services/configurableSettingsService.js';
+import { slaRoutingService } from '../../../services/slaRoutingService.js';
 import { useToast } from '../../../hooks/useToast.js';
 import { getSlaConfig } from '../../../utils/slaUtils.js';
 import { formatDate } from '../../../utils/dateUtils.js';
@@ -78,6 +79,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     { value: 'WhatsApp', label: 'WhatsApp' },
   ]);
   const [severities, setSeverities] = useState([]);
+  const [categoryPriorityMap, setCategoryPriorityMap] = useState({});
 
   // Customer Mode & Selection States
   const [customerMode, setCustomerMode] = useState('existing'); // 'existing' | 'new'
@@ -98,8 +100,9 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       configurableSettingsService.getLookupValues('PREFERRED_LANGUAGE', true),
       configurableSettingsService.getLookupValues('COMMUNICATION_CHANNEL', true),
       configurableSettingsService.getSeverities(),
+      slaRoutingService.getConfiguration().catch(() => null),
     ])
-      .then(([d, fields, cts, subs, langs, chns, severityList]) => {
+      .then(([d, fields, cts, subs, langs, chns, severityList, slaConfig]) => {
         setDepartments(d || []);
 
         const sortedFields = (fields || [])
@@ -142,6 +145,16 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
         if (langs && langs.length > 0) setLanguages(langs);
         if (chns && chns.length > 0) setChannels(chns);
         if (severityList) setSeverities(severityList);
+
+        if (slaConfig?.priorityRules) {
+          const map = {};
+          slaConfig.priorityRules.forEach((r) => {
+            (r.appliedCategories || []).forEach((cat) => {
+              if (cat) map[cat.trim().toLowerCase()] = r.priority;
+            });
+          });
+          setCategoryPriorityMap(map);
+        }
       })
       .catch((err) => {
         console.error('[CreateCaseDrawer Metadata Load Error]', err);
@@ -209,6 +222,22 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       subcategory: '',
     }));
     setErrors((prev) => ({ ...prev, departmentId: undefined, subcategory: undefined }));
+  };
+
+  const handleSubcategoryChange = (e) => {
+    const chosenSubcat = e.target.value;
+    setForm((prev) => {
+      const updated = { ...prev, subcategory: chosenSubcat };
+      const mappedPriority = categoryPriorityMap[chosenSubcat?.trim().toLowerCase()];
+      if (mappedPriority) {
+        updated.severity = mappedPriority;
+        const matched = severities.find((s) => s.name.toLowerCase() === mappedPriority.toLowerCase());
+        const hours = matched && matched.externalHours > 0 ? matched.externalHours : getSlaConfig(mappedPriority).externalHours;
+        updated.slaTargetHours = String(hours);
+      }
+      return updated;
+    });
+    setErrors((prev) => ({ ...prev, subcategory: undefined, severity: undefined }));
   };
 
   const handleSeverityChange = (e) => {
@@ -498,7 +527,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           required={isRequired}
           disabled={!isEditable || !form.departmentId}
           value={form.subcategory}
-          onChange={set('subcategory')}
+          onChange={handleSubcategoryChange}
           error={errors.subcategory}
         >
           <option value="">
@@ -564,20 +593,27 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     }
 
     if (key === 'severity') {
+      const hasAutoPriority = Boolean(categoryPriorityMap[form.subcategory?.trim().toLowerCase()]);
       return (
-        <Select
-          key={key}
-          label={label}
-          required={isRequired}
-          disabled={!isEditable}
-          value={form.severity}
-          onChange={handleSeverityChange}
-          error={errors.severity}
-        >
-          {(severities.length > 0 ? severities.map((s) => s.name) : ['Low', 'Medium', 'High', 'Critical']).map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </Select>
+        <div key={key}>
+          <Select
+            label={label}
+            required={isRequired}
+            disabled={!isEditable}
+            value={form.severity}
+            onChange={handleSeverityChange}
+            error={errors.severity}
+          >
+            {(severities.length > 0 ? severities.map((s) => s.name) : ['Low', 'Medium', 'High', 'Critical']).map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Select>
+          {hasAutoPriority && (
+            <div style={{ fontSize: '11px', color: '#1d4ed8', fontWeight: 600, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span>• Priority automatically assigned based on Category SLA policy</span>
+            </div>
+          )}
+        </div>
       );
     }
 

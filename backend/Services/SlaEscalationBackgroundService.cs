@@ -8,7 +8,7 @@ public class SlaEscalationBackgroundService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SlaEscalationBackgroundService> _logger;
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(2);
 
     public SlaEscalationBackgroundService(
         IServiceScopeFactory scopeFactory,
