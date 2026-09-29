@@ -4,14 +4,37 @@ import { useState } from 'react';
 import { Clock, AlertTriangle, CheckCircle2, Pause, Inbox } from 'lucide-react';
 import { getSlaDisplay, getSlaConfig } from '../../../utils/slaUtils.js';
 import { useNow } from '../../../hooks/useNow.js';
+import { useApp } from '../../../contexts/AppContext.jsx';
 import { getInitials, getAvatarColor } from '../../../utils/avatarUtils.js';
 import { ChannelBadge } from '../ChannelBadge/ChannelBadge.jsx';
 import './CaseList.css';
 
-function SlaBadgeList({ status, severity, slaStartTime, slaTargetHours, slaPausedAt, slaTotalPausedMinutes }) {
+function SlaBadgeList({
+  status,
+  severity,
+  slaStartTime,
+  slaTargetHours,
+  slaPausedAt,
+  slaTotalPausedMinutes,
+  isHolidayToday,
+  holidayName,
+}) {
   const now = useNow(1000);
+  const appContext = useApp();
+  const effectiveHolidayToday = isHolidayToday ?? appContext?.isHolidayToday ?? false;
+  const effectiveHolidayName = holidayName || appContext?.todayHolidayName || null;
+
   const { internalHours } = getSlaConfig(severity, slaTargetHours);
-  const sla = getSlaDisplay(slaStartTime, internalHours, status, now, slaPausedAt, slaTotalPausedMinutes);
+  const sla = getSlaDisplay(
+    slaStartTime,
+    internalHours,
+    status,
+    now,
+    slaPausedAt,
+    slaTotalPausedMinutes,
+    effectiveHolidayToday,
+    effectiveHolidayName
+  );
 
   if (sla.status === 'within') {
     return (
@@ -22,9 +45,24 @@ function SlaBadgeList({ status, severity, slaStartTime, slaTargetHours, slaPause
     );
   }
 
+  if (sla.status === 'holiday-paused' || (sla.status === 'paused' && sla.isHoliday)) {
+    return (
+      <span
+        className="case-list-sla case-list-sla--holiday-paused"
+        title={sla.tooltip || `Today is a public holiday (${sla.holidayName || 'Holiday'}). SLA clock is paused.`}
+      >
+        <Pause size={10} strokeWidth={2.5} />
+        <span>{sla.label}</span>
+      </span>
+    );
+  }
+
   if (sla.status === 'paused') {
     return (
-      <span className="case-list-sla case-list-sla--paused">
+      <span
+        className="case-list-sla case-list-sla--paused"
+        title={sla.tooltip || 'SLA clock is paused (Waiting on Customer)'}
+      >
         <Pause size={10} strokeWidth={2.5} />
         <span>{sla.label}</span>
       </span>
@@ -292,6 +330,8 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
                     slaTargetHours={c.slaTargetHours}
                     slaPausedAt={c.slaPausedAt}
                     slaTotalPausedMinutes={c.slaTotalPausedMinutes}
+                    isHolidayToday={c.isHolidayToday}
+                    holidayName={c.holidayName}
                   />
                 </td>
 

@@ -252,7 +252,30 @@ public class CaseService : ICaseService
         {
             await _piiMasking.MaskCustomerSummaryAsync(caseDetail.Customer, ct);
         }
+        if (caseDetail != null && _businessTimeService != null)
+        {
+            var (isHoliday, holidayName) = await _businessTimeService.GetActiveHolidayAsync(DateTime.UtcNow, ct);
+            if (isHoliday)
+            {
+                caseDetail.IsHolidayToday = true;
+                caseDetail.HolidayName = holidayName;
+            }
+        }
         return caseDetail;
+    }
+
+    private async Task EnrichCasesWithHolidayStatusAsync(IEnumerable<CaseSummaryDto>? cases, CancellationToken ct)
+    {
+        if (cases == null || !cases.Any() || _businessTimeService == null) return;
+        var (isHoliday, holidayName) = await _businessTimeService.GetActiveHolidayAsync(DateTime.UtcNow, ct);
+        if (isHoliday)
+        {
+            foreach (var c in cases)
+            {
+                c.IsHolidayToday = true;
+                c.HolidayName = holidayName;
+            }
+        }
     }
 
     public async Task<IEnumerable<SearchCaseHitDto>> SearchCasesAsync(string query, int limit, CancellationToken ct = default)
@@ -262,7 +285,9 @@ public class CaseService : ICaseService
 
     public async Task<IEnumerable<CaseSummaryDto>> GetBoardCasesAsync(Guid? departmentId = null, string? caseType = null, CancellationToken ct = default)
     {
-        return await _caseRepository.GetBoardCasesAsync(departmentId, caseType, ct);
+        var cases = (await _caseRepository.GetBoardCasesAsync(departmentId, caseType, ct)).ToList();
+        await EnrichCasesWithHolidayStatusAsync(cases, ct);
+        return cases;
     }
 
     public async Task<PagedResponseDto<CaseSummaryDto>> GetPaginatedBoardCasesAsync(
@@ -276,7 +301,7 @@ public class CaseService : ICaseService
         string? channel = null,
         CancellationToken ct = default)
     {
-        return await _caseRepository.GetPaginatedBoardCasesAsync(
+        var paged = await _caseRepository.GetPaginatedBoardCasesAsync(
             status,
             page,
             pageSize,
@@ -286,6 +311,9 @@ public class CaseService : ICaseService
             priority,
             channel,
             ct);
+
+        await EnrichCasesWithHolidayStatusAsync(paged.Items, ct);
+        return paged;
     }
 
     public async Task UpdateCaseStatusAsync(Guid caseId, UpdateCaseStatusDto dto)

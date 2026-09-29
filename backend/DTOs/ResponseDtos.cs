@@ -12,7 +12,9 @@ public class CaseSummaryDto
     public DateTime? ResolvedAt { get; set; }
     public DateTime? SlaPausedAt { get; set; }
     public int SlaTotalPausedMinutes { get; set; }
-    public bool IsSlaPaused => SlaPausedAt.HasValue || Status == "WaitingOnCustomer";
+    public bool IsHolidayToday { get; set; }
+    public string? HolidayName { get; set; }
+    public bool IsSlaPaused => SlaPausedAt.HasValue || Status == "WaitingOnCustomer" || (IsHolidayToday && Status != "Resolved" && Status != "Closed");
     public Guid DepartmentId { get; set; }
     public string DepartmentName { get; set; } = string.Empty;
     public string OwnerName { get; set; } = string.Empty;

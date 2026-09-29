@@ -1,6 +1,6 @@
 // ===== CREATE CASE DRAWER — OmniConnect Reference System =====
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, PlusCircle, UserCheck, UserPlus } from 'lucide-react';
 import { Button } from '../../common/Button/Button.jsx';
@@ -163,9 +163,10 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       .finally(() => setDataLoading(false));
   }, [isOpen]);
 
-  // Reset form when drawer opens
+  // Reset form only when drawer transitions to open
+  const prevIsOpenRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       const defaultSeverity = severities.some((s) => s.name === 'Medium')
         ? 'Medium'
         : severities[0]?.name || 'Medium';
@@ -191,7 +192,8 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       setCustomerMode('existing');
       setErrors({});
     }
-  }, [isOpen, caseTypes, languages, channels, severities]);
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen]);
 
   // Update selected customer object whenever form.customerId is set
   useEffect(() => {
@@ -355,12 +357,15 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     }
     setIsLoading(true);
     try {
+      const mappedPriority = categoryPriorityMap[form.subcategory?.trim().toLowerCase()];
+      const effectiveSeverity = mappedPriority || form.severity;
+
       await caseService.createCase({
         title: form.title.trim(),
         description: form.description.trim(),
         customerId: form.customerId,
         departmentId: form.departmentId,
-        severity: form.severity,
+        severity: effectiveSeverity,
         slaTargetHours: Number(form.slaTargetHours),
         caseType: form.caseType,
         subcategory: form.subcategory,
@@ -593,13 +598,14 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     }
 
     if (key === 'severity') {
-      const hasAutoPriority = Boolean(categoryPriorityMap[form.subcategory?.trim().toLowerCase()]);
+      const mappedPriority = categoryPriorityMap[form.subcategory?.trim().toLowerCase()];
+      const hasAutoPriority = Boolean(mappedPriority);
       return (
         <div key={key}>
           <Select
             label={label}
             required={isRequired}
-            disabled={!isEditable}
+            disabled={!isEditable || hasAutoPriority}
             value={form.severity}
             onChange={handleSeverityChange}
             error={errors.severity}
@@ -610,7 +616,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           </Select>
           {hasAutoPriority && (
             <div style={{ fontSize: '11px', color: '#1d4ed8', fontWeight: 600, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span>• Priority automatically assigned based on Category SLA policy</span>
+              <span>• Priority locked to <strong>{mappedPriority}</strong> based on Category SLA policy</span>
             </div>
           )}
         </div>

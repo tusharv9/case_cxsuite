@@ -233,4 +233,24 @@ public class BusinessTimeService : IBusinessTimeService
 
         return false;
     }
+
+    public async Task<(bool isHoliday, string? holidayName)> GetActiveHolidayAsync(DateTime utcTime, CancellationToken ct = default)
+    {
+        DateTime localTime = TimeZoneInfo.ConvertTimeFromUtc(utcTime, BusinessTimeZone);
+        var targetDate = localTime.Date;
+        var startOfDayUtc = DateTime.SpecifyKind(targetDate, DateTimeKind.Utc);
+        var endOfDayUtc = startOfDayUtc.AddDays(1);
+
+        var holiday = await _context.PublicHolidays
+            .AsNoTracking()
+            .Where(h => h.IsActive && h.HolidayDate >= startOfDayUtc && h.HolidayDate < endOfDayUtc)
+            .FirstOrDefaultAsync(ct);
+
+        if (holiday != null)
+        {
+            return (true, holiday.Name);
+        }
+
+        return (false, null);
+    }
 }

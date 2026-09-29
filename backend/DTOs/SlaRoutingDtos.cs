@@ -75,6 +75,23 @@ public class EscalationLevelConfigDto
     public bool IsActive { get; set; } = true;
 }
 
+public class CreateEscalationLevelDto
+{
+    public int? LevelNumber { get; set; }
+    public string? Name { get; set; }
+    public string TargetRole { get; set; } = string.Empty;
+    public string? TriggerCondition { get; set; }
+    public string? ActionDescription { get; set; }
+}
+
+public class UpdateEscalationLevelDto
+{
+    public string? Name { get; set; }
+    public string TargetRole { get; set; } = string.Empty;
+    public string? TriggerCondition { get; set; }
+    public string? ActionDescription { get; set; }
+}
+
 public class CategoryOptionDto
 {
     public Guid Id { get; set; }

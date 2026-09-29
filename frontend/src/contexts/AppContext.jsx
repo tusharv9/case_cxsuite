@@ -1,8 +1,7 @@
-// ===== APP CONTEXT =====
-// Global context: logged-in user, toast notifications
-
 import { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 import { userService } from '../services/userService.js';
+import { slaRoutingService } from '../services/slaRoutingService.js';
+import { checkIsPublicHolidayToday } from '../utils/slaUtils.js';
 import { LOGGED_IN_USER_ID_KEY, DEFAULT_USER_ID } from '../constants/index.js';
 
 // Bootstrap: ensure localStorage always has a valid X-User-Id before first fetch
@@ -17,6 +16,9 @@ const initialState = {
   toasts: [],
   isLoadingUser: true,
   isSidebarOpen: true,
+  publicHolidays: [],
+  isHolidayToday: false,
+  todayHolidayName: null,
 };
 
 // --- Reducer ---
@@ -28,6 +30,16 @@ function appReducer(state, action) {
       return { ...state, currentUser: action.payload, isLoadingUser: false };
     case 'SET_LOADING_USER':
       return { ...state, isLoadingUser: action.payload };
+    case 'SET_PUBLIC_HOLIDAYS': {
+      const holidays = action.payload || [];
+      const { isHoliday, holidayName } = checkIsPublicHolidayToday(holidays);
+      return {
+        ...state,
+        publicHolidays: holidays,
+        isHolidayToday: isHoliday,
+        todayHolidayName: holidayName,
+      };
+    }
     case 'ADD_TOAST':
       return { ...state, toasts: [...state.toasts, action.payload] };
     case 'REMOVE_TOAST':
@@ -63,6 +75,15 @@ export function AppProvider({ children }) {
       .catch(() => {
         dispatch({ type: 'SET_LOADING_USER', payload: false });
       });
+
+    // Load active public holidays
+    slaRoutingService.getConfiguration()
+      .then((cfg) => {
+        if (cfg?.publicHolidays) {
+          dispatch({ type: 'SET_PUBLIC_HOLIDAYS', payload: cfg.publicHolidays });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const addToast = useCallback((message, type = 'success', duration = 4000) => {

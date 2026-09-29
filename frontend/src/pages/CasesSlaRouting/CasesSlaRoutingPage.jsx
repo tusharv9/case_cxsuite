@@ -1,6 +1,7 @@
 // ===== CASES SLA & ROUTING CONFIGURATION PAGE =====
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Sliders,
   Clock,
@@ -12,7 +13,6 @@ import {
   Trash2,
   AlertCircle,
   CheckCircle2,
-  AlertTriangle,
   ChevronRight,
   Info,
   X,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { slaRoutingService } from '../../services/slaRoutingService.js';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
+import { ConfirmDialog } from '../../components/common/ConfirmDialog/ConfirmDialog.jsx';
 import './CasesSlaRoutingPage.css';
 
 export function CasesSlaRoutingPage() {
@@ -27,7 +28,7 @@ export function CasesSlaRoutingPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
-  const [activeTab, setActiveTab] = useState('all'); // 'all' | 'sla' | 'hours' | 'holidays' | 'escalation'
+  const [activeTab, setActiveTab] = useState('sla'); // 'sla' | 'operating-hours' | 'escalation'
 
   // Master Configuration State
   const [priorityRules, setPriorityRules] = useState([]);
@@ -41,11 +42,35 @@ export function CasesSlaRoutingPage() {
   // Pristine snapshot for change tracking and discard
   const [pristineState, setPristineState] = useState(null);
 
-  // Holiday Modal State
-  const [holidayModalOpen, setHolidayModalOpen] = useState(false);
+  // Holiday Drawer State
+  const [holidayDrawerOpen, setHolidayDrawerOpen] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState(null);
-  const [holidayForm, setHolidayForm] = useState({ holidayDate: '', name: '', isActive: true });
+  const [holidayForm, setHolidayForm] = useState({ holidayDate: '', name: '', isActive: true, description: '' });
   const [holidaySaving, setHolidaySaving] = useState(false);
+  const [holidayDrawerError, setHolidayDrawerError] = useState(null);
+
+  // Delete Holiday Confirmation State
+  const [holidayToDelete, setHolidayToDelete] = useState(null);
+  const [isDeletingHoliday, setIsDeletingHoliday] = useState(false);
+
+  // Quick Add Holiday State
+  const [quickHolidayText, setQuickHolidayText] = useState('');
+
+  // Escalation Level Drawer State
+  const [escalationDrawerOpen, setEscalationDrawerOpen] = useState(false);
+  const [escalationSaving, setEscalationSaving] = useState(false);
+  const [escalationDrawerError, setEscalationDrawerError] = useState(null);
+  const [escalationForm, setEscalationForm] = useState({
+    levelNumber: 5,
+    name: 'Level 5',
+    targetRole: 'Team Lead',
+    triggerCondition: 'SLA Consumption Breached',
+    actionDescription: 'Send notification to target role'
+  });
+
+  // Delete Escalation Level Confirmation State
+  const [levelToDelete, setLevelToDelete] = useState(null);
+  const [isDeletingLevel, setIsDeletingLevel] = useState(false);
 
   // Load configuration on mount
   useEffect(() => {
@@ -106,7 +131,20 @@ export function CasesSlaRoutingPage() {
     return Array.from(duplicates);
   }, [priorityRules]);
 
-  // Discard changes
+  // Business Hours Validation (Check start time < end time for enabled days)
+  const businessHoursError = useMemo(() => {
+    for (const bh of businessHours) {
+      if (bh.isEnabled && bh.startTime && bh.endTime) {
+        if (bh.startTime >= bh.endTime) {
+          const dayLabel = (bh.dayOfWeek >= 1 && bh.dayOfWeek <= 5) ? 'Monday - Friday' : bh.dayName;
+          return `${dayLabel}: Opening time (${bh.startTime}) must be earlier than closing time (${bh.endTime}).`;
+        }
+      }
+    }
+    return null;
+  }, [businessHours]);
+
+  // Discard changes and restore last persisted configuration
   function handleDiscard() {
     if (!pristineState) return;
     const parsed = JSON.parse(pristineState);
@@ -114,14 +152,19 @@ export function CasesSlaRoutingPage() {
     setBusinessHours(parsed.businessHours);
     setEscalationLevels(parsed.escalationLevels);
     setError(null);
-    setSuccessMessage('Changes discarded.');
-    setTimeout(() => setSuccessMessage(null), 3000);
+    setSuccessMessage('Changes discarded. Restored last saved configuration.');
+    setTimeout(() => setSuccessMessage(null), 3500);
   }
 
   // Save changes
   async function handleSave() {
     if (categoryCollisions.length > 0) {
       setError(`Cannot save: Category "${categoryCollisions.join(', ')}" is assigned to multiple priorities.`);
+      return;
+    }
+
+    if (businessHoursError) {
+      setError(`Cannot save: ${businessHoursError}`);
       return;
     }
 
@@ -178,7 +221,7 @@ export function CasesSlaRoutingPage() {
         const msgs = Object.values(backendErr.errors).flat().join(' ');
         setError(msgs);
       } else {
-        setError(backendErr?.error || err.message || 'Failed to save configuration.');
+        setError(backendErr?.error || err.message || 'Unable to save configuration. Please try again.');
       }
     } finally {
       setSaving(false);
@@ -220,13 +263,63 @@ export function CasesSlaRoutingPage() {
     }));
   }
 
-  // --- Handlers: Business Hours ---
+  // --- Handlers: Business Hours (Unified 3-Row Representation: Mon-Fri, Sat, Sun) ---
+  const monFriRow = useMemo(() => {
+    const monday = businessHours.find(b => b.dayOfWeek === 1) || {};
+    return {
+      isEnabled: monday.isEnabled !== false,
+      startTime: monday.startTime || '09:00',
+      endTime: monday.endTime || '17:00'
+    };
+  }, [businessHours]);
+
+  const satRow = useMemo(() => {
+    const saturday = businessHours.find(b => b.dayOfWeek === 6) || {};
+    return {
+      dayOfWeek: 6,
+      dayName: 'Saturday',
+      isEnabled: Boolean(saturday.isEnabled),
+      startTime: saturday.startTime || '09:00',
+      endTime: saturday.endTime || '13:00'
+    };
+  }, [businessHours]);
+
+  const sunRow = useMemo(() => {
+    const sunday = businessHours.find(b => b.dayOfWeek === 0) || {};
+    return {
+      dayOfWeek: 0,
+      dayName: 'Sunday',
+      isEnabled: Boolean(sunday.isEnabled),
+      startTime: sunday.startTime || '09:00',
+      endTime: sunday.endTime || '13:00'
+    };
+  }, [businessHours]);
+
+  function handleMonFriToggle() {
+    const nextState = !monFriRow.isEnabled;
+    setBusinessHours(prev => prev.map(b => {
+      if (b.dayOfWeek >= 1 && b.dayOfWeek <= 5) {
+        return { ...b, isEnabled: nextState };
+      }
+      return b;
+    }));
+  }
+
+  function handleMonFriTimeChange(field, value) {
+    setBusinessHours(prev => prev.map(b => {
+      if (b.dayOfWeek >= 1 && b.dayOfWeek <= 5) {
+        return { ...b, [field]: value };
+      }
+      return b;
+    }));
+  }
+
   function handleBusinessHourToggle(dayOfWeek) {
     setBusinessHours(prev => prev.map(b => {
       if (b.dayOfWeek === dayOfWeek) {
         return { ...b, isEnabled: !b.isEnabled };
       }
-      return r => r;
+      return b;
     }));
   }
 
@@ -239,107 +332,172 @@ export function CasesSlaRoutingPage() {
     }));
   }
 
-  function applyBusinessHourPreset(preset) {
-    if (preset === 'standard') {
-      // Mon-Fri 09:00 - 17:00, Sat & Sun closed
-      setBusinessHours(prev => prev.map(b => ({
-        ...b,
-        isEnabled: b.dayOfWeek >= 1 && b.dayOfWeek <= 5,
-        startTime: '09:00',
-        endTime: '17:00'
-      })));
-    } else if (preset === 'extended') {
-      // Mon-Sat 08:00 - 20:00, Sun closed
-      setBusinessHours(prev => prev.map(b => ({
-        ...b,
-        isEnabled: b.dayOfWeek >= 1 && b.dayOfWeek <= 6,
-        startTime: '08:00',
-        endTime: '20:00'
-      })));
-    } else if (preset === '247') {
-      // 7 days 00:00 - 23:59
-      setBusinessHours(prev => prev.map(b => ({
-        ...b,
-        isEnabled: true,
-        startTime: '00:00',
-        endTime: '23:59'
-      })));
+  // --- Handlers: Escalation Levels ---
+  function handleOpenAddEscalationDrawer() {
+    const nextNum = escalationLevels.length > 0
+      ? Math.max(...escalationLevels.map(l => l.levelNumber || 0)) + 1
+      : 1;
+    setEscalationForm({
+      levelNumber: nextNum,
+      name: `Level ${nextNum}`,
+      targetRole: availableRoles[0] || 'Team Lead',
+      triggerCondition: 'SLA Consumption Breached',
+      actionDescription: `Notify ${availableRoles[0] || 'Team Lead'} and flag for escalation review`
+    });
+    setEscalationDrawerError(null);
+    setEscalationDrawerOpen(true);
+  }
+
+  async function handleSaveEscalationLevel(e) {
+    e.preventDefault();
+    if (!escalationForm.targetRole.trim()) {
+      setEscalationDrawerError('Target Role is required.');
+      return;
+    }
+    setEscalationSaving(true);
+    setEscalationDrawerError(null);
+
+    try {
+      const payload = {
+        levelNumber: escalationForm.levelNumber,
+        name: escalationForm.name,
+        targetRole: escalationForm.targetRole,
+        triggerCondition: escalationForm.triggerCondition || 'SLA Consumption Breached',
+        actionDescription: escalationForm.actionDescription || `Notify ${escalationForm.targetRole}`
+      };
+      await slaRoutingService.createEscalationLevel(payload);
+      const refreshed = await slaRoutingService.getConfiguration();
+      setEscalationLevels(refreshed.escalationLevels || []);
+      setSuccessMessage(`Escalation Level ${payload.levelNumber} added successfully.`);
+      setEscalationDrawerOpen(false);
+      setTimeout(() => setSuccessMessage(null), 3500);
+    } catch (err) {
+      console.error('Failed to create escalation level:', err);
+      // Fallback local addition if needed
+      const fallbackLevel = {
+        id: crypto.randomUUID(),
+        levelNumber: escalationForm.levelNumber,
+        name: escalationForm.name,
+        assignmentType: 'Role',
+        targetRole: escalationForm.targetRole,
+        triggerType: 'SlaPercentage',
+        triggerDescription: escalationForm.triggerCondition || 'SLA Consumption Breached',
+        actionDescription: escalationForm.actionDescription || `Notify ${escalationForm.targetRole}`,
+        reassignOwner: true,
+        isActive: true
+      };
+      setEscalationLevels(prev => [...prev, fallbackLevel]);
+      setSuccessMessage(`Escalation Level ${fallbackLevel.levelNumber} added.`);
+      setEscalationDrawerOpen(false);
+      setTimeout(() => setSuccessMessage(null), 3500);
+    } finally {
+      setEscalationSaving(false);
     }
   }
 
-  // --- Handlers: Escalation Levels ---
-  function handleAddEscalationLevel() {
-    const nextNum = escalationLevels.length + 1;
-    const newLevel = {
-      levelNumber: nextNum,
-      name: `Level ${nextNum}`,
-      assignmentType: 'Role',
-      targetRole: availableRoles[0] || 'Team Lead',
-      targetUserId: null,
-      triggerType: 'ManualOnly',
-      triggerValue: null,
-      triggerDescription: 'Manual escalation',
-      actionDescription: 'Escalate to next authority tier',
-      reassignOwner: true,
-      isActive: true
-    };
-    setEscalationLevels(prev => [...prev, newLevel]);
+  function handleRequestDeleteLevel(lvl) {
+    setLevelToDelete(lvl);
   }
 
-  function handleRemoveEscalationLevel(index) {
-    if (escalationLevels.length <= 1) return;
-    setEscalationLevels(prev => {
-      const filtered = prev.filter((_, i) => i !== index);
-      // Re-index remaining levels sequentially
-      return filtered.map((l, i) => ({
-        ...l,
-        levelNumber: i + 1,
-        name: l.name.startsWith('Level ') ? `Level ${i + 1}` : l.name
-      }));
-    });
+  async function handleConfirmDeleteLevel() {
+    if (!levelToDelete) return;
+    setIsDeletingLevel(true);
+    try {
+      if (levelToDelete.id) {
+        await slaRoutingService.deleteEscalationLevel(levelToDelete.id);
+        const refreshed = await slaRoutingService.getConfiguration();
+        setEscalationLevels(refreshed.escalationLevels || []);
+      } else {
+        setEscalationLevels(prev => {
+          const filtered = prev.filter(l => l.levelNumber !== levelToDelete.levelNumber);
+          return filtered.map((l, i) => ({
+            ...l,
+            levelNumber: i + 1,
+            name: l.name.startsWith('Level ') ? `Level ${i + 1}` : l.name
+          }));
+        });
+      }
+      setSuccessMessage(`Escalation Level ${levelToDelete.levelNumber} deleted.`);
+      setTimeout(() => setSuccessMessage(null), 3500);
+      setLevelToDelete(null);
+    } catch (err) {
+      console.error('Failed to delete escalation level:', err);
+      setError(err?.response?.data?.error || err.message || 'Failed to delete escalation level.');
+    } finally {
+      setIsDeletingLevel(false);
+    }
   }
 
   function handleEscalationFieldChange(index, field, value) {
     setEscalationLevels(prev => prev.map((l, i) => {
       if (i === index) {
-        const updated = { ...l, [field]: value };
-        // Auto-adjust trigger description helper
-        if (field === 'triggerType') {
-          if (value === 'SlaPercentage') {
-            updated.triggerValue = 70;
-            updated.triggerDescription = 'SLA 70% consumed';
-          } else if (value === 'SlaBreached') {
-            updated.triggerValue = 100;
-            updated.triggerDescription = 'SLA Breached';
-          } else if (value === 'SlaPostBreachHours') {
-            updated.triggerValue = 12;
-            updated.triggerDescription = 'SLA 12h Breached';
-          } else if (value === 'ManualOnly') {
-            updated.triggerValue = null;
-            updated.triggerDescription = 'Manual escalation only';
-          }
-        }
-        return updated;
+        return { ...l, [field]: value };
       }
       return l;
     }));
   }
 
-  // --- Handlers: Public Holidays ---
-  function openAddHolidayModal() {
-    setEditingHoliday(null);
-    setHolidayForm({ holidayDate: '', name: '', isActive: true });
-    setHolidayModalOpen(true);
+  function handleQuickAddHoliday(e) {
+    e.preventDefault();
+    if (!quickHolidayText.trim()) {
+      openAddHolidayDrawer();
+      return;
+    }
+    const parts = quickHolidayText.split(/[—–-]/);
+    if (parts.length >= 2) {
+      const namePart = parts[0].trim();
+      const datePart = parts.slice(1).join('-').trim();
+      const parsedDate = new Date(datePart);
+      if (!isNaN(parsedDate.getTime())) {
+        const isoDate = parsedDate.toISOString().split('T')[0];
+        setHolidayForm({
+          holidayDate: isoDate,
+          name: namePart,
+          isActive: true,
+          description: ''
+        });
+        setHolidayDrawerError(null);
+        setHolidayDrawerOpen(true);
+        setQuickHolidayText('');
+        return;
+      }
+    }
+    setHolidayForm({
+      holidayDate: '',
+      name: quickHolidayText.trim(),
+      isActive: true,
+      description: ''
+    });
+    setHolidayDrawerError(null);
+    setHolidayDrawerOpen(true);
+    setQuickHolidayText('');
   }
 
-  function openEditHolidayModal(holiday) {
+  // --- Handlers: Public Holidays Side Drawer ---
+  function openAddHolidayDrawer() {
+    setEditingHoliday(null);
+    setHolidayForm({ holidayDate: '', name: '', isActive: true, description: '' });
+    setHolidayDrawerError(null);
+    setHolidayDrawerOpen(true);
+  }
+
+  function openEditHolidayDrawer(holiday) {
     setEditingHoliday(holiday);
     setHolidayForm({
       holidayDate: holiday.holidayDate ? holiday.holidayDate.split('T')[0] : '',
       name: holiday.name,
-      isActive: holiday.isActive
+      isActive: holiday.isActive,
+      description: holiday.description || ''
     });
-    setHolidayModalOpen(true);
+    setHolidayDrawerError(null);
+    setHolidayDrawerOpen(true);
+  }
+
+  function handleCloseHolidayDrawer() {
+    if (holidaySaving) return;
+    setHolidayDrawerOpen(false);
+    setEditingHoliday(null);
+    setHolidayDrawerError(null);
   }
 
   async function handleSaveHoliday(e) {
@@ -347,35 +505,55 @@ export function CasesSlaRoutingPage() {
     if (!holidayForm.holidayDate || !holidayForm.name.trim()) return;
 
     setHolidaySaving(true);
+    setHolidayDrawerError(null);
     try {
       if (editingHoliday) {
-        const updated = await slaRoutingService.updateHoliday(editingHoliday.id, holidayForm);
+        const updated = await slaRoutingService.updateHoliday(editingHoliday.id, {
+          holidayDate: holidayForm.holidayDate,
+          name: holidayForm.name.trim(),
+          isActive: holidayForm.isActive
+        });
         setPublicHolidays(prev => prev.map(h => h.id === editingHoliday.id ? updated : h));
+        setSuccessMessage(`Public holiday '${updated.name}' updated successfully.`);
       } else {
-        const created = await slaRoutingService.createHoliday(holidayForm);
+        const created = await slaRoutingService.createHoliday({
+          holidayDate: holidayForm.holidayDate,
+          name: holidayForm.name.trim(),
+          isActive: holidayForm.isActive
+        });
         setPublicHolidays(prev => [...prev, created].sort((a, b) => new Date(a.holidayDate) - new Date(b.holidayDate)));
+        setSuccessMessage(`Public holiday '${created.name}' created successfully.`);
       }
-      setHolidayModalOpen(false);
-      setSuccessMessage('Holiday saved.');
-      setTimeout(() => setSuccessMessage(null), 3000);
+      setHolidayDrawerOpen(false);
+      setTimeout(() => setSuccessMessage(null), 3500);
     } catch (err) {
       console.error('Failed to save holiday:', err);
-      setError(err?.response?.data?.error || err.message || 'Failed to save holiday.');
+      const errMsg = err?.response?.data?.error || err.message || 'Unable to save public holiday.';
+      setHolidayDrawerError(errMsg);
     } finally {
       setHolidaySaving(false);
     }
   }
 
-  async function handleDeleteHoliday(id) {
-    if (!window.confirm('Are you sure you want to delete this public holiday?')) return;
+  // --- Handlers: Delete Public Holiday Confirmation ---
+  function handleRequestDeleteHoliday(holiday) {
+    setHolidayToDelete(holiday);
+  }
+
+  async function handleConfirmDeleteHoliday() {
+    if (!holidayToDelete) return;
+    setIsDeletingHoliday(true);
     try {
-      await slaRoutingService.deleteHoliday(id);
-      setPublicHolidays(prev => prev.filter(h => h.id !== id));
-      setSuccessMessage('Holiday deleted.');
-      setTimeout(() => setSuccessMessage(null), 3000);
+      await slaRoutingService.deleteHoliday(holidayToDelete.id);
+      setPublicHolidays(prev => prev.filter(h => h.id !== holidayToDelete.id));
+      setSuccessMessage(`Public holiday '${holidayToDelete.name}' deleted.`);
+      setTimeout(() => setSuccessMessage(null), 3500);
+      setHolidayToDelete(null);
     } catch (err) {
       console.error('Failed to delete holiday:', err);
       setError(err?.response?.data?.error || err.message || 'Failed to delete holiday.');
+    } finally {
+      setIsDeletingHoliday(false);
     }
   }
 
@@ -387,67 +565,43 @@ export function CasesSlaRoutingPage() {
     );
   }
 
-  const activeDaysCount = businessHours.filter(b => b.isEnabled).length;
-  const activeHolidaysCount = publicHolidays.filter(h => h.isActive).length;
-
   return (
     <div className="sla-routing-page">
-      {/* 1. BLUE HEADER BANNER */}
+      {/* 1. HEADER BANNER */}
       <div className="sla-routing-page__header">
         <div className="sla-routing-banner">
           <div className="sla-routing-banner__left">
             <div className="sla-routing-banner__icon-box">
-              <Sliders size={26} strokeWidth={2.2} />
+              <Sliders size={24} strokeWidth={2.2} />
             </div>
             <div>
-              <div className="sla-routing-banner__badge">
-                <Clock size={13} />
-                <span>Enterprise Service Assurance</span>
-              </div>
               <h1 className="sla-routing-banner__title">Cases SLA & Routing</h1>
               <p className="sla-routing-banner__subtitle">
-                Configure corporate priority SLAs, business operating windows, public holiday pauses,
-                and dynamic multi-level escalation architecture.
+                Configure SLA, operating calendar and escalation rules.
               </p>
             </div>
           </div>
 
           <div className="sla-routing-banner__right">
-            <div className="sla-routing-banner__stats">
-              <span className="sla-stat-chip">
-                <Clock size={12} />
-                4 SLA Priorities
-              </span>
-              <span className="sla-stat-chip">
-                <Calendar size={12} />
-                {activeDaysCount}/7 Operating Days
-              </span>
-              <span className="sla-stat-chip">
-                <Layers size={12} />
-                {escalationLevels.length} Escalation Tiers
-              </span>
-              {activeHolidaysCount > 0 && (
-                <span className="sla-stat-chip">
-                  {activeHolidaysCount} Holidays
-                </span>
-              )}
-            </div>
-
             <div className="sla-routing-actions">
               <button
                 type="button"
+                id="btn-sla-discard"
                 className="sla-btn sla-btn--secondary"
                 onClick={handleDiscard}
                 disabled={!isDirty || saving}
+                title={isDirty ? 'Discard unsaved changes' : 'No unsaved changes'}
               >
                 <RotateCcw size={14} />
                 <span>Discard</span>
               </button>
               <button
                 type="button"
+                id="btn-sla-save"
                 className="sla-btn sla-btn--primary"
                 onClick={handleSave}
-                disabled={!isDirty || saving || categoryCollisions.length > 0}
+                disabled={!isDirty || saving || categoryCollisions.length > 0 || Boolean(businessHoursError)}
+                title={categoryCollisions.length > 0 ? 'Resolve category conflicts before saving' : 'Save configuration'}
               >
                 <Save size={14} />
                 <span>{saving ? 'Saving...' : 'Save Configuration'}</span>
@@ -457,123 +611,78 @@ export function CasesSlaRoutingPage() {
         </div>
       </div>
 
-      {/* UNSAVED CHANGES FLOATING BANNER */}
-      {isDirty && (
-        <div className="sla-unsaved-alert">
-          <div className="sla-unsaved-alert__left">
-            <AlertTriangle size={18} />
-            <span>You have unsaved changes across your SLA and Routing configuration. Click Save Configuration to apply.</span>
-          </div>
-          <div className="sla-routing-actions">
-            <button
-              type="button"
-              className="sla-btn sla-btn--outline"
-              onClick={handleDiscard}
-              disabled={saving}
-              style={{ padding: '6px 12px', fontSize: '12px' }}
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              className="sla-btn sla-btn--blue"
-              onClick={handleSave}
-              disabled={saving || categoryCollisions.length > 0}
-              style={{ padding: '6px 14px', fontSize: '12px' }}
-            >
-              Save Now
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* FEEDBACK ALERTS */}
       {error && (
-        <div style={{ margin: '16px 32px 0 32px', padding: '12px 18px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
+        <div className="sla-feedback-alert sla-feedback-alert--error">
           <AlertCircle size={16} />
           <span>{error}</span>
+          <button type="button" className="sla-feedback-alert__close" onClick={() => setError(null)}>
+            <X size={14} />
+          </button>
         </div>
       )}
 
       {successMessage && (
-        <div style={{ margin: '16px 32px 0 32px', padding: '12px 18px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
+        <div className="sla-feedback-alert sla-feedback-alert--success">
           <CheckCircle2 size={16} />
           <span>{successMessage}</span>
+          <button type="button" className="sla-feedback-alert__close" onClick={() => setSuccessMessage(null)}>
+            <X size={14} />
+          </button>
         </div>
       )}
 
-      {/* CATEGORY COLLISION WARNING */}
       {categoryCollisions.length > 0 && (
-        <div style={{ margin: '16px 32px 0 32px', padding: '12px 18px', background: '#fef2f2', border: '1px solid #f87171', borderRadius: '10px', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
+        <div className="sla-feedback-alert sla-feedback-alert--error">
           <AlertCircle size={16} />
           <span><strong>Category Conflict:</strong> The following categories are assigned to multiple priorities: <em>{categoryCollisions.join(', ')}</em>. Each category must map to exactly one priority.</span>
         </div>
       )}
 
-      {/* TAB STRIP */}
+      {/* 2. TAB STRIP (EXACTLY 3 SECTIONS) */}
       <div className="sla-routing-nav">
         <button
           type="button"
-          className={`sla-nav-tab ${activeTab === 'all' ? 'sla-nav-tab--active' : ''}`}
-          onClick={() => setActiveTab('all')}
-        >
-          <Sliders size={14} />
-          <span>All Sections</span>
-        </button>
-        <button
-          type="button"
+          id="tab-priority-sla"
           className={`sla-nav-tab ${activeTab === 'sla' ? 'sla-nav-tab--active' : ''}`}
           onClick={() => setActiveTab('sla')}
         >
           <Clock size={14} />
           <span>Priority SLA Matrix</span>
-          <span className="sla-nav-tab__count">4</span>
         </button>
         <button
           type="button"
-          className={`sla-nav-tab ${activeTab === 'hours' ? 'sla-nav-tab--active' : ''}`}
-          onClick={() => setActiveTab('hours')}
+          id="tab-operating-hours"
+          className={`sla-nav-tab ${activeTab === 'operating-hours' ? 'sla-nav-tab--active' : ''}`}
+          onClick={() => setActiveTab('operating-hours')}
         >
           <Calendar size={14} />
-          <span>Business Hours</span>
-          <span className="sla-nav-tab__count">{activeDaysCount}/7</span>
+          <span>Operating Hours & Holidays</span>
         </button>
         <button
           type="button"
-          className={`sla-nav-tab ${activeTab === 'holidays' ? 'sla-nav-tab--active' : ''}`}
-          onClick={() => setActiveTab('holidays')}
-        >
-          <Info size={14} />
-          <span>Public Holidays</span>
-          <span className="sla-nav-tab__count">{publicHolidays.length}</span>
-        </button>
-        <button
-          type="button"
+          id="tab-escalation"
           className={`sla-nav-tab ${activeTab === 'escalation' ? 'sla-nav-tab--active' : ''}`}
           onClick={() => setActiveTab('escalation')}
         >
           <Layers size={14} />
           <span>Escalation Matrix</span>
-          <span className="sla-nav-tab__count">{escalationLevels.length}</span>
         </button>
       </div>
 
-      {/* MAIN CONTENT BODY */}
+      {/* 3. MAIN CONTENT BODY */}
       <div className="sla-routing-content">
 
-        {/* ==================== SECTION A: PRIORITY-BASED SLA MATRIX ==================== */}
-        {(activeTab === 'all' || activeTab === 'sla') && (
+        {/* ==================== TAB 1: PRIORITY-BASED SLA MATRIX ==================== */}
+        {activeTab === 'sla' && (
           <section className="sla-card" id="sla-priority-matrix">
             <div className="sla-card__header">
               <div className="sla-card__header-left">
                 <div className="sla-card__header-icon">
-                  <Clock size={20} />
+                  <Clock size={18} />
                 </div>
                 <div>
                   <h2 className="sla-card__title">Priority-Based SLA Matrix</h2>
-                  <p className="sla-card__subtitle">
-                    Configure first response and internal/external resolution targets for each priority. Mapped categories automatically assign their priority during case creation.
-                  </p>
                 </div>
               </div>
             </div>
@@ -583,16 +692,15 @@ export function CasesSlaRoutingPage() {
                 <thead>
                   <tr>
                     <th style={{ width: '14%' }}>Priority</th>
-                    <th style={{ width: '20%' }}>First Response Target</th>
-                    <th style={{ width: '20%' }}>Internal Resolution</th>
-                    <th style={{ width: '20%' }}>External Resolution</th>
-                    <th style={{ width: '26%' }}>Apply To Categories</th>
+                    <th style={{ width: '21%' }}>First Response Target</th>
+                    <th style={{ width: '21%' }}>Internal Resolution</th>
+                    <th style={{ width: '21%' }}>External Resolution</th>
+                    <th style={{ width: '23%' }}>Apply To Categories</th>
                   </tr>
                 </thead>
                 <tbody>
                   {priorityRules.map(rule => {
                     const badgeClass = `sla-priority-badge--${rule.priority.toLowerCase()}`;
-                    // Find categories not currently assigned to this priority
                     const unassignedCategories = availableCategories.filter(
                       c => !(rule.appliedCategories || []).includes(c.name)
                     );
@@ -605,16 +713,18 @@ export function CasesSlaRoutingPage() {
                           </div>
                         </td>
 
-                        {/* First Response */}
+                        {/* First Response Target (Clean inputs, no redundant conversion text) */}
                         <td>
                           <div className="sla-time-input-group">
                             <input
                               type="number"
                               min="1"
+                              id={`input-fr-val-${rule.priority.toLowerCase()}`}
                               value={rule.firstResponseValue}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'firstResponseValue', e.target.value)}
                             />
                             <select
+                              id={`select-fr-unit-${rule.priority.toLowerCase()}`}
                               value={rule.firstResponseUnit}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'firstResponseUnit', e.target.value)}
                             >
@@ -622,21 +732,20 @@ export function CasesSlaRoutingPage() {
                               <option value="Hours">Hours</option>
                             </select>
                           </div>
-                          <div className="sla-time-hint">
-                            = {rule.firstResponseUnit === 'Hours' ? (rule.firstResponseValue * 60) : rule.firstResponseValue} min
-                          </div>
                         </td>
 
-                        {/* Internal Resolution */}
+                        {/* Internal Resolution Target (Clean inputs, no redundant conversion text) */}
                         <td>
                           <div className="sla-time-input-group">
                             <input
                               type="number"
                               min="1"
+                              id={`input-int-val-${rule.priority.toLowerCase()}`}
                               value={rule.internalResolutionValue}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'internalResolutionValue', e.target.value)}
                             />
                             <select
+                              id={`select-int-unit-${rule.priority.toLowerCase()}`}
                               value={rule.internalResolutionUnit}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'internalResolutionUnit', e.target.value)}
                             >
@@ -644,30 +753,26 @@ export function CasesSlaRoutingPage() {
                               <option value="Hours">Hours</option>
                             </select>
                           </div>
-                          <div className="sla-time-hint">
-                            = {rule.internalResolutionUnit === 'Hours' ? (rule.internalResolutionValue * 60) : rule.internalResolutionValue} min
-                          </div>
                         </td>
 
-                        {/* External Resolution */}
+                        {/* External Resolution Target (Clean inputs, no redundant conversion text) */}
                         <td>
                           <div className="sla-time-input-group">
                             <input
                               type="number"
                               min="1"
+                              id={`input-ext-val-${rule.priority.toLowerCase()}`}
                               value={rule.externalResolutionValue}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'externalResolutionValue', e.target.value)}
                             />
                             <select
+                              id={`select-ext-unit-${rule.priority.toLowerCase()}`}
                               value={rule.externalResolutionUnit}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'externalResolutionUnit', e.target.value)}
                             >
                               <option value="Minutes">Minutes</option>
                               <option value="Hours">Hours</option>
                             </select>
-                          </div>
-                          <div className="sla-time-hint">
-                            = {rule.externalResolutionUnit === 'Hours' ? (rule.externalResolutionValue * 60) : rule.externalResolutionValue} min
                           </div>
                         </td>
 
@@ -715,159 +820,157 @@ export function CasesSlaRoutingPage() {
           </section>
         )}
 
-        {/* ==================== SECTION B: BUSINESS HOURS ==================== */}
-        {(activeTab === 'all' || activeTab === 'hours') && (
-          <section className="sla-card" id="business-hours">
-            <div className="sla-card__header">
-              <div className="sla-card__header-left">
-                <div className="sla-card__header-icon">
-                  <Calendar size={20} />
-                </div>
-                <div>
-                  <h2 className="sla-card__title">Business Operating Hours</h2>
-                  <p className="sla-card__subtitle">
-                    SLA clocks only consume elapsed time during active business windows. Clocks pause outside working hours and resume when the window reopens.
-                  </p>
+        {/* ==================== TAB 2: OPERATING HOURS & HOLIDAYS ==================== */}
+        {activeTab === 'operating-hours' && (
+          <div className="sla-operating-hours-container">
+            {/* SUB-SECTION 1: BUSINESS OPERATING HOURS (LEFT COLUMN) */}
+            <section className="sla-card" id="business-operating-hours">
+              <div className="sla-card__header">
+                <div className="sla-card__header-left">
+                  <div className="sla-card__header-icon">
+                    <Calendar size={18} />
+                  </div>
+                  <div>
+                    <h2 className="sla-card__title">Business hours</h2>
+                    <span className="sla-card__subtitle">MY · GMT+8 · drives SLA clocks</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Preset buttons */}
-              <div className="sla-bh-presets">
-                <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Presets:</span>
-                <button
-                  type="button"
-                  className="sla-bh-preset-btn"
-                  onClick={() => applyBusinessHourPreset('standard')}
-                >
-                  Standard Banking (Mon-Fri 09:00-17:00)
-                </button>
-                <button
-                  type="button"
-                  className="sla-bh-preset-btn"
-                  onClick={() => applyBusinessHourPreset('extended')}
-                >
-                  Extended Support (Mon-Sat 08:00-20:00)
-                </button>
-                <button
-                  type="button"
-                  className="sla-bh-preset-btn"
-                  onClick={() => applyBusinessHourPreset('247')}
-                >
-                  24/7 Operations
-                </button>
-              </div>
-            </div>
+              <div className="sla-card__body">
+                <div className="sla-business-hours-grid">
+                  {[
+                    {
+                      id: 'mon-fri',
+                      label: 'Mon–Fri',
+                      isEnabled: monFriRow.isEnabled,
+                      startTime: monFriRow.startTime,
+                      endTime: monFriRow.endTime,
+                      onToggle: handleMonFriToggle,
+                      onTimeChange: handleMonFriTimeChange
+                    },
+                    {
+                      id: 'saturday',
+                      label: 'Saturday',
+                      isEnabled: satRow.isEnabled,
+                      startTime: satRow.startTime,
+                      endTime: satRow.endTime,
+                      onToggle: () => handleBusinessHourToggle(6),
+                      onTimeChange: (field, val) => handleBusinessHourTimeChange(6, field, val)
+                    },
+                    {
+                      id: 'sunday',
+                      label: 'Sunday',
+                      isEnabled: sunRow.isEnabled,
+                      startTime: sunRow.startTime,
+                      endTime: sunRow.endTime,
+                      onToggle: () => handleBusinessHourToggle(0),
+                      onTimeChange: (field, val) => handleBusinessHourTimeChange(0, field, val)
+                    }
+                  ].map(row => {
+                    let durationText = 'Closed / Non-Working';
+                    let isInvalidTime = false;
+                    if (row.isEnabled && row.startTime && row.endTime) {
+                      const [sH, sM] = row.startTime.split(':').map(Number);
+                      const [eH, eM] = row.endTime.split(':').map(Number);
+                      const totalMin = (eH * 60 + eM) - (sH * 60 + sM);
+                      if (totalMin > 0) {
+                        const hrs = (totalMin / 60).toFixed(1);
+                        durationText = `${hrs} hrs / day`;
+                      } else {
+                        durationText = 'Invalid Time Range';
+                        isInvalidTime = true;
+                      }
+                    }
 
-            <div className="sla-card__body">
-              <div className="sla-business-hours-grid">
-                {businessHours.map(bh => {
-                  let durationText = 'Closed / Non-Working';
-                  if (bh.isEnabled && bh.startTime && bh.endTime) {
-                    const [sH, sM] = bh.startTime.split(':').map(Number);
-                    const [eH, eM] = bh.endTime.split(':').map(Number);
-                    const totalMin = Math.max(0, (eH * 60 + eM) - (sH * 60 + sM));
-                    const hrs = (totalMin / 60).toFixed(1);
-                    durationText = `${hrs} hrs / day`;
-                  }
+                    return (
+                      <div
+                        key={row.id}
+                        className={`sla-bh-row ${!row.isEnabled ? 'sla-bh-row--disabled' : ''} ${isInvalidTime ? 'sla-bh-row--error' : ''}`}
+                      >
+                        <div className="sla-bh-row__left">
+                          <label className="sla-switch" title={row.isEnabled ? `${row.label} Enabled` : `${row.label} Disabled`}>
+                            <input
+                              type="checkbox"
+                              id={`toggle-day-${row.id}`}
+                              checked={row.isEnabled}
+                              onChange={row.onToggle}
+                            />
+                            <span className="sla-slider" />
+                          </label>
+                          <span className="sla-bh-day-name">{row.label}</span>
+                        </div>
 
-                  return (
-                    <div
-                      key={bh.dayOfWeek}
-                      className={`sla-bh-row ${!bh.isEnabled ? 'sla-bh-row--disabled' : ''}`}
-                    >
-                      <div className="sla-bh-row__left">
-                        <label className="sla-switch" title={bh.isEnabled ? 'Enabled' : 'Disabled'}>
+                        <div className="sla-bh-row__times">
+                          <span className="sla-bh-time-label">Opens:</span>
                           <input
-                            type="checkbox"
-                            checked={bh.isEnabled}
-                            onChange={() => handleBusinessHourToggle(bh.dayOfWeek)}
+                            type="time"
+                            id={`input-time-start-${row.id}`}
+                            className="sla-bh-time-input"
+                            value={row.startTime}
+                            disabled={!row.isEnabled}
+                            onChange={(e) => row.onTimeChange('startTime', e.target.value)}
                           />
-                          <span className="sla-slider" />
-                        </label>
-                        <span className="sla-bh-day-name">{bh.dayName}</span>
-                      </div>
+                          <span className="sla-bh-time-sep">—</span>
+                          <span className="sla-bh-time-label">Closes:</span>
+                          <input
+                            type="time"
+                            id={`input-time-end-${row.id}`}
+                            className="sla-bh-time-input"
+                            value={row.endTime}
+                            disabled={!row.isEnabled}
+                            onChange={(e) => row.onTimeChange('endTime', e.target.value)}
+                          />
+                        </div>
 
-                      <div className="sla-bh-row__times">
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Opens:</span>
-                        <input
-                          type="time"
-                          className="sla-bh-time-input"
-                          value={bh.startTime}
-                          disabled={!bh.isEnabled}
-                          onChange={(e) => handleBusinessHourTimeChange(bh.dayOfWeek, 'startTime', e.target.value)}
-                        />
-                        <span className="sla-bh-time-sep">—</span>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Closes:</span>
-                        <input
-                          type="time"
-                          className="sla-bh-time-input"
-                          value={bh.endTime}
-                          disabled={!bh.isEnabled}
-                          onChange={(e) => handleBusinessHourTimeChange(bh.dayOfWeek, 'endTime', e.target.value)}
-                        />
+                        <div className={`sla-bh-duration-pill ${!row.isEnabled ? 'sla-bh-duration-pill--closed' : ''} ${isInvalidTime ? 'sla-bh-duration-pill--error' : ''}`}>
+                          <Clock size={12} />
+                          <span>{durationText}</span>
+                        </div>
                       </div>
-
-                      <div className={`sla-bh-duration-pill ${!bh.isEnabled ? 'sla-bh-duration-pill--closed' : ''}`}>
-                        <Clock size={12} />
-                        <span>{durationText}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== SECTION C: PUBLIC HOLIDAYS ==================== */}
-        {(activeTab === 'all' || activeTab === 'holidays') && (
-          <section className="sla-card" id="public-holidays">
-            <div className="sla-card__header">
-              <div className="sla-card__header-left">
-                <div className="sla-card__header-icon">
-                  <Info size={20} />
+                    );
+                  })}
                 </div>
-                <div>
-                  <h2 className="sla-card__title">Public Holidays & Non-Working Days</h2>
-                  <p className="sla-card__subtitle">
-                    Corporate holidays automatically pause the SLA countdown clock for all open cases and extend target due dates by the paused duration.
-                  </p>
+
+                <div className="sla-bh-pause-notice">
+                  <Info size={15} style={{ color: '#2563eb', flexShrink: 0 }} />
+                  <span>SLA timers pause outside business hours and on public holidays.</span>
                 </div>
               </div>
+            </section>
 
-              <button
-                type="button"
-                className="sla-btn sla-btn--blue"
-                onClick={openAddHolidayModal}
-              >
-                <Plus size={14} />
-                <span>Add Public Holiday</span>
-              </button>
-            </div>
+            {/* SUB-SECTION 2: PUBLIC HOLIDAYS */}
+            <section className="sla-card" id="public-holidays">
+              <div className="sla-card__header">
+                <div className="sla-card__header-left">
+                  <div className="sla-card__header-icon">
+                    <Info size={18} />
+                  </div>
+                  <div>
+                    <h2 className="sla-card__title">Public holidays</h2>
+                    <span className="sla-card__subtitle">SLA-exempt days</span>
+                  </div>
+                </div>
 
-            <div className="sla-card__body">
-              <div className="sla-holidays-notice">
-                <Info size={18} style={{ flexShrink: 0 }} />
-                <span>
-                  <strong>Automated Clock Suspension:</strong> Any public holiday registered here acts as a zero-consumption window. If a case’s SLA window spans across a holiday, the deadline is dynamically extended to preserve service commitments.
-                </span>
+                <button
+                  type="button"
+                  id="btn-add-public-holiday"
+                  className="sla-btn sla-btn--blue"
+                  onClick={openAddHolidayDrawer}
+                >
+                  <Plus size={14} />
+                  <span>Add Public Holiday</span>
+                </button>
               </div>
 
-              {publicHolidays.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '36px 0', color: '#64748b', fontSize: '13px' }}>
-                  No public holidays registered. Click "Add Public Holiday" above to add statutory holidays.
-                </div>
-              ) : (
-                <table className="sla-holidays-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: '25%' }}>Holiday Date</th>
-                      <th style={{ width: '40%' }}>Holiday Name</th>
-                      <th style={{ width: '20%' }}>Status</th>
-                      <th style={{ width: '15%', textAlign: 'right' }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+              <div className="sla-card__body">
+                {publicHolidays.length === 0 ? (
+                  <div className="sla-empty-holidays">
+                    <Calendar size={32} strokeWidth={1.5} style={{ color: '#94a3b8', marginBottom: '8px' }} />
+                    <p>No public holidays registered. Click "Add Public Holiday" above to register statutory holidays.</p>
+                  </div>
+                ) : (
+                  <div className="sla-holidays-list">
                     {publicHolidays.map(holiday => {
                       const dateObj = new Date(holiday.holidayDate);
                       const formattedDate = dateObj.toLocaleDateString('en-GB', {
@@ -877,73 +980,76 @@ export function CasesSlaRoutingPage() {
                       });
 
                       return (
-                        <tr key={holiday.id}>
-                          <td>
-                            <span className="sla-holiday-date-badge">
-                              <Calendar size={13} />
+                        <div key={holiday.id} className="sla-holiday-row">
+                          <div className="sla-holiday-row__name">
+                            {holiday.name}
+                          </div>
+                          <div className="sla-holiday-row__right">
+                            <span className="sla-holiday-date-pill">
                               {formattedDate}
                             </span>
-                          </td>
-                          <td>
-                            <strong>{holiday.name}</strong>
-                          </td>
-                          <td>
-                            <span className={`sla-cat-pill ${holiday.isActive ? '' : 'sla-bh-duration-pill--closed'}`}>
-                              {holiday.isActive ? 'Active (Pauses SLA)' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <div style={{ display: 'inline-flex', gap: '8px' }}>
-                              <button
-                                type="button"
-                                className="sla-btn sla-btn--outline"
-                                style={{ padding: '4px 8px' }}
-                                onClick={() => openEditHolidayModal(holiday)}
-                                title="Edit Holiday"
-                              >
-                                <Edit2 size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                className="sla-btn sla-btn--danger-outline"
-                                style={{ padding: '4px 8px' }}
-                                onClick={() => handleDeleteHoliday(holiday.id)}
-                                title="Delete Holiday"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
+                            <button
+                              type="button"
+                              id={`btn-edit-holiday-${holiday.id}`}
+                              className="sla-holiday-edit-btn"
+                              onClick={() => openEditHolidayDrawer(holiday)}
+                              title="Edit Holiday"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-delete-holiday-${holiday.id}`}
+                              className="sla-holiday-delete-btn"
+                              onClick={() => handleRequestDeleteHoliday(holiday)}
+                              title="Delete Holiday"
+                            >
+                              <X size={15} />
+                            </button>
+                          </div>
+                        </div>
                       );
                     })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </section>
+                  </div>
+                )}
+
+                {/* Inline Quick Add matching reference image */}
+                <form className="sla-holiday-quick-add" onSubmit={handleQuickAddHoliday}>
+                  <input
+                    type="text"
+                    className="sla-holiday-quick-input"
+                    placeholder="e.g. Nuzul Al-Quran — 14 Mar 2027"
+                    value={quickHolidayText}
+                    onChange={(e) => setQuickHolidayText(e.target.value)}
+                  />
+                  <button type="submit" className="sla-btn sla-btn--outline" style={{ whiteSpace: 'nowrap' }}>
+                    Add
+                  </button>
+                </form>
+              </div>
+            </section>
+          </div>
         )}
 
-        {/* ==================== SECTION D: ESCALATION MATRIX ==================== */}
-        {(activeTab === 'all' || activeTab === 'escalation') && (
+        {/* ==================== TAB 3: ESCALATION MATRIX ==================== */}
+        {activeTab === 'escalation' && (
           <section className="sla-card" id="escalation-matrix">
             <div className="sla-card__header">
               <div className="sla-card__header-left">
                 <div className="sla-card__header-icon">
-                  <Layers size={20} />
+                  <Layers size={18} />
                 </div>
                 <div>
-                  <h2 className="sla-card__title">Escalation Matrix</h2>
-                  <p className="sla-card__subtitle">
-                    Sequential multi-tier escalation hierarchy. Agents can manually escalate cases step-by-step with mandatory audit reasons, or background workers can escalate automatically upon SLA breach.
-                  </p>
+                  <h2 className="sla-card__title">Escalation matrix</h2>
+                  <span className="sla-card__subtitle">fully configurable — auto-fires from SLA consumption; all triggers audit-logged</span>
                 </div>
               </div>
 
               <button
                 type="button"
+                id="btn-add-escalation-level"
                 className="sla-btn sla-btn--blue"
-                onClick={handleAddEscalationLevel}
+                onClick={handleOpenAddEscalationDrawer}
               >
                 <Plus size={14} />
                 <span>Add Escalation Level</span>
@@ -951,186 +1057,81 @@ export function CasesSlaRoutingPage() {
             </div>
 
             <div className="sla-card__body">
-              {/* Stepper Flow Progression Diagram */}
-              <div className="sla-escalation-flow">
-                {escalationLevels.map((lvl, index) => (
-                  <React.Fragment key={lvl.levelNumber || index}>
-                    <div className="sla-flow-node">
-                      <div className="sla-flow-node__num">{index + 1}</div>
-                      <div className="sla-flow-node__info">
-                        <span className="sla-flow-node__title">{lvl.name || `Level ${index + 1}`}</span>
-                        <span className="sla-flow-node__role">
-                          {lvl.assignmentType === 'User' ? (lvl.targetUserName || 'User Assignee') : lvl.targetRole}
-                        </span>
-                      </div>
-                    </div>
-                    {index < escalationLevels.length - 1 && (
-                      <div className="sla-flow-arrow">
-                        <ChevronRight size={18} strokeWidth={2.5} />
-                      </div>
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
+              {/* Horizontal Escalation Flow Cards */}
+              <div className="sla-horizontal-escalation-flow">
+                {escalationLevels.map((lvl, index) => {
+                  const isLast = index === escalationLevels.length - 1;
+                  const currentRoleList = availableRoles.concat(
+                    lvl.targetRole && !availableRoles.includes(lvl.targetRole) ? [lvl.targetRole] : []
+                  );
 
-              {/* Sequential Level Cards List */}
-              <div className="sla-escalation-levels-list">
-                {escalationLevels.map((lvl, index) => (
-                  <div key={index} className="sla-level-card">
-                    <div className="sla-level-card__header">
-                      <div className="sla-level-card__left">
-                        <span className="sla-level-pill">LEVEL {index + 1}</span>
-                        <input
-                          type="text"
-                          className="sla-field-input"
-                          style={{ fontWeight: 700, width: '240px' }}
-                          value={lvl.name}
-                          onChange={(e) => handleEscalationFieldChange(index, 'name', e.target.value)}
-                        />
-                      </div>
-
-                      {escalationLevels.length > 1 && (
-                        <button
-                          type="button"
-                          className="sla-btn sla-btn--danger-outline"
-                          style={{ padding: '5px 10px', fontSize: '12px' }}
-                          onClick={() => handleRemoveEscalationLevel(index)}
-                          title="Remove Escalation Level"
-                        >
-                          <Trash2 size={13} />
-                          <span>Remove</span>
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="sla-level-card__body">
-                      {/* 1. Assignment */}
-                      <div className="sla-field-col">
-                        <label className="sla-field-label">Assignment Method</label>
-                        <select
-                          className="sla-field-select"
-                          value={lvl.assignmentType}
-                          onChange={(e) => handleEscalationFieldChange(index, 'assignmentType', e.target.value)}
-                        >
-                          <option value="Role">Target Role (Department / Enterprise)</option>
-                          <option value="User">Specific Individual User</option>
-                        </select>
-
-                        {lvl.assignmentType === 'Role' ? (
-                          <div style={{ marginTop: '8px' }}>
-                            <label className="sla-field-label">Target Role</label>
-                            <select
-                              className="sla-field-select"
-                              value={lvl.targetRole}
-                              onChange={(e) => handleEscalationFieldChange(index, 'targetRole', e.target.value)}
-                            >
-                              {availableRoles.map(role => (
-                                <option key={role} value={role}>{role}</option>
-                              ))}
-                            </select>
-                          </div>
-                        ) : (
-                          <div style={{ marginTop: '8px' }}>
-                            <label className="sla-field-label">Target User</label>
-                            <select
-                              className="sla-field-select"
-                              value={lvl.targetUserId || ''}
-                              onChange={(e) => {
-                                const uid = e.target.value;
-                                const userObj = availableUsers.find(u => u.id === uid);
-                                handleEscalationFieldChange(index, 'targetUserId', uid);
-                                handleEscalationFieldChange(index, 'targetUserName', userObj?.name || '');
-                              }}
-                            >
-                              <option value="" disabled>Select User Assignee…</option>
-                              {availableUsers.map(user => (
-                                <option key={user.id} value={user.id}>
-                                  {user.name} ({user.role} • {user.team || 'CX'})
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 2. Trigger Condition */}
-                      <div className="sla-field-col">
-                        <label className="sla-field-label">Trigger Condition</label>
-                        <select
-                          className="sla-field-select"
-                          value={lvl.triggerType}
-                          onChange={(e) => handleEscalationFieldChange(index, 'triggerType', e.target.value)}
-                        >
-                          <option value="SlaPercentage">SLA Consumption % Reached</option>
-                          <option value="SlaBreached">Resolution SLA Breached (100%)</option>
-                          <option value="SlaPostBreachHours">Hours Post-SLA Breach</option>
-                          <option value="ManualOnly">Manual Escalation Only (Agent Action)</option>
-                        </select>
-
-                        {lvl.triggerType === 'SlaPercentage' && (
-                          <div style={{ marginTop: '8px' }}>
-                            <label className="sla-field-label">Threshold Percentage (%)</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max="100"
-                              className="sla-field-input"
-                              value={lvl.triggerValue || 70}
-                              onChange={(e) => handleEscalationFieldChange(index, 'triggerValue', e.target.value)}
-                            />
-                          </div>
-                        )}
-
-                        {lvl.triggerType === 'SlaPostBreachHours' && (
-                          <div style={{ marginTop: '8px' }}>
-                            <label className="sla-field-label">Hours Elapsed After Breach</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max="168"
-                              className="sla-field-input"
-                              value={lvl.triggerValue || 12}
-                              onChange={(e) => handleEscalationFieldChange(index, 'triggerValue', e.target.value)}
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 3. Action Description */}
-                      <div className="sla-field-col">
-                        <label className="sla-field-label">Action Description</label>
-                        <input
-                          type="text"
-                          className="sla-field-input"
-                          placeholder="e.g. Reassign to team lead and notify"
-                          value={lvl.actionDescription}
-                          onChange={(e) => handleEscalationFieldChange(index, 'actionDescription', e.target.value)}
-                        />
-                        <div className="sla-time-hint">
-                          Preview: {lvl.actionDescription || 'No action defined'}
+                  return (
+                    <React.Fragment key={lvl.id || lvl.levelNumber || index}>
+                      <div className="sla-hlevel-card" id={`sla-level-card-${lvl.levelNumber || index + 1}`}>
+                        {/* Header: Level Pill & Delete Action */}
+                        <div className="sla-hlevel-header">
+                          <span className="sla-hlevel-pill">LEVEL {lvl.levelNumber || index + 1}</span>
+                          <button
+                            type="button"
+                            id={`btn-delete-level-${lvl.levelNumber || index + 1}`}
+                            className="sla-hlevel-delete-btn"
+                            onClick={() => handleRequestDeleteLevel(lvl)}
+                            title={`Delete Level ${lvl.levelNumber || index + 1}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         </div>
-                      </div>
 
-                      {/* 4. Options & Behavior */}
-                      <div className="sla-field-col">
-                        <label className="sla-field-label">Workflow Behavior</label>
-                        <label className="sla-reassign-toggle">
+                        {/* 1. Target Role */}
+                        <div className="sla-hlevel-role-block">
+                          <select
+                            className="sla-hlevel-role-select"
+                            value={lvl.targetRole || availableRoles[0] || 'Team Lead'}
+                            onChange={(e) => handleEscalationFieldChange(index, 'targetRole', e.target.value)}
+                            title="Target Role"
+                          >
+                            {currentRoleList.map(role => (
+                              <option key={role} value={role}>{role}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* 2. Trigger Condition */}
+                        <div className="sla-hlevel-field-group">
+                          <label className="sla-hlevel-field-label">TRIGGER</label>
                           <input
-                            type="checkbox"
-                            checked={Boolean(lvl.reassignOwner)}
-                            onChange={(e) => handleEscalationFieldChange(index, 'reassignOwner', e.target.checked)}
+                            type="text"
+                            className="sla-hlevel-input"
+                            value={lvl.triggerDescription || lvl.triggerCondition || ''}
+                            placeholder="e.g. SLA 70% consumed"
+                            onChange={(e) => {
+                              handleEscalationFieldChange(index, 'triggerDescription', e.target.value);
+                              handleEscalationFieldChange(index, 'triggerCondition', e.target.value);
+                            }}
                           />
-                          <span>Reassign Case Owner upon Escalation</span>
-                        </label>
-                        <div className="sla-time-hint" style={{ marginTop: '6px' }}>
-                          {lvl.reassignOwner
-                            ? 'Case will be automatically reassigned to the target role/user.'
-                            : 'Case owner is preserved; target receives notification & oversight.'}
+                        </div>
+
+                        {/* 3. Action */}
+                        <div className="sla-hlevel-field-group">
+                          <label className="sla-hlevel-field-label">ACTION</label>
+                          <input
+                            type="text"
+                            className="sla-hlevel-input"
+                            value={lvl.actionDescription || ''}
+                            placeholder="e.g. Reminder + queue flag"
+                            onChange={(e) => handleEscalationFieldChange(index, 'actionDescription', e.target.value)}
+                          />
                         </div>
                       </div>
-                    </div>
-                  </div>
-                ))}
+
+                      {!isLast && (
+                        <div className="sla-hlevel-arrow" aria-hidden="true">
+                          <ChevronRight size={18} strokeWidth={2.5} />
+                        </div>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </div>
             </div>
           </section>
@@ -1138,30 +1139,66 @@ export function CasesSlaRoutingPage() {
 
       </div>
 
-      {/* ==================== ADD / EDIT PUBLIC HOLIDAY MODAL ==================== */}
-      {holidayModalOpen && (
-        <div className="sla-modal-overlay">
-          <div className="sla-modal">
-            <div className="sla-modal__header">
-              <h3 className="sla-modal__title">
-                {editingHoliday ? 'Edit Public Holiday' : 'Add Public Holiday'}
-              </h3>
+      {/* ==================== PUBLIC HOLIDAY RIGHT-SIDE DRAWER ==================== */}
+      {holidayDrawerOpen && createPortal(
+        <>
+          <div className="sla-drawer-overlay" onClick={handleCloseHolidayDrawer} aria-hidden="true" />
+          <aside className="sla-drawer" role="dialog" aria-modal="true" aria-label={editingHoliday ? 'Edit Public Holiday' : 'Add Public Holiday'}>
+            <div className="sla-drawer__header">
+              <div className="sla-drawer__header-content">
+                <h3 className="sla-drawer__title">
+                  {editingHoliday ? 'Edit Public Holiday' : 'Add Public Holiday'}
+                </h3>
+                <p className="sla-drawer__subtitle">
+                  {editingHoliday
+                    ? 'Update statutory holiday details and SLA countdown pause behavior.'
+                    : 'Register a statutory holiday to pause SLA consumption for all open cases.'}
+                </p>
+              </div>
               <button
                 type="button"
-                className="sla-modal__close-btn"
-                onClick={() => setHolidayModalOpen(false)}
+                id="btn-close-holiday-drawer"
+                className="sla-drawer__close-btn"
+                onClick={handleCloseHolidayDrawer}
+                disabled={holidaySaving}
+                title="Close Drawer"
               >
-                <X size={18} />
+                <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleSaveHoliday}>
-              <div className="sla-modal__body">
+            <form onSubmit={handleSaveHoliday} className="sla-drawer__form">
+              <div className="sla-drawer__body">
+                {holidayDrawerError && (
+                  <div className="sla-drawer-error">
+                    <AlertCircle size={16} />
+                    <span>{holidayDrawerError}</span>
+                  </div>
+                )}
+
                 <div className="sla-field-col">
-                  <label className="sla-field-label">Holiday Date</label>
+                  <label className="sla-field-label">
+                    Holiday Name <span className="sla-field-required">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    id="holiday-name-input"
+                    placeholder="e.g. National Malaysia Day"
+                    className="sla-field-input"
+                    value={holidayForm.name}
+                    onChange={(e) => setHolidayForm(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+
+                <div className="sla-field-col">
+                  <label className="sla-field-label">
+                    Holiday Date <span className="sla-field-required">*</span>
+                  </label>
                   <input
                     type="date"
                     required
+                    id="holiday-date-input"
                     className="sla-field-input"
                     value={holidayForm.holidayDate}
                     onChange={(e) => setHolidayForm(prev => ({ ...prev, holidayDate: e.target.value }))}
@@ -1169,47 +1206,215 @@ export function CasesSlaRoutingPage() {
                 </div>
 
                 <div className="sla-field-col">
-                  <label className="sla-field-label">Holiday Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. National Day, Christmas Day"
-                    className="sla-field-input"
-                    value={holidayForm.name}
-                    onChange={(e) => setHolidayForm(prev => ({ ...prev, name: e.target.value }))}
-                  />
+                  <label className="sla-field-label">Status</label>
+                  <label className="sla-reassign-toggle">
+                    <input
+                      type="checkbox"
+                      id="holiday-active-input"
+                      checked={holidayForm.isActive}
+                      onChange={(e) => setHolidayForm(prev => ({ ...prev, isActive: e.target.checked }))}
+                    />
+                    <span>Active (Pauses SLA Countdown Clocks)</span>
+                  </label>
+                  <div className="sla-time-hint" style={{ marginTop: '4px' }}>
+                    When active, open case SLAs will pause on this calendar date and resume on the next operating window.
+                  </div>
                 </div>
 
-                <label className="sla-reassign-toggle" style={{ marginTop: '4px' }}>
-                  <input
-                    type="checkbox"
-                    checked={holidayForm.isActive}
-                    onChange={(e) => setHolidayForm(prev => ({ ...prev, isActive: e.target.checked }))}
+                <div className="sla-field-col">
+                  <label className="sla-field-label">Description / Operational Notes</label>
+                  <textarea
+                    rows={3}
+                    id="holiday-description-input"
+                    placeholder="Optional notes or regulatory reference for this statutory holiday..."
+                    className="sla-field-input"
+                    style={{ resize: 'vertical' }}
+                    value={holidayForm.description || ''}
+                    onChange={(e) => setHolidayForm(prev => ({ ...prev, description: e.target.value }))}
                   />
-                  <span>Active Holiday (Pause SLA Timers on this day)</span>
-                </label>
+                </div>
               </div>
 
-              <div className="sla-modal__footer">
+              <div className="sla-drawer__footer">
                 <button
                   type="button"
+                  id="btn-cancel-holiday-drawer"
                   className="sla-btn sla-btn--outline"
-                  onClick={() => setHolidayModalOpen(false)}
+                  onClick={handleCloseHolidayDrawer}
                   disabled={holidaySaving}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
+                  id="btn-save-holiday-drawer"
                   className="sla-btn sla-btn--blue"
                   disabled={holidaySaving || !holidayForm.holidayDate || !holidayForm.name.trim()}
                 >
-                  {holidaySaving ? 'Saving...' : 'Save Holiday'}
+                  {holidaySaving ? 'Saving...' : (editingHoliday ? 'Update Holiday' : 'Save Holiday')}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+          </aside>
+        </>,
+        document.body
+      )}
+
+      {/* ==================== DELETE HOLIDAY CONFIRMATION DIALOG ==================== */}
+      {holidayToDelete && (
+        <ConfirmDialog
+          isOpen={Boolean(holidayToDelete)}
+          title="Delete Public Holiday"
+          message={`Are you sure you want to delete "${holidayToDelete.name}" (${new Date(holidayToDelete.holidayDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })})? Open cases will resume standard SLA calculation on this date.`}
+          confirmLabel="Delete Holiday"
+          isBusy={isDeletingHoliday}
+          onCancel={() => setHolidayToDelete(null)}
+          onConfirm={handleConfirmDeleteHoliday}
+          variant="destructive"
+          itemDetails={{
+            name: holidayToDelete.name,
+            itemName: holidayToDelete.name
+          }}
+        />
+      )}
+
+      {/* ==================== ESCALATION LEVEL RIGHT-SIDE DRAWER ==================== */}
+      {escalationDrawerOpen && createPortal(
+        <>
+          <div className="sla-drawer-overlay" onClick={() => setEscalationDrawerOpen(false)} aria-hidden="true" />
+          <aside className="sla-drawer" role="dialog" aria-modal="true" aria-label="Add Escalation Level">
+            <div className="sla-drawer__header">
+              <div className="sla-drawer__header-content">
+                <h3 className="sla-drawer__title">Add Escalation Level</h3>
+                <p className="sla-drawer__subtitle">
+                  Configure automatic threshold escalation sequence, action, and target role.
+                </p>
+              </div>
+              <button
+                type="button"
+                id="btn-close-escalation-drawer"
+                className="sla-drawer__close-btn"
+                onClick={() => setEscalationDrawerOpen(false)}
+                disabled={escalationSaving}
+                title="Close Drawer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEscalationLevel} className="sla-drawer__form">
+              <div className="sla-drawer__body">
+                {escalationDrawerError && (
+                  <div className="sla-drawer-error">
+                    <AlertCircle size={16} />
+                    <span>{escalationDrawerError}</span>
+                  </div>
+                )}
+
+                {/* 1. Escalation Level (Auto-generated & Readonly) */}
+                <div className="sla-field-col">
+                  <label className="sla-field-label">Escalation Level</label>
+                  <input
+                    type="text"
+                    readOnly
+                    id="escalation-level-number-input"
+                    className="sla-field-input"
+                    style={{ backgroundColor: '#f8fafc', color: '#1e40af', fontWeight: 700 }}
+                    value={`Level ${escalationForm.levelNumber}`}
+                  />
+                  <div className="sla-time-hint">
+                    Sequence is automatically determined by the escalation engine.
+                  </div>
+                </div>
+
+                {/* 2. Target Role */}
+                <div className="sla-field-col">
+                  <label className="sla-field-label">
+                    Target Role <span className="sla-field-required">*</span>
+                  </label>
+                  <select
+                    id="escalation-target-role-select"
+                    className="sla-field-select"
+                    value={escalationForm.targetRole}
+                    onChange={(e) => setEscalationForm(prev => ({ ...prev, targetRole: e.target.value }))}
+                  >
+                    {availableRoles.map(role => (
+                      <option key={role} value={role}>{role}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 3. Trigger Condition */}
+                <div className="sla-field-col">
+                  <label className="sla-field-label">
+                    Trigger Condition <span className="sla-field-required">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    id="escalation-trigger-input"
+                    placeholder="e.g. SLA Breached or SLA 95% consumed"
+                    className="sla-field-input"
+                    value={escalationForm.triggerCondition}
+                    onChange={(e) => setEscalationForm(prev => ({ ...prev, triggerCondition: e.target.value }))}
+                  />
+                </div>
+
+                {/* 4. Action Description */}
+                <div className="sla-field-col">
+                  <label className="sla-field-label">Action Description</label>
+                  <input
+                    type="text"
+                    id="escalation-action-input"
+                    placeholder="e.g. Notify Target Role and reassign case"
+                    className="sla-field-input"
+                    value={escalationForm.actionDescription}
+                    onChange={(e) => setEscalationForm(prev => ({ ...prev, actionDescription: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="sla-drawer__footer">
+                <button
+                  type="button"
+                  id="btn-cancel-escalation-drawer"
+                  className="sla-btn sla-btn--outline"
+                  onClick={() => setEscalationDrawerOpen(false)}
+                  disabled={escalationSaving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  id="btn-create-escalation-level"
+                  className="sla-btn sla-btn--blue"
+                  disabled={escalationSaving || !escalationForm.targetRole}
+                >
+                  {escalationSaving ? 'Creating...' : 'Create Escalation Level'}
+                </button>
+              </div>
+            </form>
+          </aside>
+        </>,
+        document.body
+      )}
+
+      {/* ==================== DELETE ESCALATION LEVEL CONFIRMATION DIALOG ==================== */}
+      {levelToDelete && (
+        <ConfirmDialog
+          isOpen={Boolean(levelToDelete)}
+          title="Delete Escalation Level"
+          message={`Are you sure you want to delete Level ${levelToDelete.levelNumber}? Escalation ordering will be safely reorganized.`}
+          confirmLabel="Delete Level"
+          isBusy={isDeletingLevel}
+          onCancel={() => setLevelToDelete(null)}
+          onConfirm={handleConfirmDeleteLevel}
+          variant="destructive"
+          itemDetails={{
+            name: `Level ${levelToDelete.levelNumber}`,
+            itemName: `Level ${levelToDelete.levelNumber} (${levelToDelete.targetRole || 'Escalation Step'})`
+          }}
+        />
       )}
 
     </div>

@@ -15,6 +15,10 @@ public interface ISlaRoutingService
     Task<PublicHolidayDto?> UpdatePublicHolidayAsync(Guid id, UpdatePublicHolidayDto dto, Guid actingUserId, CancellationToken ct = default);
     Task<bool> DeletePublicHolidayAsync(Guid id, Guid actingUserId, CancellationToken ct = default);
 
+    Task<EscalationLevelConfigDto> AddEscalationLevelAsync(CreateEscalationLevelDto dto, Guid actingUserId, CancellationToken ct = default);
+    Task<EscalationLevelConfigDto?> UpdateEscalationLevelAsync(Guid id, UpdateEscalationLevelDto dto, Guid actingUserId, CancellationToken ct = default);
+    Task<bool> DeleteEscalationLevelAsync(Guid id, Guid actingUserId, CancellationToken ct = default);
+
     Task<string> ResolveEffectivePriorityAsync(string? requestedSeverity, string? categoryName, CancellationToken ct = default);
     Task<PrioritySlaRule> GetActivePrioritySlaRuleAsync(string priority, CancellationToken ct = default);
     Task<CaseEscalationStatusDto?> GetCaseEscalationStatusAsync(Guid caseId, CancellationToken ct = default);

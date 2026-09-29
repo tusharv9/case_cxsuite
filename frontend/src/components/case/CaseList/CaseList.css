@@ -357,6 +357,12 @@
   border-color: rgba(97, 112, 143, 0.18);
 }
 
+.case-list-sla--holiday-paused {
+  background-color: #fffbeb;
+  color: #92400e;
+  border-color: rgba(146, 64, 14, 0.2);
+}
+
 .case-list-sla--breached {
   background-color: #fce9e7;
   color: #c0362c;

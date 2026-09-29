@@ -75,6 +75,42 @@ public class CasesSlaRoutingController : BaseApiController
         return Ok(new { message = "Public holiday deleted successfully." });
     }
 
+    [HttpPost("escalation-levels")]
+    public async Task<IActionResult> AddEscalationLevel([FromBody] CreateEscalationLevelDto dto, CancellationToken ct = default)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var actingUserId = CurrentUserId;
+        var created = await _slaRoutingService.AddEscalationLevelAsync(dto, actingUserId, ct);
+        return CreatedAtAction(nameof(GetConfiguration), new { id = created.Id }, created);
+    }
+
+    [HttpPut("escalation-levels/{id:guid}")]
+    public async Task<IActionResult> UpdateEscalationLevel(Guid id, [FromBody] UpdateEscalationLevelDto dto, CancellationToken ct = default)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var actingUserId = CurrentUserId;
+        var updated = await _slaRoutingService.UpdateEscalationLevelAsync(id, dto, actingUserId, ct);
+        if (updated == null) return NotFound(new { error = "Escalation level not found." });
+        return Ok(updated);
+    }
+
+    [HttpDelete("escalation-levels/{id:guid}")]
+    public async Task<IActionResult> DeleteEscalationLevel(Guid id, CancellationToken ct = default)
+    {
+        var actingUserId = CurrentUserId;
+        var success = await _slaRoutingService.DeleteEscalationLevelAsync(id, actingUserId, ct);
+        if (!success) return NotFound(new { error = "Escalation level not found." });
+        return Ok(new { message = "Escalation level deleted successfully." });
+    }
+
     [HttpGet("cases/{caseId:guid}/escalation-status")]
     public async Task<IActionResult> GetCaseEscalationStatus(Guid caseId, CancellationToken ct = default)
     {

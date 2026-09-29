@@ -24,6 +24,27 @@ export function getSlaConfig(severity, customExternalHours) {
 }
 
 /**
+ * Helper to check if a specific date or today is an active public holiday
+ */
+export function checkIsPublicHolidayToday(publicHolidays, targetDate = new Date()) {
+  if (!Array.isArray(publicHolidays) || publicHolidays.length === 0) return { isHoliday: false, holidayName: null };
+  const d = new Date(targetDate);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const dateStr = `${y}-${m}-${day}`;
+
+  for (const h of publicHolidays) {
+    if (!h.isActive) continue;
+    const hDateStr = typeof h.holidayDate === 'string' ? h.holidayDate.substring(0, 10) : '';
+    if (hDateStr === dateStr) {
+      return { isHoliday: true, holidayName: h.name };
+    }
+  }
+  return { isHoliday: false, holidayName: null };
+}
+
+/**
  * SLA Display Helper for CaseCard, CaseList & CaseDrawer
  */
 export function getSlaDisplay(
@@ -32,14 +53,36 @@ export function getSlaDisplay(
   status = 'Open',
   currentTimestamp,
   slaPausedAt = null,
-  slaTotalPausedMinutes = 0
+  slaTotalPausedMinutes = 0,
+  isHolidayToday = false,
+  holidayName = null
 ) {
-  if (status === 'Resolved') {
+  if (status === 'Resolved' || status === 'Closed') {
     return { status: 'within', label: 'SLA Met', color: '#16a34a' };
   }
 
+  if (isHolidayToday) {
+    const hName = holidayName || 'Public Holiday';
+    return {
+      status: 'holiday-paused',
+      isHoliday: true,
+      label: 'Clock paused (Holiday)',
+      shortLabel: 'Holiday Paused',
+      tooltip: `SLA Clock Paused: Today is a Public Holiday (${hName})`,
+      holidayName: hName,
+      color: '#b45309',
+    };
+  }
+
   if (status === 'WaitingOnCustomer' || status === 'Waiting on Customer' || Boolean(slaPausedAt)) {
-    return { status: 'paused', label: 'Clock paused', color: '#64748b' };
+    return {
+      status: 'paused',
+      isHoliday: false,
+      label: 'Clock paused',
+      shortLabel: 'Clock paused',
+      tooltip: 'SLA Clock Paused (Waiting on Customer)',
+      color: '#64748b',
+    };
   }
 
   const start = new Date(slaStartTime || Date.now()).getTime();
@@ -83,8 +126,8 @@ export function getSlaDisplay(
   };
 }
 
-export function formatSlaRemaining(slaStartTime, slaTargetHours = 24, currentTimestamp, status = 'Open', slaPausedAt = null, slaTotalPausedMinutes = 0) {
-  const display = getSlaDisplay(slaStartTime, slaTargetHours, status, currentTimestamp, slaPausedAt, slaTotalPausedMinutes);
+export function formatSlaRemaining(slaStartTime, slaTargetHours = 24, currentTimestamp, status = 'Open', slaPausedAt = null, slaTotalPausedMinutes = 0, isHolidayToday = false, holidayName = null) {
+  const display = getSlaDisplay(slaStartTime, slaTargetHours, status, currentTimestamp, slaPausedAt, slaTotalPausedMinutes, isHolidayToday, holidayName);
   return display.label;
 }
 
@@ -92,11 +135,50 @@ export function formatSlaRemaining(slaStartTime, slaTargetHours = 24, currentTim
  * Calculate Dual SLA status for a case
  * @param {Object} caseItem
  * @param {number} [currentTimestamp]
- * @returns {Object} { external, internal, isInternalBreached, isExternalBreached, isPaused }
+ * @param {boolean} [isHolidayToday]
+ * @param {string} [holidayName]
+ * @returns {Object} { external, internal, isInternalBreached, isExternalBreached, isPaused, isHoliday }
  */
-export function calculateDualSla(caseItem, currentTimestamp) {
+export function calculateDualSla(caseItem, currentTimestamp, isHolidayToday = null, holidayName = null) {
   if (!caseItem) return null;
-  const isResolved = caseItem.status === 'Resolved';
+  const isResolved = caseItem.status === 'Resolved' || caseItem.status === 'Closed';
+
+  if (isResolved) {
+    return {
+      externalTargetHours: 0,
+      internalTargetHours: 0,
+      externalRemainingFormatted: 'SLA Met',
+      internalRemainingFormatted: 'SLA Met',
+      isExternalBreached: false,
+      isInternalBreached: false,
+      isPaused: false,
+      isHoliday: false,
+      internalLabel: 'SLA Met',
+      externalLabel: 'SLA Met',
+    };
+  }
+
+  const holidayActive = isHolidayToday !== null && isHolidayToday !== undefined
+    ? Boolean(isHolidayToday)
+    : Boolean(caseItem.isHolidayToday);
+  const activeHolidayName = holidayName || caseItem.holidayName || 'Public Holiday';
+
+  if (holidayActive) {
+    return {
+      externalTargetHours: 0,
+      internalTargetHours: 0,
+      externalRemainingFormatted: 'Clock paused (Holiday)',
+      internalRemainingFormatted: 'Clock paused (Holiday)',
+      isExternalBreached: false,
+      isInternalBreached: false,
+      isPaused: true,
+      isHoliday: true,
+      holidayName: activeHolidayName,
+      internalLabel: `SLA Clock Paused (Public Holiday: ${activeHolidayName})`,
+      externalLabel: `SLA Clock Paused (Public Holiday: ${activeHolidayName})`,
+    };
+  }
+
   const isPaused = caseItem.status === 'WaitingOnCustomer' || caseItem.status === 'Waiting on Customer' || Boolean(caseItem.slaPausedAt);
 
   if (isPaused) {
@@ -108,6 +190,7 @@ export function calculateDualSla(caseItem, currentTimestamp) {
       isExternalBreached: false,
       isInternalBreached: false,
       isPaused: true,
+      isHoliday: false,
       internalLabel: 'SLA Clock Paused (Waiting on Customer)',
       externalLabel: 'SLA Clock Paused (Waiting on Customer)',
     };

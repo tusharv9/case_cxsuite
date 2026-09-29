@@ -22,4 +22,10 @@ public interface IBusinessTimeService
     /// Returns true if the given UTC timestamp falls within an active business hour window.
     /// </summary>
     Task<bool> IsWithinBusinessHoursAsync(DateTime utcTime, CancellationToken ct = default);
+
+    /// <summary>
+    /// Checks if the given UTC timestamp falls on an active registered public holiday.
+    /// Returns (true, holidayName) if active holiday, else (false, null).
+    /// </summary>
+    Task<(bool isHoliday, string? holidayName)> GetActiveHolidayAsync(DateTime utcTime, CancellationToken ct = default);
 }

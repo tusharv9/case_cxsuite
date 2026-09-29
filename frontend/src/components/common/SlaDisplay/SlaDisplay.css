@@ -30,6 +30,18 @@
   color: #1d4ed8;
 }
 
+.sla-badge--holiday-paused {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+  color: #92400e !important;
+}
+
+.sla-badge--paused {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+
 .sla-badge--breached {
   background-color: #fef2f2 !important;
   border-color: #fecaca !important;

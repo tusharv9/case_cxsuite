@@ -50,6 +50,30 @@ export const slaRoutingService = {
   },
 
   /**
+   * Create a new escalation level
+   */
+  async createEscalationLevel(levelDto) {
+    const response = await api.post('/api/sla-routing/escalation-levels', levelDto);
+    return response.data;
+  },
+
+  /**
+   * Update an existing escalation level
+   */
+  async updateEscalationLevel(id, levelDto) {
+    const response = await api.put(`/api/sla-routing/escalation-levels/${id}`, levelDto);
+    return response.data;
+  },
+
+  /**
+   * Delete an escalation level
+   */
+  async deleteEscalationLevel(id) {
+    const response = await api.delete(`/api/sla-routing/escalation-levels/${id}`);
+    return response.data;
+  },
+
+  /**
    * Fetch escalation status and next target for a case
    */
   async getCaseEscalationStatus(caseId) {
