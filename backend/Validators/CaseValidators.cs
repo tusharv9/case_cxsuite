@@ -22,7 +22,7 @@ public class CreateCaseDtoValidator : AbstractValidator<CreateCaseDto>
         RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
         RuleFor(x => x.Description).NotEmpty().MaximumLength(2000);
         RuleFor(x => x.CustomerId).NotEmpty();
-        RuleFor(x => x.DepartmentId).NotEmpty();
+        // DepartmentId is optional on intake: automatically assigned by RoutingEngine if empty
         RuleFor(x => x.Severity).NotEmpty().MaximumLength(50);
     }
 }

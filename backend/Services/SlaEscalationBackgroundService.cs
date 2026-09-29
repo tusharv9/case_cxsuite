@@ -21,23 +21,31 @@ public class SlaEscalationBackgroundService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("SlaEscalationBackgroundService started.");
-        // Short delay on startup to allow DbSeeder and migrations to finish cleanly
-        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var caseService = scope.ServiceProvider.GetRequiredService<ICaseService>();
-                await caseService.EvaluateSlaEscalationsAsync(null, stoppingToken);
-            }
-            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-            {
-                _logger.LogError(ex, "Error occurred during SLA escalation evaluation cycle.");
-            }
+            // Short delay on startup to allow DbSeeder and migrations to finish cleanly
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
-            await Task.Delay(CheckInterval, stoppingToken);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var caseService = scope.ServiceProvider.GetRequiredService<ICaseService>();
+                    await caseService.EvaluateSlaEscalationsAsync(null, stoppingToken);
+                }
+                catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogError(ex, "Error occurred during SLA escalation evaluation cycle.");
+                }
+
+                await Task.Delay(CheckInterval, stoppingToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("SlaEscalationBackgroundService stopped gracefully.");
         }
     }
 }

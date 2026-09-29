@@ -13,8 +13,12 @@ public class Department : AuditableEntity
     public Guid? OwnerId { get; set; }
     public User? Owner { get; set; }
     public bool IsActive { get; set; } = true;
+
+    public string Function { get; set; } = string.Empty;
+    public string Channels { get; set; } = "Voice,Chat,Email";
     
     // Navigation property
     public ICollection<Case> Cases { get; set; } = new List<Case>();
     public ICollection<User> Users { get; set; } = new List<User>();
+    public ICollection<TeamMember> Members { get; set; } = new List<TeamMember>();
 }

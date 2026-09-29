@@ -19,6 +19,8 @@ public static class DbSeeder
             EnsureCaseChannelsAndStatuses(context);
             EnsureFirstResponseAndEscalationMatrix(context);
             EnsureSlaAndEscalationMatrix(context);
+            EnsureTeamsAndSquads(context);
+            EnsureRoutingRulesAndSkills(context);
             return;
         }
 
@@ -1071,4 +1073,375 @@ public static class DbSeeder
             Console.WriteLine($"[EnsureSlaAndEscalationMatrix Error] {ex.Message}");
         }
     }
+
+    private static void EnsureTeamsAndSquads(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            // 1. Ensure squads users exist
+            var squadUsers = new (string Name, string Email, string Role, UserStatus Status)[]
+            {
+                ("Nurul Aisyah", "nurul.aisyah@bank.com", "Team Lead", UserStatus.Available),
+                ("Grace Wong", "grace.wong@bank.com", "Team Lead", UserStatus.Available),
+                ("Amirul Hakim", "amirul.hakim@bank.com", "Team Lead", UserStatus.Available),
+                ("Farid Rahman", "farid.rahman@bank.com", "Service Agent — Voice/Chat", UserStatus.Available),
+                ("Mei Ling Tan", "meiling@bank.com", "Service Agent — Digital", UserStatus.Busy),
+                ("Siti Hajar", "siti.hajar@bank.com", "Service Agent — Email", UserStatus.Away),
+                ("Priya Nair", "priya.nair@bank.com", "Service Agent — Social", UserStatus.Available),
+                ("Rajesh Kumar", "rajesh.kumar@bank.com", "Sales Agent — Leads", UserStatus.Available),
+                ("Hafiz Osman", "hafiz@bank.com", "Collections Agent", UserStatus.Away)
+            };
+
+            var defaultDept = context.Departments.OrderBy(d => d.Id).FirstOrDefault();
+            var defaultDeptId = defaultDept?.Id ?? Guid.NewGuid();
+
+            var userMap = new Dictionary<string, User>();
+            foreach (var (name, email, role, status) in squadUsers)
+            {
+                var user = context.Users.FirstOrDefault(u => u.Email == email);
+                if (user == null)
+                {
+                    user = new User
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = name,
+                        Email = email,
+                        Role = role,
+                        Status = status,
+                        DepartmentId = defaultDeptId,
+                        CreatedAt = now
+                    };
+                    context.Users.Add(user);
+                }
+                else
+                {
+                    user.Status = status;
+                    if (!string.IsNullOrWhiteSpace(role)) user.Role = role;
+                }
+                userMap[name] = user;
+            }
+            context.SaveChanges();
+
+            // 2. Ensure Teams (Departments)
+            var squads = new[]
+            {
+                new {
+                    Name = "Service Desk — Retail",
+                    Code = "SDR",
+                    Function = "Case handling (retail banking)",
+                    Channels = "Voice,Chat,Email,Social",
+                    LeadName = "Nurul Aisyah",
+                    MemberNames = new[] { "Farid Rahman", "Mei Ling Tan", "Siti Hajar", "Priya Nair" }
+                },
+                new {
+                    Name = "Sales Pursuit",
+                    Code = "SP",
+                    Function = "Lead qualification & conversion",
+                    Channels = "Phone,WhatsApp,Email",
+                    LeadName = "Grace Wong",
+                    MemberNames = new[] { "Rajesh Kumar", "Hafiz Osman" }
+                },
+                new {
+                    Name = "Campaign Studio",
+                    Code = "CS",
+                    Function = "Campaign design, content & delivery",
+                    Channels = "Email,Chat,WhatsApp,Social",
+                    LeadName = "Amirul Hakim",
+                    MemberNames = new[] { "Rajesh Kumar", "Priya Nair", "Mei Ling Tan" }
+                }
+            };
+
+            foreach (var sq in squads)
+            {
+                var dept = context.Departments.FirstOrDefault(d => d.Name == sq.Name || d.Code == sq.Code);
+                var lead = userMap.ContainsKey(sq.LeadName) ? userMap[sq.LeadName] : null;
+
+                if (dept == null)
+                {
+                    dept = new Department
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = sq.Name,
+                        Code = sq.Code,
+                        Function = sq.Function,
+                        Channels = sq.Channels,
+                        OwnerId = lead?.Id,
+                        IsActive = true,
+                        CreatedAt = now
+                    };
+                    context.Departments.Add(dept);
+                    context.SaveChanges();
+                }
+                else
+                {
+                    dept.Function = sq.Function;
+                    dept.Channels = sq.Channels;
+                    if (lead != null) dept.OwnerId = lead.Id;
+                    context.SaveChanges();
+                }
+
+                // Ensure TeamMembers
+                foreach (var memberName in sq.MemberNames)
+                {
+                    if (userMap.TryGetValue(memberName, out var memberUser))
+                    {
+                        var tm = context.TeamMembers.FirstOrDefault(m => m.DepartmentId == dept.Id && m.UserId == memberUser.Id);
+                        if (tm == null)
+                        {
+                            context.TeamMembers.Add(new TeamMember
+                            {
+                                Id = Guid.NewGuid(),
+                                DepartmentId = dept.Id,
+                                UserId = memberUser.Id,
+                                MemberRole = memberUser.Role,
+                                PrimaryChannel = "Voice",
+                                IsActive = true,
+                                JoinedAt = now
+                            });
+                        }
+                    }
+                }
+            }
+            context.SaveChanges();
+
+            // 3. Ensure a couple of at-risk and open cases for the monitor
+            var sdrDept = context.Departments.FirstOrDefault(d => d.Code == "SDR");
+            var cust = context.Customers.OrderBy(c => c.Id).FirstOrDefault();
+            var farid = userMap.ContainsKey("Farid Rahman") ? userMap["Farid Rahman"] : null;
+            var meiLing = userMap.ContainsKey("Mei Ling Tan") ? userMap["Mei Ling Tan"] : null;
+
+            if (sdrDept != null && cust != null && farid != null && meiLing != null)
+            {
+                if (!context.Cases.Any(c => c.CaseNumber == "CAS-1041"))
+                {
+                    context.Cases.Add(new Case
+                    {
+                        Id = Guid.NewGuid(),
+                        CaseNumber = "CAS-1041",
+                        CaseType = "Complaint",
+                        Title = "Unauthorised card transaction RM 2,500 via ATM",
+                        Description = "Customer disputes unknown cash withdrawal from card ending in 8821.",
+                        Status = CaseStatus.InProgress,
+                        Severity = "High",
+                        SourceChannel = "Voice",
+                        CommunicationChannel = "Voice",
+                        DepartmentId = sdrDept.Id,
+                        CustomerId = cust.Id,
+                        OwnerId = meiLing.Id,
+                        SlaStartTime = now.AddHours(-3.3),
+                        SlaTargetHours = 4,
+                        InternalResolutionDueAt = now.AddMinutes(41),
+                        ExternalResolutionDueAt = now.AddMinutes(90),
+                        CreatedAt = now.AddHours(-3.3)
+                    });
+                }
+
+                if (!context.Cases.Any(c => c.CaseNumber == "CAS-1042"))
+                {
+                    context.Cases.Add(new Case
+                    {
+                        Id = Guid.NewGuid(),
+                        CaseNumber = "CAS-1042",
+                        CaseType = "Service",
+                        Title = "ASB financing payment failed twice after scheduled debit",
+                        Description = "Monthly repayment not reflected in financing balance despite auto-debit deduction.",
+                        Status = CaseStatus.Open,
+                        Severity = "High",
+                        SourceChannel = "Email",
+                        CommunicationChannel = "Email",
+                        DepartmentId = sdrDept.Id,
+                        CustomerId = cust.Id,
+                        OwnerId = farid.Id,
+                        SlaStartTime = now.AddHours(-3.6),
+                        SlaTargetHours = 4,
+                        InternalResolutionDueAt = now.AddMinutes(23),
+                        ExternalResolutionDueAt = now.AddMinutes(60),
+                        CreatedAt = now.AddHours(-3.6)
+                    });
+                }
+                context.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EnsureTeamsAndSquads Error] {ex.Message}");
+        }
+    }
+
+    private static void EnsureRoutingRulesAndSkills(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            // 1. Ensure required departments exist
+            var rfdDept = context.Departments.FirstOrDefault(d => d.Code == "RFD" || d.Name.Contains("Fraud"));
+            if (rfdDept == null)
+            {
+                rfdDept = new Department
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Risk & Fraud Dept",
+                    Code = "RFD",
+                    Function = "Fraud detection and dispute management",
+                    Channels = "Phone,Email,Internal",
+                    IsActive = true,
+                    CreatedAt = now
+                };
+                context.Departments.Add(rfdDept);
+                context.SaveChanges();
+            }
+
+            var pbsDept = context.Departments.FirstOrDefault(d => d.Code == "PBS" || d.Name.Contains("Premier"));
+            if (pbsDept == null)
+            {
+                pbsDept = new Department
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Premier Banking Squad",
+                    Code = "PBS",
+                    Function = "High net worth & priority customer desk",
+                    Channels = "Phone,WhatsApp,Email",
+                    IsActive = true,
+                    CreatedAt = now
+                };
+                context.Departments.Add(pbsDept);
+                context.SaveChanges();
+            }
+
+            var sdrDept = context.Departments.FirstOrDefault(d => d.Code == "SDR" || d.Name.Contains("Service Desk"));
+            var csDept = context.Departments.FirstOrDefault(d => d.Code == "CS" || d.Name.Contains("Campaign"));
+
+            // 2. Ensure default Assignment Configuration
+            if (!context.AssignmentConfigurations.Any())
+            {
+                context.AssignmentConfigurations.Add(new AssignmentConfiguration
+                {
+                    Id = Guid.NewGuid(),
+                    DepartmentId = null,
+                    Algorithm = "RoundRobin",
+                    MaxConcurrentCapacity = 5,
+                    IsActive = true,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+                context.SaveChanges();
+            }
+
+            // 3. Ensure Routing Rules
+            if (!context.RoutingRules.Any())
+            {
+                var r1Target = rfdDept?.Id ?? (sdrDept?.Id ?? Guid.NewGuid());
+                var r2Target = pbsDept?.Id ?? (sdrDept?.Id ?? Guid.NewGuid());
+                var r3Target = csDept?.Id ?? (sdrDept?.Id ?? Guid.NewGuid());
+                var r4Target = sdrDept?.Id ?? Guid.NewGuid();
+
+                var defaultRules = new[]
+                {
+                    new RoutingRule
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = "Fraud keywords → Critical queue",
+                        Description = "Type = Complaint • Channel = Any • Match: keywords 'fraud', 'unauthorised', 'stolen'...",
+                        EvaluationOrder = 1,
+                        IsActive = true,
+                        ConditionsJson = "{\"MatchType\":\"ANY\",\"CaseType\":\"Complaint\",\"Keywords\":[\"fraud\",\"unauthorised\",\"stolen\",\"phishing\",\"chargeback\"]}",
+                        TargetDepartmentId = r1Target,
+                        TargetQueueName = "Risk & Fraud Dept",
+                        ActionDescription = "Route to Risk & Fraud Dept (High Priority)",
+                        CreatedAt = now
+                    },
+                    new RoutingRule
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = "Priority segment fast-lane",
+                        Description = "Priority = High/Critical • Segment = Priority / Premier • Match: any priority case from premier...",
+                        EvaluationOrder = 2,
+                        IsActive = true,
+                        ConditionsJson = "{\"MatchType\":\"ALL\",\"Priority\":\"Critical\",\"CustomerSegment\":\"Priority\"}",
+                        TargetDepartmentId = r2Target,
+                        TargetQueueName = "Premier Banking Squad",
+                        ActionDescription = "Route to Premier Banking Squad",
+                        CreatedAt = now
+                    },
+                    new RoutingRule
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = "Social channel → Digital team",
+                        Description = "Channel = Social • Type = Any • Match: all incoming social media cases (Twitter, Facebook, IG)...",
+                        EvaluationOrder = 3,
+                        IsActive = true,
+                        ConditionsJson = "{\"MatchType\":\"ALL\",\"Channel\":\"Social\"}",
+                        TargetDepartmentId = r3Target,
+                        TargetQueueName = "Campaign Studio",
+                        ActionDescription = "Route to Campaign Studio",
+                        CreatedAt = now
+                    },
+                    new RoutingRule
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = "SME complaints → RM notify",
+                        Description = "Segment = SME • Type = Complaint • Match: all SME complaints; auto-assign to SME desk and alert RM...",
+                        EvaluationOrder = 4,
+                        IsActive = false,
+                        ConditionsJson = "{\"MatchType\":\"ALL\",\"CaseType\":\"Complaint\",\"CustomerSegment\":\"SME\"}",
+                        TargetDepartmentId = r4Target,
+                        TargetQueueName = "Service Desk — Retail",
+                        ActionDescription = "Route to Service Desk — Retail",
+                        CreatedAt = now
+                    }
+                };
+
+                context.RoutingRules.AddRange(defaultRules);
+                context.SaveChanges();
+            }
+
+            // 4. Ensure Agent Skills
+            if (!context.AgentSkills.Any())
+            {
+                var skillsToSeed = new (string UserEmail, string Skill, int Level)[]
+                {
+                    ("priya.nair@bank.com", "Social", 5),
+                    ("priya.nair@bank.com", "Digital", 4),
+                    ("priya.nair@bank.com", "Complaints", 4),
+                    ("meiling@bank.com", "Digital", 5),
+                    ("meiling@bank.com", "Chat", 4),
+                    ("meiling@bank.com", "Fraud", 3),
+                    ("farid.rahman@bank.com", "Voice", 5),
+                    ("farid.rahman@bank.com", "Retail", 4),
+                    ("farid.rahman@bank.com", "General", 4),
+                    ("rajesh.kumar@bank.com", "Sales", 5),
+                    ("rajesh.kumar@bank.com", "Leads", 4),
+                    ("rajesh.kumar@bank.com", "Cards", 4),
+                    ("siti.hajar@bank.com", "Email", 5),
+                    ("siti.hajar@bank.com", "SME", 4),
+                    ("siti.hajar@bank.com", "Billing", 3)
+                };
+
+                foreach (var item in skillsToSeed)
+                {
+                    var user = context.Users.FirstOrDefault(u => u.Email == item.UserEmail);
+                    if (user != null)
+                    {
+                        context.AgentSkills.Add(new AgentSkill
+                        {
+                            Id = Guid.NewGuid(),
+                            UserId = user.Id,
+                            SkillName = item.Skill,
+                            ProficiencyLevel = item.Level,
+                            CreatedAt = now
+                        });
+                    }
+                }
+                context.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EnsureRoutingRulesAndSkills Error] {ex.Message}");
+        }
+    }
 }
+

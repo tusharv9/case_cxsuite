@@ -14,13 +14,21 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Info,
   X,
-  Edit2
+  Edit2,
+  GitBranch,
+  ArrowRight,
+  GripVertical
 } from 'lucide-react';
 import { slaRoutingService } from '../../services/slaRoutingService.js';
+import { routingRuleService } from '../../services/routingRuleService.js';
+import { teamService } from '../../services/teamService.js';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog/ConfirmDialog.jsx';
+import { CreateRoutingRuleDrawer } from '../../components/drawer/CreateRoutingRuleDrawer/CreateRoutingRuleDrawer.jsx';
 import './CasesSlaRoutingPage.css';
 
 export function CasesSlaRoutingPage() {
@@ -72,6 +80,15 @@ export function CasesSlaRoutingPage() {
   const [levelToDelete, setLevelToDelete] = useState(null);
   const [isDeletingLevel, setIsDeletingLevel] = useState(false);
 
+  // Routing Rules & Assignment State
+  const [routingRules, setRoutingRules] = useState([]);
+  const [assignmentConfig, setAssignmentConfig] = useState({ algorithm: 'RoundRobin', maxConcurrentCapacity: 5 });
+  const [availableDepartments, setAvailableDepartments] = useState([]);
+  const [ruleDrawerOpen, setRuleDrawerOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
+  const [ruleToDelete, setRuleToDelete] = useState(null);
+  const [isDeletingRule, setIsDeletingRule] = useState(false);
+
   // Load configuration on mount
   useEffect(() => {
     loadConfiguration();
@@ -81,7 +98,13 @@ export function CasesSlaRoutingPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await slaRoutingService.getConfiguration();
+      const [data, rulesData, configData, teamsData] = await Promise.all([
+        slaRoutingService.getConfiguration(),
+        routingRuleService.getRules().catch(() => []),
+        routingRuleService.getAssignmentConfig().catch(() => ({ algorithm: 'RoundRobin', maxConcurrentCapacity: 5 })),
+        teamService.getAllTeams().catch(() => [])
+      ]);
+
       setPriorityRules(data.priorityRules || []);
       setBusinessHours(data.businessHours || []);
       setPublicHolidays(data.publicHolidays || []);
@@ -89,6 +112,10 @@ export function CasesSlaRoutingPage() {
       setAvailableCategories(data.availableCategories || []);
       setAvailableRoles(data.availableRoles || []);
       setAvailableUsers(data.availableUsers || []);
+
+      setRoutingRules(rulesData || []);
+      setAssignmentConfig(configData || { algorithm: 'RoundRobin', maxConcurrentCapacity: 5 });
+      setAvailableDepartments(teamsData || []);
 
       setPristineState(JSON.stringify({
         priorityRules: data.priorityRules || [],
@@ -100,6 +127,98 @@ export function CasesSlaRoutingPage() {
       setError(err?.response?.data?.error || err.message || 'Failed to load configuration.');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshRoutingRules() {
+    try {
+      const [rulesData, configData] = await Promise.all([
+        routingRuleService.getRules(),
+        routingRuleService.getAssignmentConfig()
+      ]);
+      setRoutingRules(rulesData || []);
+      setAssignmentConfig(configData || { algorithm: 'RoundRobin', maxConcurrentCapacity: 5 });
+    } catch (err) {
+      console.error('Failed to refresh routing rules:', err);
+    }
+  }
+
+  async function handleToggleRule(ruleId) {
+    try {
+      // Optimistic update
+      setRoutingRules(prev => prev.map(r => r.id === ruleId ? { ...r, isActive: !r.isActive } : r));
+      const updated = await routingRuleService.toggleRule(ruleId);
+      setRoutingRules(prev => prev.map(r => r.id === ruleId ? updated : r));
+      setSuccessMessage(`Routing rule '${updated.name}' is now ${updated.isActive ? 'Active' : 'Inactive'}.`);
+    } catch (err) {
+      console.error('Failed to toggle routing rule:', err);
+      setError('Failed to update rule status. Please try again.');
+      refreshRoutingRules();
+    }
+  }
+
+  async function handleConfirmDeleteRule() {
+    if (!ruleToDelete) return;
+    setIsDeletingRule(true);
+    try {
+      await routingRuleService.deleteRule(ruleToDelete.id);
+      setRoutingRules(prev => prev.filter(r => r.id !== ruleToDelete.id));
+      setSuccessMessage(`Routing rule '${ruleToDelete.name}' deleted successfully.`);
+      setRuleToDelete(null);
+    } catch (err) {
+      console.error('Failed to delete routing rule:', err);
+      setError('Failed to delete routing rule.');
+    } finally {
+      setIsDeletingRule(false);
+    }
+  }
+
+  async function handleMoveRule(index, direction) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= routingRules.length) return;
+
+    const newRules = [...routingRules];
+    const temp = newRules[index];
+    newRules[index] = newRules[targetIndex];
+    newRules[targetIndex] = temp;
+
+    // Update evaluation orders
+    const updatedWithOrder = newRules.map((r, i) => ({ ...r, evaluationOrder: i + 1 }));
+    setRoutingRules(updatedWithOrder);
+
+    try {
+      await routingRuleService.reorderRules(updatedWithOrder.map(r => r.id));
+    } catch (err) {
+      console.error('Failed to reorder rules:', err);
+      refreshRoutingRules();
+    }
+  }
+
+  async function handleSelectAlgorithm(algo) {
+    try {
+      setAssignmentConfig(prev => ({ ...prev, algorithm: algo }));
+      const updated = await routingRuleService.updateAssignmentConfig({
+        algorithm: algo,
+        maxConcurrentCapacity: assignmentConfig.maxConcurrentCapacity
+      });
+      setAssignmentConfig(updated);
+      setSuccessMessage(`Assignment algorithm updated to '${algo}'.`);
+    } catch (err) {
+      console.error('Failed to update assignment algorithm:', err);
+      setError('Failed to update assignment algorithm.');
+    }
+  }
+
+  async function handleCapacityChange(capacity) {
+    try {
+      setAssignmentConfig(prev => ({ ...prev, maxConcurrentCapacity: capacity }));
+      const updated = await routingRuleService.updateAssignmentConfig({
+        algorithm: assignmentConfig.algorithm,
+        maxConcurrentCapacity: capacity
+      });
+      setAssignmentConfig(updated);
+    } catch (err) {
+      console.error('Failed to update capacity:', err);
     }
   }
 
@@ -668,6 +787,15 @@ export function CasesSlaRoutingPage() {
           <Layers size={14} />
           <span>Escalation Matrix</span>
         </button>
+        <button
+          type="button"
+          id="tab-routing-rules"
+          className={`sla-nav-tab ${activeTab === 'routing-rules' ? 'sla-nav-tab--active' : ''}`}
+          onClick={() => setActiveTab('routing-rules')}
+        >
+          <GitBranch size={14} />
+          <span>Routing Rules</span>
+        </button>
       </div>
 
       {/* 3. MAIN CONTENT BODY */}
@@ -1093,6 +1221,224 @@ export function CasesSlaRoutingPage() {
           </section>
         )}
 
+        {/* ==================== TAB 4: ROUTING RULES & CASE ASSIGNMENT ENGINE ==================== */}
+        {activeTab === 'routing-rules' && (
+          <section className="routing-rules-tab-content" aria-label="Routing Rules & Case Assignment">
+            {/* Header with Title, Subtitle, and Add Rule Button */}
+            <div className="routing-tab-header">
+              <div className="routing-tab-header__left">
+                <h2 className="routing-tab-header__title">Routing Rules</h2>
+                <p className="routing-tab-header__subtitle">
+                  Rules are evaluated top-down on intake. The first matching rule determines the initial queue and priority.
+                </p>
+              </div>
+              <button
+                type="button"
+                id="btn-add-routing-rule"
+                className="sla-btn sla-btn--primary"
+                onClick={() => {
+                  setEditingRule(null);
+                  setRuleDrawerOpen(true);
+                }}
+              >
+                <Plus size={16} />
+                <span>Add Rule</span>
+              </button>
+            </div>
+
+            {/* Rules Cards List */}
+            <div className="routing-rules-list">
+              {routingRules.length === 0 ? (
+                <div className="sla-empty-holidays">
+                  No routing rules configured. Click &quot;Add Rule&quot; to define intake routing logic.
+                </div>
+              ) : (
+                routingRules.map((rule, idx) => {
+                  const isFirst = idx === 0;
+                  const isLast = idx === routingRules.length - 1;
+
+                  return (
+                    <div
+                      key={rule.id}
+                      className={`routing-rule-card ${!rule.isActive ? 'routing-rule-card--inactive' : ''}`}
+                    >
+                      <div className="routing-rule-card__top">
+                        <div className="routing-rule-card__title-wrap">
+                          <div className="routing-rule-card__drag-handle" title="Rule order">
+                            <GripVertical size={16} />
+                          </div>
+                          <span className="routing-rule-card__order-badge">#{rule.evaluationOrder || idx + 1}</span>
+                          <span className="routing-rule-card__name">{rule.name}</span>
+                        </div>
+
+                        <div className="routing-rule-card__actions">
+                          {/* STRICT ENTERPRISE BLUE TOGGLE */}
+                          <div className="routing-toggle-wrap">
+                            <button
+                              type="button"
+                              className={`routing-toggle-switch ${rule.isActive ? 'routing-toggle-switch--active' : ''}`}
+                              onClick={() => handleToggleRule(rule.id)}
+                              title={rule.isActive ? 'Deactivate rule' : 'Activate rule'}
+                              aria-pressed={rule.isActive}
+                            >
+                              <span className="routing-toggle-knob" />
+                            </button>
+                            <span className="routing-toggle-label">{rule.isActive ? 'Active' : 'Inactive'}</span>
+                          </div>
+
+                          {/* Order Buttons */}
+                          <div className="routing-order-btns">
+                            <button
+                              type="button"
+                              className="routing-icon-btn"
+                              title="Move up"
+                              disabled={isFirst}
+                              onClick={() => handleMoveRule(idx, -1)}
+                            >
+                              <ChevronUp size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              className="routing-icon-btn"
+                              title="Move down"
+                              disabled={isLast}
+                              onClick={() => handleMoveRule(idx, 1)}
+                            >
+                              <ChevronDown size={15} />
+                            </button>
+                          </div>
+
+                          {/* Edit Button */}
+                          <button
+                            type="button"
+                            className="routing-icon-btn"
+                            title="Edit rule"
+                            onClick={() => {
+                              setEditingRule(rule);
+                              setRuleDrawerOpen(true);
+                            }}
+                          >
+                            <Edit2 size={15} />
+                          </button>
+
+                          {/* Delete Button */}
+                          <button
+                            type="button"
+                            className="routing-icon-btn routing-icon-btn--delete"
+                            title="Delete rule"
+                            onClick={() => setRuleToDelete(rule)}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {rule.description && (
+                        <div className="routing-rule-card__desc">
+                          {rule.description}
+                        </div>
+                      )}
+
+                      <div className="routing-rule-card__bottom">
+                        <span className="routing-dest-badge">
+                          <ArrowRight size={13} className="routing-dest-badge__arrow" />
+                          <span>{rule.targetDepartmentName || rule.targetQueueName || 'Destination Team'}</span>
+                        </span>
+                        {rule.actionDescription && (
+                          <span className="routing-action-note">{rule.actionDescription}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Case Assignment Algorithm Section (Matching Reference Screenshot) */}
+            <div className="routing-algo-section">
+              <div className="routing-algo-section__header">
+                <h3 className="routing-algo-section__title">Case Assignment Algorithm</h3>
+                <p className="routing-algo-section__subtitle">
+                  How cases are distributed to agents within the routed queue.
+                </p>
+              </div>
+
+              <div className="routing-algo-grid">
+                {/* 1. Round-robin */}
+                <div
+                  className={`routing-algo-card ${assignmentConfig.algorithm === 'RoundRobin' ? 'routing-algo-card--selected' : ''}`}
+                  onClick={() => handleSelectAlgorithm('RoundRobin')}
+                >
+                  <div className="routing-algo-card__radio-row">
+                    <div className="routing-algo-card__radio-circle">
+                      {assignmentConfig.algorithm === 'RoundRobin' && <div className="routing-algo-card__radio-inner" />}
+                    </div>
+                    <span className="routing-algo-card__title">Round-robin</span>
+                    {assignmentConfig.algorithm === 'RoundRobin' && (
+                      <span className="routing-algo-card__badge">Active default</span>
+                    )}
+                  </div>
+                  <p className="routing-algo-card__desc">
+                    Sequentially distributes cases evenly across all online queue members.
+                  </p>
+                </div>
+
+                {/* 2. Skill-based */}
+                <div
+                  className={`routing-algo-card ${assignmentConfig.algorithm === 'SkillBased' ? 'routing-algo-card--selected' : ''}`}
+                  onClick={() => handleSelectAlgorithm('SkillBased')}
+                >
+                  <div className="routing-algo-card__radio-row">
+                    <div className="routing-algo-card__radio-circle">
+                      {assignmentConfig.algorithm === 'SkillBased' && <div className="routing-algo-card__radio-inner" />}
+                    </div>
+                    <span className="routing-algo-card__title">Skill-based</span>
+                    {assignmentConfig.algorithm === 'SkillBased' && (
+                      <span className="routing-algo-card__badge">Active</span>
+                    )}
+                  </div>
+                  <p className="routing-algo-card__desc">
+                    Matches case category, language, and complexity to agent proficiency ratings.
+                  </p>
+                </div>
+
+                {/* 3. Least occupancy */}
+                <div
+                  className={`routing-algo-card ${assignmentConfig.algorithm === 'LeastOccupancy' ? 'routing-algo-card--selected' : ''}`}
+                  onClick={() => handleSelectAlgorithm('LeastOccupancy')}
+                >
+                  <div className="routing-algo-card__radio-row">
+                    <div className="routing-algo-card__radio-circle">
+                      {assignmentConfig.algorithm === 'LeastOccupancy' && <div className="routing-algo-card__radio-inner" />}
+                    </div>
+                    <span className="routing-algo-card__title">Least occupancy</span>
+                    {assignmentConfig.algorithm === 'LeastOccupancy' && (
+                      <span className="routing-algo-card__badge">Active</span>
+                    )}
+                  </div>
+                  <p className="routing-algo-card__desc">
+                    Assigns to the agent with the lowest number of currently open cases.
+                  </p>
+                </div>
+              </div>
+
+              {/* Agent Capacity Input */}
+              <div className="routing-capacity-row">
+                <span className="routing-capacity-label">Agent Max Concurrent Capacity:</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  className="routing-capacity-input"
+                  value={assignmentConfig.maxConcurrentCapacity || 5}
+                  onChange={(e) => handleCapacityChange(parseInt(e.target.value, 10) || 5)}
+                />
+                <span className="routing-capacity-hint">active cases per agent before queueing</span>
+              </div>
+            </div>
+          </section>
+        )}
+
       </div>
 
       {/* ==================== PUBLIC HOLIDAY RIGHT-SIDE DRAWER ==================== */}
@@ -1369,6 +1715,36 @@ export function CasesSlaRoutingPage() {
           itemDetails={{
             name: `Level ${levelToDelete.levelNumber}`,
             itemName: `Level ${levelToDelete.levelNumber} (${levelToDelete.targetRole || 'Escalation Step'})`
+          }}
+        />
+      )}
+
+      {/* ==================== CREATE / EDIT ROUTING RULE DRAWER ==================== */}
+      <CreateRoutingRuleDrawer
+        isOpen={ruleDrawerOpen}
+        onClose={() => {
+          setRuleDrawerOpen(false);
+          setEditingRule(null);
+        }}
+        onSuccess={refreshRoutingRules}
+        editingRule={editingRule}
+        availableDepartments={availableDepartments}
+      />
+
+      {/* ==================== DELETE ROUTING RULE CONFIRMATION DIALOG ==================== */}
+      {ruleToDelete && (
+        <ConfirmDialog
+          isOpen={Boolean(ruleToDelete)}
+          title="Delete Routing Rule"
+          message={`Are you sure you want to delete the routing rule "${ruleToDelete.name}"? Incoming cases will no longer be routed by this rule.`}
+          confirmLabel="Delete Rule"
+          isBusy={isDeletingRule}
+          onCancel={() => setRuleToDelete(null)}
+          onConfirm={handleConfirmDeleteRule}
+          variant="destructive"
+          itemDetails={{
+            name: ruleToDelete.name,
+            itemName: ruleToDelete.name
           }}
         />
       )}

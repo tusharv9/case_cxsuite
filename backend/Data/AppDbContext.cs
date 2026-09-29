@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<Customer> Customers { get; set; } = null!;
     public DbSet<User> Users { get; set; } = null!;
     public DbSet<Department> Departments { get; set; } = null!;
+    public DbSet<TeamMember> TeamMembers { get; set; } = null!;
     public DbSet<CaseEvent> CaseEvents { get; set; } = null!;
     public DbSet<CaseParticipant> CaseParticipants { get; set; } = null!;
     public DbSet<LinkedCase> LinkedCases { get; set; } = null!;
@@ -33,6 +34,12 @@ public class AppDbContext : DbContext
     public DbSet<BusinessHour> BusinessHours { get; set; } = null!;
     public DbSet<PublicHoliday> PublicHolidays { get; set; } = null!;
     public DbSet<EscalationLevelConfig> EscalationLevelConfigs { get; set; } = null!;
+
+    // Case Routing & Automatic Assignment Engine
+    public DbSet<RoutingRule> RoutingRules { get; set; } = null!;
+    public DbSet<AssignmentConfiguration> AssignmentConfigurations { get; set; } = null!;
+    public DbSet<AgentSkill> AgentSkills { get; set; } = null!;
+    public DbSet<TeamAssignmentPointer> TeamAssignmentPointers { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -288,6 +295,65 @@ public class AppDbContext : DbContext
             .HasForeignKey(e => e.TargetUserId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.SetNull);
+
+        // Teams (Departments) and Team Members
+        modelBuilder.Entity<TeamMember>()
+            .HasIndex(tm => new { tm.DepartmentId, tm.UserId })
+            .IsUnique();
+
+        modelBuilder.Entity<TeamMember>()
+            .HasOne(tm => tm.Department)
+            .WithMany(d => d.Members)
+            .HasForeignKey(tm => tm.DepartmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<TeamMember>()
+            .HasOne(tm => tm.User)
+            .WithMany()
+            .HasForeignKey(tm => tm.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Routing Rules Configuration
+        modelBuilder.Entity<RoutingRule>()
+            .HasIndex(r => r.EvaluationOrder);
+
+        modelBuilder.Entity<RoutingRule>()
+            .HasOne(r => r.TargetDepartment)
+            .WithMany()
+            .HasForeignKey(r => r.TargetDepartmentId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<AssignmentConfiguration>()
+            .HasOne(ac => ac.Department)
+            .WithMany()
+            .HasForeignKey(ac => ac.DepartmentId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<AgentSkill>()
+            .HasIndex(s => new { s.UserId, s.SkillName })
+            .IsUnique();
+
+        modelBuilder.Entity<AgentSkill>()
+            .HasOne(s => s.User)
+            .WithMany()
+            .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<TeamAssignmentPointer>()
+            .HasKey(p => p.DepartmentId);
+
+        modelBuilder.Entity<TeamAssignmentPointer>()
+            .HasOne(p => p.Department)
+            .WithMany()
+            .HasForeignKey(p => p.DepartmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<TeamAssignmentPointer>()
+            .HasOne(p => p.LastAssignedUser)
+            .WithMany()
+            .HasForeignKey(p => p.LastAssignedUserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     public override int SaveChanges()

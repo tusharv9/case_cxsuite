@@ -12,6 +12,8 @@ const CaseManagementPage   = lazy(() => import('../pages/CaseManagement/CaseMana
 const CaseAuditTrailPage   = lazy(() => import('../pages/CaseAuditTrail/CaseAuditTrailPage.jsx').then(m => ({ default: m.CaseAuditTrailPage })));
 const ConfigurableSettingsPage = lazy(() => import('../pages/ConfigurableSettings/ConfigurableSettingsPage.jsx').then(m => ({ default: m.ConfigurableSettingsPage })));
 const CasesSlaRoutingPage = lazy(() => import('../pages/CasesSlaRouting/CasesSlaRoutingPage.jsx').then(m => ({ default: m.CasesSlaRoutingPage })));
+const TeamsPage = lazy(() => import('../pages/Teams/TeamsPage.jsx').then(m => ({ default: m.TeamsPage })));
+const TeamMonitoringPage = lazy(() => import('../pages/TeamMonitoring/TeamMonitoringPage.jsx').then(m => ({ default: m.TeamMonitoringPage })));
 
 function PageLoader() {
   return (
@@ -41,6 +43,13 @@ export function AppRoutes() {
 
           {/* Cases SLA & Routing Configuration */}
           <Route path="/cases-sla-routing" element={<CasesSlaRoutingPage />} />
+
+          {/* Teams Management */}
+          <Route path="/teams" element={<TeamsPage />} />
+
+          {/* Team Operational Monitoring */}
+          <Route path="/team-monitoring" element={<TeamMonitoringPage />} />
+          <Route path="/team-monitor" element={<TeamMonitoringPage />} />
 
           {/* Case Audit Trail */}
           <Route path="/case-audit" element={<CaseAuditTrailPage />} />

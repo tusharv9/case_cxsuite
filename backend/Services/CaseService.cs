@@ -21,6 +21,7 @@ public class CaseService : ICaseService
     private readonly IPiiMaskingService? _piiMasking;
     private readonly IBusinessTimeService? _businessTimeService;
     private readonly ISlaRoutingService? _slaRoutingService;
+    private readonly IRoutingEngineService? _routingEngine;
 
     public CaseService(
         ICaseRepository caseRepository,
@@ -31,7 +32,8 @@ public class CaseService : ICaseService
         IOptions<AttachmentOptions>? attachmentOptions = null,
         IPiiMaskingService? piiMasking = null,
         IBusinessTimeService? businessTimeService = null,
-        ISlaRoutingService? slaRoutingService = null)
+        ISlaRoutingService? slaRoutingService = null,
+        IRoutingEngineService? routingEngine = null)
     {
         _caseRepository = caseRepository;
         _notificationService = notificationService;
@@ -42,6 +44,7 @@ public class CaseService : ICaseService
         _piiMasking = piiMasking;
         _businessTimeService = businessTimeService;
         _slaRoutingService = slaRoutingService;
+        _routingEngine = routingEngine;
     }
 
     /// <summary>
@@ -210,6 +213,14 @@ public class CaseService : ICaseService
             EscalationLevel = 1,
         };
 
+        // 4. Case Routing & Automatic Agent Assignment Engine
+        RoutingDecisionResult? routingDecision = null;
+        if (_routingEngine != null)
+        {
+            var customer = await _context.Customers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == dto.CustomerId);
+            routingDecision = await _routingEngine.RouteAndAssignCaseAsync(newCase, customer);
+        }
+
         var caseEvent = new CaseEvent
         {
             CaseId = newCase.Id,
@@ -219,10 +230,27 @@ public class CaseService : ICaseService
             UserId = createdByUserId
         };
 
+        CaseEvent? routingEvent = null;
+        if (routingDecision != null && !string.IsNullOrWhiteSpace(routingDecision.RoutingLogMessage))
+        {
+            routingEvent = new CaseEvent
+            {
+                CaseId = newCase.Id,
+                EventType = EventType.Assign,
+                Message = routingDecision.RoutingLogMessage,
+                CreatedAt = DateTime.UtcNow,
+                UserId = createdByUserId
+            };
+        }
+
         await ExecuteInTransactionAsync(async () =>
         {
             await _caseRepository.AddAsync(newCase);
             await _caseRepository.AddEventAsync(caseEvent);
+            if (routingEvent != null)
+            {
+                await _caseRepository.AddEventAsync(routingEvent);
+            }
         });
 
         try
@@ -2482,7 +2510,7 @@ public class CaseService : ICaseService
         // System invariants: CustomerId and DepartmentId are essential database relationships
         if (dto.CustomerId == Guid.Empty)
             throw new ArgumentException("A valid customer must be selected.");
-        if (dto.DepartmentId == Guid.Empty)
+        if (dto.DepartmentId == Guid.Empty && _routingEngine == null)
             throw new ArgumentException("A valid department must be selected.");
 
         var configs = await _context.FieldConfigurations
@@ -2513,6 +2541,13 @@ public class CaseService : ICaseService
             };
 
             var strVal = val?.Trim();
+
+            // If department is configured as required in FieldConfigurations, but automatic routing engine is active,
+            // the routing engine resolves and assigns the team automatically.
+            if (cfg.ApiField.Equals("departmentid", StringComparison.OrdinalIgnoreCase) && _routingEngine != null)
+            {
+                continue;
+            }
 
             // 1. Mandatory check
             if (cfg.IsRequired && string.IsNullOrEmpty(strVal))

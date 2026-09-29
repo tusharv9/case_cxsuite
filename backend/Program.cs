@@ -3,6 +3,7 @@ using CaseManagement.Api.Extensions;
 using CaseManagement.Api.Middleware;
 using CaseManagement.Api.Repositories;
 using CaseManagement.Api.Services;
+using CaseManagement.Api.Services.Strategies;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Microsoft.EntityFrameworkCore;
@@ -72,6 +73,12 @@ builder.Services.AddScoped<IConfigurableSettingsService, ConfigurableSettingsSer
 builder.Services.AddScoped<IPiiMaskingService, PiiMaskingService>();
 builder.Services.AddScoped<IBusinessTimeService, BusinessTimeService>();
 builder.Services.AddScoped<ISlaRoutingService, SlaRoutingService>();
+builder.Services.AddScoped<ITeamService, TeamService>();
+builder.Services.AddScoped<ITeamMonitoringService, TeamMonitoringService>();
+builder.Services.AddScoped<IAssignmentStrategy, RoundRobinAssignmentStrategy>();
+builder.Services.AddScoped<IAssignmentStrategy, LeastOccupancyAssignmentStrategy>();
+builder.Services.AddScoped<IAssignmentStrategy, SkillBasedAssignmentStrategy>();
+builder.Services.AddScoped<IRoutingEngineService, RoutingEngineService>();
 
 // Register SLA Escalation Background Worker
 builder.Services.AddHostedService<SlaEscalationBackgroundService>();
@@ -286,6 +293,70 @@ using (var scope = app.Services.CreateScope())
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""Channel"" text NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""Team"" text NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""Queue"" text NULL;");
+        
+        // Departments (Teams) Function & Channels
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Departments"" ADD COLUMN IF NOT EXISTS ""Function"" text DEFAULT '';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Departments"" ADD COLUMN IF NOT EXISTS ""Channels"" text DEFAULT 'Voice,Chat,Email';");
+
+        // TeamMembers squad table
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""TeamMembers"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_TeamMembers"" PRIMARY KEY,
+                ""DepartmentId"" uuid NOT NULL CONSTRAINT ""FK_TeamMembers_Departments"" REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
+                ""UserId"" uuid NOT NULL CONSTRAINT ""FK_TeamMembers_Users"" REFERENCES ""Users"" (""Id"") ON DELETE CASCADE,
+                ""MemberRole"" text NOT NULL DEFAULT 'Service Agent',
+                ""PrimaryChannel"" text NOT NULL DEFAULT 'Voice',
+                ""IsActive"" boolean NOT NULL DEFAULT true,
+                ""JoinedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_TeamMembers_DepartmentId_UserId"" ON ""TeamMembers"" (""DepartmentId"", ""UserId"");
+        ");
+
+        // Routing Rules & Assignment Engine Tables
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""RoutingRules"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_RoutingRules"" PRIMARY KEY,
+                ""Name"" text NOT NULL,
+                ""Description"" text NOT NULL DEFAULT '',
+                ""EvaluationOrder"" integer NOT NULL DEFAULT 1,
+                ""IsActive"" boolean NOT NULL DEFAULT true,
+                ""ConditionsJson"" text NOT NULL DEFAULT '{{}}',
+                ""TargetDepartmentId"" uuid NOT NULL CONSTRAINT ""FK_RoutingRules_Departments"" REFERENCES ""Departments"" (""Id"") ON DELETE RESTRICT,
+                ""TargetQueueName"" text NULL,
+                ""ActionDescription"" text NOT NULL DEFAULT '',
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE INDEX IF NOT EXISTS ""IX_RoutingRules_EvaluationOrder"" ON ""RoutingRules"" (""EvaluationOrder"");
+
+            CREATE TABLE IF NOT EXISTS ""AssignmentConfigurations"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_AssignmentConfigurations"" PRIMARY KEY,
+                ""DepartmentId"" uuid NULL CONSTRAINT ""FK_AssignmentConfigurations_Departments"" REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
+                ""Algorithm"" text NOT NULL DEFAULT 'RoundRobin',
+                ""MaxConcurrentCapacity"" integer NOT NULL DEFAULT 5,
+                ""IsActive"" boolean NOT NULL DEFAULT true,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ""AgentSkills"" (
+                ""Id"" uuid NOT NULL CONSTRAINT ""PK_AgentSkills"" PRIMARY KEY,
+                ""UserId"" uuid NOT NULL CONSTRAINT ""FK_AgentSkills_Users"" REFERENCES ""Users"" (""Id"") ON DELETE CASCADE,
+                ""SkillName"" text NOT NULL,
+                ""ProficiencyLevel"" integer NOT NULL DEFAULT 1,
+                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
+                ""UpdatedAt"" timestamp with time zone NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AgentSkills_UserId_SkillName"" ON ""AgentSkills"" (""UserId"", ""SkillName"");
+
+            CREATE TABLE IF NOT EXISTS ""TeamAssignmentPointers"" (
+                ""DepartmentId"" uuid NOT NULL CONSTRAINT ""PK_TeamAssignmentPointers"" PRIMARY KEY REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
+                ""LastAssignedUserId"" uuid NOT NULL CONSTRAINT ""FK_TeamAssignmentPointers_Users"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
+                ""LastAssignedAt"" timestamp with time zone NOT NULL DEFAULT NOW()
+            );
+        ");
 
         db.Database.ExecuteSqlRaw(@"
             CREATE TABLE IF NOT EXISTS ""CaseAttachments"" (
