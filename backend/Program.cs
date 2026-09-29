@@ -563,7 +563,10 @@ using (var scope = app.Services.CreateScope())
     DbSeeder.Seed(db);
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseCors("ReactPolicy");
 

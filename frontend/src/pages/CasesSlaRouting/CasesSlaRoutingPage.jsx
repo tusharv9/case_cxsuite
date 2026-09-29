@@ -824,20 +824,15 @@ export function CasesSlaRoutingPage() {
         {activeTab === 'operating-hours' && (
           <div className="sla-operating-hours-container">
             {/* SUB-SECTION 1: BUSINESS OPERATING HOURS (LEFT COLUMN) */}
-            <section className="sla-card" id="business-operating-hours">
-              <div className="sla-card__header">
-                <div className="sla-card__header-left">
-                  <div className="sla-card__header-icon">
-                    <Calendar size={18} />
-                  </div>
-                  <div>
-                    <h2 className="sla-card__title">Business hours</h2>
-                    <span className="sla-card__subtitle">MY · GMT+8 · drives SLA clocks</span>
-                  </div>
+            <section className="sla-bh-card" id="business-operating-hours">
+              <div className="sla-bh-card__header">
+                <div>
+                  <h2 className="sla-bh-card__title">Business hours</h2>
                 </div>
+                <span className="sla-bh-card__badge">MY · GMT+8 · drives SLA clocks</span>
               </div>
 
-              <div className="sla-card__body">
+              <div className="sla-bh-card__body">
                 <div className="sla-business-hours-grid">
                   {[
                     {
@@ -868,109 +863,83 @@ export function CasesSlaRoutingPage() {
                       onTimeChange: (field, val) => handleBusinessHourTimeChange(0, field, val)
                     }
                   ].map(row => {
-                    let durationText = 'Closed / Non-Working';
-                    let isInvalidTime = false;
-                    if (row.isEnabled && row.startTime && row.endTime) {
-                      const [sH, sM] = row.startTime.split(':').map(Number);
-                      const [eH, eM] = row.endTime.split(':').map(Number);
-                      const totalMin = (eH * 60 + eM) - (sH * 60 + sM);
-                      if (totalMin > 0) {
-                        const hrs = (totalMin / 60).toFixed(1);
-                        durationText = `${hrs} hrs / day`;
-                      } else {
-                        durationText = 'Invalid Time Range';
-                        isInvalidTime = true;
-                      }
-                    }
+                    const isInvalidTime = row.isEnabled && row.startTime && row.endTime &&
+                      row.startTime >= row.endTime;
 
                     return (
                       <div
                         key={row.id}
-                        className={`sla-bh-row ${!row.isEnabled ? 'sla-bh-row--disabled' : ''} ${isInvalidTime ? 'sla-bh-row--error' : ''}`}
+                        className={`sla-bh-row2 ${!row.isEnabled ? 'sla-bh-row2--disabled' : ''} ${isInvalidTime ? 'sla-bh-row2--error' : ''}`}
                       >
-                        <div className="sla-bh-row__left">
-                          <label className="sla-switch" title={row.isEnabled ? `${row.label} Enabled` : `${row.label} Disabled`}>
+                        {/* Toggle + Day Name */}
+                        <div className="sla-bh-row2__left">
+                          <label className="sla-switch2" title={row.isEnabled ? `${row.label} Enabled` : `${row.label} Disabled`}>
                             <input
                               type="checkbox"
                               id={`toggle-day-${row.id}`}
                               checked={row.isEnabled}
                               onChange={row.onToggle}
                             />
-                            <span className="sla-slider" />
+                            <span className="sla-slider2" />
                           </label>
-                          <span className="sla-bh-day-name">{row.label}</span>
+                          <span className="sla-bh-row2__day">{row.label}</span>
                         </div>
 
-                        <div className="sla-bh-row__times">
-                          <span className="sla-bh-time-label">Opens:</span>
-                          <input
-                            type="time"
-                            id={`input-time-start-${row.id}`}
-                            className="sla-bh-time-input"
-                            value={row.startTime}
-                            disabled={!row.isEnabled}
-                            onChange={(e) => row.onTimeChange('startTime', e.target.value)}
-                          />
-                          <span className="sla-bh-time-sep">—</span>
-                          <span className="sla-bh-time-label">Closes:</span>
-                          <input
-                            type="time"
-                            id={`input-time-end-${row.id}`}
-                            className="sla-bh-time-input"
-                            value={row.endTime}
-                            disabled={!row.isEnabled}
-                            onChange={(e) => row.onTimeChange('endTime', e.target.value)}
-                          />
-                        </div>
-
-                        <div className={`sla-bh-duration-pill ${!row.isEnabled ? 'sla-bh-duration-pill--closed' : ''} ${isInvalidTime ? 'sla-bh-duration-pill--error' : ''}`}>
-                          <Clock size={12} />
-                          <span>{durationText}</span>
+                        {/* Time Range */}
+                        <div className="sla-bh-row2__times">
+                          {row.isEnabled ? (
+                            <>
+                              <input
+                                type="time"
+                                id={`input-time-start-${row.id}`}
+                                className="sla-bh-time2"
+                                value={row.startTime}
+                                onChange={(e) => row.onTimeChange('startTime', e.target.value)}
+                              />
+                              <span className="sla-bh-sep">–</span>
+                              <input
+                                type="time"
+                                id={`input-time-end-${row.id}`}
+                                className="sla-bh-time2"
+                                value={row.endTime}
+                                onChange={(e) => row.onTimeChange('endTime', e.target.value)}
+                              />
+                            </>
+                          ) : (
+                            <>
+                              <span className="sla-bh-dash">—</span>
+                              <span className="sla-bh-sep">–</span>
+                              <span className="sla-bh-dash">—</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                <div className="sla-bh-pause-notice">
-                  <Info size={15} style={{ color: '#2563eb', flexShrink: 0 }} />
+                <div className="sla-bh-notice">
+                  <Info size={14} style={{ color: '#2563eb', flexShrink: 0 }} />
                   <span>SLA timers pause outside business hours and on public holidays.</span>
                 </div>
               </div>
             </section>
 
             {/* SUB-SECTION 2: PUBLIC HOLIDAYS */}
-            <section className="sla-card" id="public-holidays">
-              <div className="sla-card__header">
-                <div className="sla-card__header-left">
-                  <div className="sla-card__header-icon">
-                    <Info size={18} />
-                  </div>
-                  <div>
-                    <h2 className="sla-card__title">Public holidays</h2>
-                    <span className="sla-card__subtitle">SLA-exempt days</span>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  id="btn-add-public-holiday"
-                  className="sla-btn sla-btn--blue"
-                  onClick={openAddHolidayDrawer}
-                >
-                  <Plus size={14} />
-                  <span>Add Public Holiday</span>
-                </button>
+            <section className="sla-ph-card" id="public-holidays">
+              <div className="sla-ph-card__header">
+                <h2 className="sla-ph-card__title">Public holidays</h2>
+                <span className="sla-ph-card__badge">SLA-exempt days</span>
               </div>
 
-              <div className="sla-card__body">
+              <div className="sla-ph-card__body">
                 {publicHolidays.length === 0 ? (
                   <div className="sla-empty-holidays">
                     <Calendar size={32} strokeWidth={1.5} style={{ color: '#94a3b8', marginBottom: '8px' }} />
-                    <p>No public holidays registered. Click "Add Public Holiday" above to register statutory holidays.</p>
+                    <p>No public holidays registered yet. Use the field below to add one.</p>
                   </div>
                 ) : (
-                  <div className="sla-holidays-list">
+                  <div className="sla-ph-list">
                     {publicHolidays.map(holiday => {
                       const dateObj = new Date(holiday.holidayDate);
                       const formattedDate = dateObj.toLocaleDateString('en-GB', {
@@ -980,31 +949,18 @@ export function CasesSlaRoutingPage() {
                       });
 
                       return (
-                        <div key={holiday.id} className="sla-holiday-row">
-                          <div className="sla-holiday-row__name">
-                            {holiday.name}
-                          </div>
-                          <div className="sla-holiday-row__right">
-                            <span className="sla-holiday-date-pill">
-                              {formattedDate}
-                            </span>
-                            <button
-                              type="button"
-                              id={`btn-edit-holiday-${holiday.id}`}
-                              className="sla-holiday-edit-btn"
-                              onClick={() => openEditHolidayDrawer(holiday)}
-                              title="Edit Holiday"
-                            >
-                              <Edit2 size={13} />
-                            </button>
+                        <div key={holiday.id} className="sla-ph-row">
+                          <span className="sla-ph-row__name">{holiday.name}</span>
+                          <div className="sla-ph-row__right">
+                            <span className="sla-ph-date-pill">{formattedDate}</span>
                             <button
                               type="button"
                               id={`btn-delete-holiday-${holiday.id}`}
-                              className="sla-holiday-delete-btn"
+                              className="sla-ph-delete-btn"
                               onClick={() => handleRequestDeleteHoliday(holiday)}
-                              title="Delete Holiday"
+                              title="Remove Holiday"
                             >
-                              <X size={15} />
+                              <X size={14} />
                             </button>
                           </div>
                         </div>
@@ -1013,16 +969,16 @@ export function CasesSlaRoutingPage() {
                   </div>
                 )}
 
-                {/* Inline Quick Add matching reference image */}
-                <form className="sla-holiday-quick-add" onSubmit={handleQuickAddHoliday}>
+                {/* Quick Add Row */}
+                <form className="sla-ph-quick-add" onSubmit={handleQuickAddHoliday}>
                   <input
                     type="text"
-                    className="sla-holiday-quick-input"
+                    className="sla-ph-quick-input"
                     placeholder="e.g. Nuzul Al-Quran — 14 Mar 2027"
                     value={quickHolidayText}
                     onChange={(e) => setQuickHolidayText(e.target.value)}
                   />
-                  <button type="submit" className="sla-btn sla-btn--outline" style={{ whiteSpace: 'nowrap' }}>
+                  <button type="submit" className="sla-ph-add-btn">
                     Add
                   </button>
                 </form>

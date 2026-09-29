@@ -1770,7 +1770,7 @@ public class CaseService : ICaseService
             targetUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == dto.TargetUserId.Value);
         }
 
-        if (targetUser == null)
+        if (targetUser == null && _slaRoutingService != null)
         {
             targetUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(existingCase, nextLevel);
         }
@@ -1978,7 +1978,9 @@ public class CaseService : ICaseService
                     if (nextCfg.LevelNumber >= 3) c.SlaBreachedEscalated = true;
                     if (nextCfg.LevelNumber >= 4) c.Sla12hBreachedEscalated = true;
 
-                    User? targetUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(c, nextCfg.LevelNumber, ct);
+                    User? targetUser = _slaRoutingService != null
+                        ? await _slaRoutingService.ResolveNextEscalationTargetAsync(c, nextCfg.LevelNumber, ct)
+                        : null;
                     targetUser ??= await ResolveEscalationTargetAsync(c, nextCfg.LevelNumber);
 
                     if (targetUser != null && nextCfg.ReassignOwner)
@@ -2092,7 +2094,7 @@ public class CaseService : ICaseService
 
         var nextConfig = nextLevel.HasValue ? dbLevels.FirstOrDefault(l => l.LevelNumber == nextLevel.Value) : null;
         User? nextUser = null;
-        if (nextLevel.HasValue && c != null)
+        if (nextLevel.HasValue && c != null && _slaRoutingService != null)
         {
             nextUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(c, nextLevel.Value, ct);
         }
@@ -2101,7 +2103,7 @@ public class CaseService : ICaseService
         foreach (var lvl in dbLevels)
         {
             User? targetUser = null;
-            if (c != null)
+            if (c != null && _slaRoutingService != null)
             {
                 targetUser = await _slaRoutingService.ResolveNextEscalationTargetAsync(c, lvl.LevelNumber, ct);
             }
