@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import './Input.css';
 
-export function FormGroup({ label, required, error, children, htmlFor }) {
+export function FormGroup({ label, required, error, helperText, children, htmlFor }) {
   return (
     <div className="form-group">
       {label && (
@@ -18,32 +18,35 @@ export function FormGroup({ label, required, error, children, htmlFor }) {
       )}
       {children}
       {error && <span className="form-error">{error}</span>}
+      {helperText && !error && <div className="form-helper-text">{helperText}</div>}
     </div>
   );
 }
 
-export function Input({ id, label, required, error, className = '', ...rest }) {
+export function Input({ id, label, required, error, helperText, className = '', ...rest }) {
   const inputId = id || `input-${Math.random().toString(36).slice(2)}`;
+  const inputClasses = `form-input ${error ? 'form-input--error field-error' : ''} ${className}`.trim();
   if (label) {
     return (
-      <FormGroup label={label} required={required} error={error} htmlFor={inputId}>
-        <input id={inputId} className={`form-input ${className}`} {...rest} />
+      <FormGroup label={label} required={required} error={error} helperText={helperText} htmlFor={inputId}>
+        <input id={inputId} className={inputClasses} {...rest} />
       </FormGroup>
     );
   }
-  return <input id={inputId} className={`form-input ${className}`} {...rest} />;
+  return <input id={inputId} className={inputClasses} {...rest} />;
 }
 
 export function Textarea({ id, label, required, error, rows = 4, className = '', ...rest }) {
   const inputId = id || `textarea-${Math.random().toString(36).slice(2)}`;
+  const textareaClasses = `form-textarea ${error ? 'form-input--error field-error' : ''} ${className}`.trim();
   if (label) {
     return (
       <FormGroup label={label} required={required} error={error} htmlFor={inputId}>
-        <textarea id={inputId} className={`form-textarea ${className}`} rows={rows} {...rest} />
+        <textarea id={inputId} className={textareaClasses} rows={rows} {...rest} />
       </FormGroup>
     );
   }
-  return <textarea id={inputId} className={`form-textarea ${className}`} rows={rows} {...rest} />;
+  return <textarea id={inputId} className={textareaClasses} rows={rows} {...rest} />;
 }
 
 export function Select({
@@ -51,6 +54,7 @@ export function Select({
   label,
   required,
   error,
+  helperText,
   children,
   className = '',
   value,
@@ -125,6 +129,7 @@ export function Select({
       ) {
         setIsOpen(false);
         setSearchQuery('');
+        rest.onBlur?.(e);
       }
     };
 
@@ -190,7 +195,7 @@ export function Select({
     <div className={`custom-select-container ${isOpen ? 'is-open' : ''} ${disabled ? 'is-disabled' : ''}`}>
       <div
         ref={triggerRef}
-        className={`form-select custom-select-trigger ${className} ${disabled ? 'disabled' : ''}`}
+        className={`form-select custom-select-trigger ${error ? 'form-input--error field-error' : ''} ${className} ${disabled ? 'disabled' : ''}`.trim()}
         onClick={() => {
           if (!disabled) setIsOpen(!isOpen);
         }}
@@ -199,6 +204,11 @@ export function Select({
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             setIsOpen(!isOpen);
+          }
+        }}
+        onBlur={(e) => {
+          if (!isOpen && !triggerRef.current?.contains(e.relatedTarget)) {
+            rest.onBlur?.(e);
           }
         }}
         tabIndex={disabled ? -1 : 0}
@@ -259,7 +269,7 @@ export function Select({
 
   if (label) {
     return (
-      <FormGroup label={label} required={required} error={error} htmlFor={inputId}>
+      <FormGroup label={label} required={required} error={error} helperText={helperText} htmlFor={inputId}>
         {selectMarkup}
       </FormGroup>
     );

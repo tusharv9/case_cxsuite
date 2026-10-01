@@ -14,6 +14,7 @@ public class TeamDto
     
     public int MemberCount { get; set; }
     public int QueueCount { get; set; }
+    public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     
     public List<TeamMemberDto> Members { get; set; } = new();
@@ -38,6 +39,7 @@ public class CreateTeamDto
     public string Function { get; set; } = string.Empty;
     public Guid? TeamLeadId { get; set; }
     public string Channels { get; set; } = "Voice,Chat,Email";
+    public bool IsActive { get; set; } = true;
     public List<Guid>? MemberUserIds { get; set; }
 }
 
@@ -48,6 +50,7 @@ public class UpdateTeamDto
     public string? Function { get; set; }
     public Guid? TeamLeadId { get; set; }
     public string? Channels { get; set; }
+    public bool? IsActive { get; set; }
     public List<Guid>? MemberUserIds { get; set; }
 }
 

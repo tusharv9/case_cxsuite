@@ -45,13 +45,23 @@ public class CustomerRepository : ICustomerRepository
 
     public async Task<bool> ExistsByNricAsync(string nric)
     {
-        return await _context.Customers.AnyAsync(c => c.NRIC == nric);
+        if (string.IsNullOrWhiteSpace(nric)) return false;
+        var clean = nric.Trim();
+        var unhyphenated = clean.Replace("-", "").Replace(" ", "");
+        return await _context.Customers.AnyAsync(c =>
+            (c.NRIC != null && (c.NRIC == clean || c.NRIC.Replace("-", "").Replace(" ", "") == unhyphenated)));
+    }
+
+    public async Task<bool> ExistsByPhoneAsync(string phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return false;
+        var clean = phone.Trim().Replace(" ", "").Replace("-", "");
+        return await _context.Customers.AnyAsync(c =>
+            c.PhoneNumber.Replace(" ", "").Replace("-", "") == clean);
     }
 
     /// <summary>
-    /// Header smart-search over customers. Matches the same three fields the old client-side
-    /// filter did (name, NRIC, phone), but as an indexed-scan-friendly database query that
-    /// returns at most <paramref name="limit"/> narrow rows instead of the whole table.
+    /// Header smart-search over customers. Matches name, NRIC, Passport, AccountNumber, phone.
     /// </summary>
     public async Task<IEnumerable<SearchCustomerHitDto>> SearchCustomersAsync(string query, int limit, CancellationToken ct = default)
     {
@@ -60,7 +70,9 @@ public class CustomerRepository : ICustomerRepository
         return await _context.Customers
             .AsNoTracking()
             .Where(c => EF.Functions.ILike(c.FullName, pattern)
-                     || EF.Functions.ILike(c.NRIC, pattern)
+                     || (c.NRIC != null && EF.Functions.ILike(c.NRIC, pattern))
+                     || (c.Passport != null && EF.Functions.ILike(c.Passport, pattern))
+                     || (c.AccountNumber != null && EF.Functions.ILike(c.AccountNumber, pattern))
                      || EF.Functions.ILike(c.PhoneNumber, pattern))
             .OrderBy(c => c.FullName)
             .Take(limit)
@@ -68,12 +80,18 @@ public class CustomerRepository : ICustomerRepository
             {
                 Id = c.Id,
                 FullName = c.FullName,
-                NRIC = c.NRIC
+                NRIC = c.IdType == "Passport Number" ? (c.Passport ?? c.NRIC ?? "") : (c.IdType == "Account Number" ? (c.AccountNumber ?? c.NRIC ?? "") : (c.NRIC ?? ""))
             })
             .ToListAsync(ct);
     }
 
-    public async Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedAsync(string? search, int page, int pageSize, CancellationToken ct = default)
+    public async Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedAsync(
+        string? search,
+        string? preferredLanguage,
+        string? branch,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
     {
         var query = _context.Customers.AsNoTracking().AsQueryable();
 
@@ -81,8 +99,21 @@ public class CustomerRepository : ICustomerRepository
         {
             var pattern = SqlSearchPattern.Contains(search.Trim());
             query = query.Where(c => EF.Functions.ILike(c.FullName, pattern)
-                                  || EF.Functions.ILike(c.NRIC, pattern)
-                                  || EF.Functions.ILike(c.PhoneNumber, pattern));
+                                  || (c.NRIC != null && EF.Functions.ILike(c.NRIC, pattern))
+                                  || (c.Passport != null && EF.Functions.ILike(c.Passport, pattern))
+                                  || (c.AccountNumber != null && EF.Functions.ILike(c.AccountNumber, pattern))
+                                  || EF.Functions.ILike(c.PhoneNumber, pattern)
+                                  || (c.Branch != null && EF.Functions.ILike(c.Branch, pattern)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(preferredLanguage) && preferredLanguage != "all")
+        {
+            query = query.Where(c => c.PreferredLanguage == preferredLanguage);
+        }
+
+        if (!string.IsNullOrWhiteSpace(branch) && branch != "all")
+        {
+            query = query.Where(c => c.Branch == branch);
         }
 
         var totalCount = await query.CountAsync(ct);
@@ -96,10 +127,24 @@ public class CustomerRepository : ICustomerRepository
                 Id = c.Id,
                 FullName = c.FullName,
                 NRIC = c.NRIC,
+                Passport = c.Passport,
+                AccountNumber = c.AccountNumber,
+                IdType = !string.IsNullOrEmpty(c.IdType) ? c.IdType : (c.CustomAttributes
+                    .Where(ca => ca.FieldKey == "idType" || ca.FieldKey == "IdType")
+                    .Select(ca => ca.FieldValue)
+                    .FirstOrDefault() ?? "NRIC Number"),
+                IdValue = c.IdType == "Passport Number" ? (c.Passport ?? c.NRIC ?? "") : (c.IdType == "Account Number" ? (c.AccountNumber ?? c.NRIC ?? "") : (c.NRIC ?? "")),
                 PhoneNumber = c.PhoneNumber,
                 DateOfBirth = c.DateOfBirth,
+                Branch = c.Branch,
+                PreferredLanguage = c.PreferredLanguage,
                 OpenCasesCount = c.Cases.Count(x => x.Status != CaseStatus.Resolved && x.Status != CaseStatus.Closed && x.Status != CaseStatus.Cancelled),
-                TotalCasesCount = c.Cases.Count()
+                TotalCasesCount = c.Cases.Count(),
+                CustomAttributes = c.CustomAttributes.Select(ca => new CustomerCustomAttributeDto
+                {
+                    FieldKey = ca.FieldKey,
+                    FieldValue = ca.FieldValue
+                }).ToList()
             })
             .ToListAsync(ct);
 
@@ -121,7 +166,10 @@ public class CustomerRepository : ICustomerRepository
         if (!string.IsNullOrWhiteSpace(dto.IdValue))
         {
             var cleanId = dto.IdValue.Trim();
-            query = query.Where(c => c.NRIC == cleanId || c.NRIC.Replace("-", "") == cleanId.Replace("-", ""));
+            var unhyphenated = cleanId.Replace("-", "").Replace(" ", "");
+            query = query.Where(c => (c.NRIC != null && (c.NRIC == cleanId || c.NRIC.Replace("-", "") == unhyphenated))
+                                  || (c.Passport != null && (c.Passport == cleanId || c.Passport.ToUpper() == cleanId.ToUpper()))
+                                  || (c.AccountNumber != null && (c.AccountNumber == cleanId || c.AccountNumber.Replace("-", "") == unhyphenated)));
             hasFilter = true;
         }
 
@@ -142,5 +190,64 @@ public class CustomerRepository : ICustomerRepository
         if (!hasFilter) return null;
 
         return await query.MapToCustomerDetail().FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<PagedResponseDto<CaseSummaryDto>> GetCustomerCasesAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = _context.Cases
+            .AsNoTracking()
+            .Where(c => c.CustomerId == customerId);
+
+        var totalCount = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(c => c.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(caseItem => new CaseSummaryDto
+            {
+                Id = caseItem.Id,
+                CaseNumber = caseItem.CaseNumber.StartsWith("S-") ? caseItem.CaseNumber : (caseItem.CaseNumber.StartsWith("I-") || caseItem.CaseNumber.StartsWith("E-") ? (caseItem.CaseNumber.StartsWith("E-") ? caseItem.CaseNumber.Replace("E-", "I-") : caseItem.CaseNumber) : caseItem.CaseNumber),
+                Title = caseItem.Title,
+                Status = caseItem.Status.ToString(),
+                Severity = caseItem.Severity,
+                SlaStartTime = caseItem.SlaStartTime,
+                SlaTargetHours = caseItem.SlaTargetHours,
+                ResolvedAt = caseItem.ResolvedAt,
+                DepartmentId = caseItem.DepartmentId,
+                DepartmentName = caseItem.Department != null ? caseItem.Department.Name : string.Empty,
+                OwnerId = caseItem.OwnerId,
+                OwnerName = caseItem.Owner != null ? caseItem.Owner.Name : string.Empty,
+                CreatedAt = caseItem.CreatedAt,
+                CustomerId = caseItem.CustomerId,
+                CustomerName = caseItem.Customer != null ? caseItem.Customer.FullName : string.Empty,
+                CaseType = string.IsNullOrEmpty(caseItem.CaseType) ? (caseItem.CaseNumber.StartsWith("S-") ? "Service" : ((caseItem.CaseNumber.StartsWith("I-") || caseItem.CaseNumber.StartsWith("E-")) ? "Inquiry" : "Complaint")) : caseItem.CaseType,
+                SlaPausedAt = caseItem.SlaPausedAt,
+                SlaTotalPausedMinutes = caseItem.SlaTotalPausedMinutes,
+                Subcategory = caseItem.Subcategory ?? "General Inquiry",
+                PreferredLanguage = caseItem.Customer != null ? caseItem.Customer.PreferredLanguage : "Bahasa Malaysia",
+                SourceChannel = caseItem.SourceChannel ?? caseItem.CommunicationChannel ?? "Voice",
+                PreferredCommunicationChannel = caseItem.PreferredCommunicationChannel ?? "Phone",
+                CommunicationChannel = caseItem.SourceChannel ?? caseItem.CommunicationChannel ?? "Voice",
+                ChildRelations = caseItem.ChildRelations.Select(cr => new CaseChildRelationDto
+                {
+                    ChildId = cr.ChildId,
+                    RelationType = cr.RelationType.ToString(),
+                    LinkedCaseNumber = cr.LinkedCase != null ? cr.LinkedCase.CaseNumber : null,
+                    LinkedCaseTitle = cr.LinkedCase != null ? cr.LinkedCase.Title : null,
+                    Reason = cr.Reason,
+                    CreatedByName = cr.CreatedByUser != null ? cr.CreatedByUser.Name : string.Empty,
+                    CreatedAt = cr.CreatedAt
+                }).ToList()
+            })
+            .ToListAsync(ct);
+
+        return new PagedResponseDto<CaseSummaryDto>
+        {
+            Items = items,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize
+        };
     }
 }

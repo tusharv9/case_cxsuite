@@ -14,7 +14,8 @@ public class CaseSummaryDto
     public int SlaTotalPausedMinutes { get; set; }
     public bool IsHolidayToday { get; set; }
     public string? HolidayName { get; set; }
-    public bool IsSlaPaused => SlaPausedAt.HasValue || Status == "WaitingOnCustomer" || (IsHolidayToday && Status != "Resolved" && Status != "Closed");
+    public bool IsBusinessHoursActive { get; set; } = true;
+    public bool IsSlaPaused => SlaPausedAt.HasValue || Status == "WaitingOnCustomer" || (!IsBusinessHoursActive && Status != "Resolved" && Status != "Closed") || (IsHolidayToday && Status != "Resolved" && Status != "Closed");
     public Guid DepartmentId { get; set; }
     public string DepartmentName { get; set; } = string.Empty;
     public string OwnerName { get; set; } = string.Empty;
@@ -99,9 +100,15 @@ public class CustomerSummaryDto
 {
     public Guid Id { get; set; }
     public string FullName { get; set; } = string.Empty;
-    public string NRIC { get; set; } = string.Empty;
+    public string? NRIC { get; set; }
+    public string? Passport { get; set; }
+    public string? AccountNumber { get; set; }
+    public string IdType { get; set; } = "NRIC Number";
+    public string IdValue { get; set; } = string.Empty;
     public string PhoneNumber { get; set; } = string.Empty;
     public DateTime? DateOfBirth { get; set; }
+    public string? Branch { get; set; }
+    public string? PreferredLanguage { get; set; }
     public int OpenCasesCount { get; set; }
     public int TotalCasesCount { get; set; }
     public List<CustomerCustomAttributeDto> CustomAttributes { get; set; } = new();
@@ -110,10 +117,7 @@ public class CustomerSummaryDto
 public class CustomerDetailDto : CustomerSummaryDto
 {
     public string? Email { get; set; }
-    public string? Branch { get; set; }
-    public int TenureMonths { get; set; }
     public string? CustomerSegment { get; set; }
-    public string PreferredLanguage { get; set; } = "Bahasa Malaysia";
     public List<CaseSummaryDto> Cases { get; set; } = new();
 }
 

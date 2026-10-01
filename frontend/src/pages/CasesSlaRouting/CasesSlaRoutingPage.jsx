@@ -1321,15 +1321,6 @@ export function CasesSlaRoutingPage() {
                             <Edit2 size={15} />
                           </button>
 
-                          {/* Delete Button */}
-                          <button
-                            type="button"
-                            className="routing-icon-btn routing-icon-btn--delete"
-                            title="Delete rule"
-                            onClick={() => setRuleToDelete(rule)}
-                          >
-                            <Trash2 size={15} />
-                          </button>
                         </div>
                       </div>
 

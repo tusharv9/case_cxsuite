@@ -304,3 +304,175 @@
   font-size: 11.5px;
   color: var(--color-gray-400, #94a3b8);
 }
+
+/* Inactive Team Card State */
+.team-card--inactive {
+  opacity: 0.72;
+  filter: grayscale(0.2);
+}
+
+/* Status Badge and Toggle Switch */
+.team-card__status-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.team-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+}
+
+.team-status-badge--active {
+  background-color: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+}
+
+.team-status-badge--inactive {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}
+
+.team-toggle-switch {
+  width: 32px;
+  height: 18px;
+  border-radius: 9999px;
+  border: none;
+  background-color: #cbd5e1;
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.2s ease;
+  outline: none;
+}
+
+.team-toggle-switch--on {
+  background-color: #2563eb;
+}
+
+.team-toggle-switch--off {
+  background-color: #94a3b8;
+}
+
+.team-toggle-slider {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.team-toggle-switch--on .team-toggle-slider {
+  transform: translateX(14px);
+}
+
+/* Member Remove Button */
+.team-card__member-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+.team-card__member-remove-btn:hover {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+/* Modal Overlay & Dialog */
+.team-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.15s ease;
+}
+
+.team-modal {
+  background-color: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 440px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.team-modal__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.team-modal__icon-wrap {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background-color: #fee2e2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.team-modal__title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.team-modal__text {
+  font-size: 14px;
+  color: #334155;
+  margin: 0 0 8px 0;
+  line-height: 1.5;
+}
+
+.team-modal__subtext {
+  font-size: 12.5px;
+  color: #64748b;
+  margin: 0 0 20px 0;
+  line-height: 1.45;
+  background-color: #f8fafc;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border-left: 3px solid #cbd5e1;
+}
+
+.team-modal__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+

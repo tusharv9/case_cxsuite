@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useParams } from 'react-router-dom';
-import { Plus, Search, Check, ChevronDown, RotateCcw, X, Layers, Sparkles } from 'lucide-react';
+import { Plus, Search, Check, ChevronDown, RotateCcw, X, Layers } from 'lucide-react';
 import { CaseBoard } from '../../components/case/CaseBoard/CaseBoard.jsx';
 import { CaseList } from '../../components/case/CaseList/CaseList.jsx';
 import { useCase } from '../../contexts/CaseContext.jsx';
@@ -181,9 +181,6 @@ export function CaseManagementPage() {
             <div className="case-management-banner__content">
               <div className="case-management-banner__title-row">
                 <h1 className="case-management-banner__title">Case Management</h1>
-                <span className="case-management-banner__badge">
-                  <Sparkles size={11} /> Omnichannel
-                </span>
               </div>
               <p className="case-management-banner__subtitle">
                 {stats.openCount} open &middot; {stats.breachedCount} SLA breached &middot; omnichannel intake enabled

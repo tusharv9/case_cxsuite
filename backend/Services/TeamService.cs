@@ -23,7 +23,7 @@ public class TeamService : ITeamService
             .Include(d => d.Members)
                 .ThenInclude(m => m.User)
             .Include(d => d.Cases)
-            .Where(d => d.IsActive)
+            .Where(d => d.Code != "CS" && d.Code != "MT") // Filter obsolete Campaign Studio and Marketing Team
             .OrderBy(d => d.Name)
             .AsSplitQuery()
             .ToListAsync(ct);
@@ -84,6 +84,7 @@ public class TeamService : ITeamService
                 TeamLeadEmail = d.Owner?.Email ?? "",
                 MemberCount = memberDict.Count,
                 QueueCount = openCasesCount,
+                IsActive = d.IsActive,
                 CreatedAt = d.CreatedAt,
                 Members = memberDict.Values.OrderByDescending(m => m.IsLead).ThenBy(m => m.Name).ToList()
             });
@@ -272,6 +273,20 @@ public class TeamService : ITeamService
             await RecordAuditLogAsync("REMOVE_MEMBER", userId.ToString(), "Removed member from team", null, null, currentUserId);
             await _context.SaveChangesAsync(ct);
         }
+    }
+
+    public async Task<TeamDto> ToggleTeamStatusAsync(Guid id, Guid currentUserId, CancellationToken ct = default)
+    {
+        var department = await _context.Departments.FirstOrDefaultAsync(d => d.Id == id, ct);
+        if (department == null) throw new KeyNotFoundException($"Team with ID '{id}' was not found.");
+
+        department.IsActive = !department.IsActive;
+        department.UpdatedAt = DateTime.UtcNow;
+
+        await RecordAuditLogAsync("TOGGLE_STATUS", department.Name, $"Toggled team '{department.Name}' status to {(department.IsActive ? "ACTIVE" : "INACTIVE")}", (!department.IsActive).ToString(), department.IsActive.ToString(), currentUserId);
+        await _context.SaveChangesAsync(ct);
+
+        return (await GetTeamByIdAsync(department.Id, ct))!;
     }
 
     private string GenerateTeamCode(string name)

@@ -16,11 +16,13 @@ public static class DbSeeder
         {
             FixInfinityDates(context);
             SeedPassportCustomer(context);
+            SeedAccountNumberCustomer(context);
             EnsureCaseChannelsAndStatuses(context);
             EnsureFirstResponseAndEscalationMatrix(context);
             EnsureSlaAndEscalationMatrix(context);
             EnsureTeamsAndSquads(context);
             EnsureRoutingRulesAndSkills(context);
+            EnsureCustomer360Standardization(context);
             return;
         }
 
@@ -193,20 +195,20 @@ public static class DbSeeder
     {
         try
         {
-            if (!context.Customers.Any(c => c.NRIC == "A98765432"))
+            if (!context.Customers.Any(c => c.Passport == "A98765432" || c.NRIC == "A98765432" || c.PhoneNumber == "+60 19-876 5432"))
             {
                 var passportCustomer = new Customer
                 {
                     Id = Guid.NewGuid(),
                     FullName = "Sophia Martinez",
-                    NRIC = "A98765432",
+                    IdType = "Passport Number",
+                    NRIC = null,
+                    Passport = "A98765432",
                     PhoneNumber = "+60 19-876 5432",
                     Email = "sophia.martinez@example.com",
                     Branch = "Kuala Lumpur",
                     PreferredLanguage = "English",
                     DateOfBirth = new DateTime(1992, 8, 15, 0, 0, 0, DateTimeKind.Utc),
-                    CustomerSegment = "Gold",
-                    TenureMonths = 24,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -226,6 +228,38 @@ public static class DbSeeder
         catch (Exception ex)
         {
             Console.WriteLine($"[SeedPassportCustomer Error] {ex.Message}");
+        }
+    }
+
+    private static void SeedAccountNumberCustomer(AppDbContext context)
+    {
+        try
+        {
+            if (!context.Customers.Any(c => c.AccountNumber == "ACC-88392019" || c.PhoneNumber == "+60 17-654 3210"))
+            {
+                var accountCustomer = new Customer
+                {
+                    Id = Guid.NewGuid(),
+                    FullName = "Chen Wei Ming",
+                    IdType = "Account Number",
+                    NRIC = null,
+                    Passport = null,
+                    AccountNumber = "ACC-88392019",
+                    PhoneNumber = "+60 17-654 3210",
+                    Email = "chen.weiming@example.com",
+                    Branch = "Penang",
+                    PreferredLanguage = "English",
+                    DateOfBirth = new DateTime(1988, 11, 25, 0, 0, 0, DateTimeKind.Utc),
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                context.Customers.Add(accountCustomer);
+                context.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SeedAccountNumberCustomer Error] {ex.Message}");
         }
     }
 
@@ -297,10 +331,8 @@ public static class DbSeeder
                     new LookupValue { Id = Guid.NewGuid(), LookupTypeId = branchType.Id, TypeCode = "HOME_BRANCH", Value = "Penang Branch", Label = "Penang Branch", DisplayOrder = 4, IsActive = true, CreatedAt = now },
 
                     new LookupValue { Id = Guid.NewGuid(), LookupTypeId = idType.Id, TypeCode = "ID_TYPE", Value = "NRIC Number", Label = "NRIC Number", DisplayOrder = 1, IsActive = true, CreatedAt = now },
-                    new LookupValue { Id = Guid.NewGuid(), LookupTypeId = idType.Id, TypeCode = "ID_TYPE", Value = "IC Number", Label = "IC Number", DisplayOrder = 2, IsActive = true, CreatedAt = now },
-                    new LookupValue { Id = Guid.NewGuid(), LookupTypeId = idType.Id, TypeCode = "ID_TYPE", Value = "ID Number", Label = "ID Number", DisplayOrder = 3, IsActive = true, CreatedAt = now },
-                    new LookupValue { Id = Guid.NewGuid(), LookupTypeId = idType.Id, TypeCode = "ID_TYPE", Value = "Passport", Label = "Passport", DisplayOrder = 4, IsActive = true, CreatedAt = now },
-                    new LookupValue { Id = Guid.NewGuid(), LookupTypeId = idType.Id, TypeCode = "ID_TYPE", Value = "Account Number", Label = "Account Number", DisplayOrder = 5, IsActive = true, CreatedAt = now }
+                    new LookupValue { Id = Guid.NewGuid(), LookupTypeId = idType.Id, TypeCode = "ID_TYPE", Value = "Passport Number", Label = "Passport Number", DisplayOrder = 2, IsActive = true, CreatedAt = now },
+                    new LookupValue { Id = Guid.NewGuid(), LookupTypeId = idType.Id, TypeCode = "ID_TYPE", Value = "Account Number", Label = "Account Number", DisplayOrder = 3, IsActive = true, CreatedAt = now }
                 );
 
                 context.SaveChanges();
@@ -315,11 +347,11 @@ public static class DbSeeder
                     new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "fullName", DisplayLabel = "Full Name", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Text", CreatedAt = now },
                     new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "idType", DisplayLabel = "Choose an ID", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", LookupTypeCode = "ID_TYPE", CreatedAt = now },
                     new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "idValue", DisplayLabel = "ID Value", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Text", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "dateOfBirth", DisplayLabel = "Date of Birth", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Date", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "dateOfBirth", DisplayLabel = "Date of Birth", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Date", CreatedAt = now },
                     new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "phoneNumber", DisplayLabel = "Phone Number", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 5, FieldType = "Phone", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "email", DisplayLabel = "Email Address", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 6, FieldType = "Email", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "email", DisplayLabel = "Email Address", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 6, FieldType = "Email", CreatedAt = now },
                     new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 7, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 8, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 8, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now },
 
                     // ExistingCustomer Section
                     new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "idType", DisplayLabel = "Choose an ID", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", LookupTypeCode = "ID_TYPE", CreatedAt = now },
@@ -329,8 +361,7 @@ public static class DbSeeder
 
                     // Customer 360 Filters Section
                     new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "tenure", DisplayLabel = "Tenure", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Dropdown", CreatedAt = now }
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now }
                 };
 
                 context.FieldConfigurations.AddRange(fields);
@@ -1142,14 +1173,6 @@ public static class DbSeeder
                     Channels = "Phone,WhatsApp,Email",
                     LeadName = "Grace Wong",
                     MemberNames = new[] { "Rajesh Kumar", "Hafiz Osman" }
-                },
-                new {
-                    Name = "Campaign Studio",
-                    Code = "CS",
-                    Function = "Campaign design, content & delivery",
-                    Channels = "Email,Chat,WhatsApp,Social",
-                    LeadName = "Amirul Hakim",
-                    MemberNames = new[] { "Rajesh Kumar", "Priya Nair", "Mei Ling Tan" }
                 }
             };
 
@@ -1214,12 +1237,12 @@ public static class DbSeeder
 
             if (sdrDept != null && cust != null && farid != null && meiLing != null)
             {
-                if (!context.Cases.Any(c => c.CaseNumber == "CAS-1041"))
+                if (!context.Cases.Any(c => c.CaseNumber == "C-01041"))
                 {
                     context.Cases.Add(new Case
                     {
                         Id = Guid.NewGuid(),
-                        CaseNumber = "CAS-1041",
+                        CaseNumber = "C-01041",
                         CaseType = "Complaint",
                         Title = "Unauthorised card transaction RM 2,500 via ATM",
                         Description = "Customer disputes unknown cash withdrawal from card ending in 8821.",
@@ -1238,12 +1261,12 @@ public static class DbSeeder
                     });
                 }
 
-                if (!context.Cases.Any(c => c.CaseNumber == "CAS-1042"))
+                if (!context.Cases.Any(c => c.CaseNumber == "S-01042"))
                 {
                     context.Cases.Add(new Case
                     {
                         Id = Guid.NewGuid(),
-                        CaseNumber = "CAS-1042",
+                        CaseNumber = "S-01042",
                         CaseType = "Service",
                         Title = "ASB financing payment failed twice after scheduled debit",
                         Description = "Monthly repayment not reflected in financing balance despite auto-debit deduction.",
@@ -1441,6 +1464,99 @@ public static class DbSeeder
         catch (Exception ex)
         {
             Console.WriteLine($"[EnsureRoutingRulesAndSkills Error] {ex.Message}");
+        }
+    }
+
+    private static void EnsureCustomer360Standardization(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            // 1. Remove legacy ID_TYPE options (IC Number, ID Number)
+            var legacyTypes = context.LookupValues
+                .Where(lv => lv.TypeCode == "ID_TYPE" && (lv.Value == "IC Number" || lv.Value == "ID Number"))
+                .ToList();
+            if (legacyTypes.Any())
+            {
+                context.LookupValues.RemoveRange(legacyTypes);
+                context.SaveChanges();
+            }
+
+            // 2. Standardize Passport to Passport Number
+            var passportType = context.LookupValues
+                .FirstOrDefault(lv => lv.TypeCode == "ID_TYPE" && lv.Value == "Passport");
+            if (passportType != null)
+            {
+                passportType.Value = "Passport Number";
+                passportType.Label = "Passport Number";
+                passportType.DisplayOrder = 2;
+                context.SaveChanges();
+            }
+
+            // Ensure the 3 supported ID types exist and have correct display orders
+            var idTypeHeader = context.LookupTypes.FirstOrDefault(lt => lt.Code == "ID_TYPE");
+            if (idTypeHeader != null)
+            {
+                var supported = new (string Val, int Order)[]
+                {
+                    ("NRIC Number", 1),
+                    ("Passport Number", 2),
+                    ("Account Number", 3)
+                };
+                foreach (var (val, order) in supported)
+                {
+                    var existing = context.LookupValues.FirstOrDefault(lv => lv.TypeCode == "ID_TYPE" && lv.Value == val);
+                    if (existing == null)
+                    {
+                        context.LookupValues.Add(new LookupValue
+                        {
+                            Id = Guid.NewGuid(),
+                            LookupTypeId = idTypeHeader.Id,
+                            TypeCode = "ID_TYPE",
+                            Value = val,
+                            Label = val,
+                            DisplayOrder = order,
+                            IsActive = true,
+                            CreatedAt = now
+                        });
+                    }
+                    else
+                    {
+                        existing.DisplayOrder = order;
+                        existing.IsActive = true;
+                    }
+                }
+                context.SaveChanges();
+            }
+
+            // 3. Ensure AddNewCustomer FieldConfigurations are all required
+            var addCustomerFields = context.FieldConfigurations
+                .Where(f => f.ModuleKey == "Customer360" && f.SectionKey == "AddNewCustomer" &&
+                            (f.ApiField == "dateOfBirth" || f.ApiField == "email" || f.ApiField == "branch"))
+                .ToList();
+            foreach (var f in addCustomerFields)
+            {
+                f.IsRequired = true;
+            }
+            if (addCustomerFields.Any())
+            {
+                context.SaveChanges();
+            }
+
+            // 4. Remove obsolete Tenure filter configuration if present
+            var tenureFields = context.FieldConfigurations
+                .Where(f => f.ModuleKey == "Customer360" && f.ApiField == "tenure")
+                .ToList();
+            if (tenureFields.Any())
+            {
+                context.FieldConfigurations.RemoveRange(tenureFields);
+                context.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EnsureCustomer360Standardization Error] {ex.Message}");
         }
     }
 }

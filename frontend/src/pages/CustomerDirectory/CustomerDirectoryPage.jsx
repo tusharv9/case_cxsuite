@@ -16,8 +16,24 @@ import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import './CustomerDirectoryPage.css';
 
 function CustomerCard({ customer, onClick, mask }) {
-  const rawNric = customer.nric || customer.idValue || '';
-  const maskedNric = mask ? (mask('idValue', rawNric) || mask('nric', rawNric) || rawNric) : (rawNric || '—');
+  const rawIdType = customer.idType ||
+    (Array.isArray(customer.customAttributes)
+      ? customer.customAttributes.find((a) => a.fieldKey?.toLowerCase() === 'idtype')?.fieldValue
+      : customer.customAttributes?.idType) ||
+    'NRIC Number';
+
+  const typeLower = (rawIdType || '').toLowerCase();
+  let idLabel = 'NRIC';
+  let rawIdVal = customer.nric || customer.idValue || '';
+  if (typeLower.includes('passport')) {
+    idLabel = 'Passport';
+    rawIdVal = customer.passport || customer.idValue || '';
+  } else if (typeLower.includes('account')) {
+    idLabel = 'Account Number';
+    rawIdVal = customer.accountNumber || customer.idValue || '';
+  }
+
+  const maskedId = mask ? (mask('idValue', rawIdVal) || mask('nric', rawIdVal) || rawIdVal) : (rawIdVal || '—');
   const maskedName = mask ? (mask('fullName', customer.fullName) || customer.fullName) : customer.fullName;
   const maskedPhone = mask ? (mask('phoneNumber', customer.phoneNumber) || customer.phoneNumber) : customer.phoneNumber;
   const maskedDob = customer.dateOfBirth
@@ -38,7 +54,7 @@ function CustomerCard({ customer, onClick, mask }) {
         <Avatar name={customer.fullName} size="md" />
         <div className="customer-card__name-block">
           <p className="customer-card__name">{maskedName}</p>
-          <p className="customer-card__nric">{maskedNric}</p>
+          <p className="customer-card__nric">{`${idLabel}: ${maskedId}`}</p>
         </div>
         <span className="customer-card__badge">Active</span>
       </div>
@@ -97,7 +113,6 @@ export function CustomerDirectoryPage() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [languageFilter, setLanguageFilter] = useState('all');
   const [branchFilter, setBranchFilter] = useState('all');
-  const [tenureFilter, setTenureFilter] = useState('all');
   const filterRef = useRef(null);
 
   // Pagination States
@@ -112,6 +127,8 @@ export function CustomerDirectoryPage() {
     try {
       const data = await customerService.getPaginatedCustomers({
         search: search.trim() || undefined,
+        preferredLanguage: languageFilter !== 'all' ? languageFilter : undefined,
+        branch: branchFilter !== 'all' ? branchFilter : undefined,
         page,
         pageSize,
       });
@@ -129,7 +146,7 @@ export function CustomerDirectoryPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [search, page, pageSize]);
+  }, [search, languageFilter, branchFilter, page, pageSize]);
 
   useEffect(() => {
     loadCustomers();
@@ -201,55 +218,34 @@ export function CustomerDirectoryPage() {
     loadCustomers(true);
   };
 
+  const handleSearchChange = (e) => {
+    setSearch(e.target.value);
+    setPage(1);
+  };
+
+  const handleLanguageChange = (val) => {
+    setLanguageFilter(val);
+    setPage(1);
+  };
+
+  const handleBranchChange = (val) => {
+    setBranchFilter(val);
+    setPage(1);
+  };
+
   const handleResetFilters = () => {
     setSearch('');
     setLanguageFilter('all');
     setBranchFilter('all');
-    setTenureFilter('all');
+    setPage(1);
     setIsFilterOpen(false);
   };
 
-  const hasActiveFilters = search.trim() !== '' || languageFilter !== 'all' || branchFilter !== 'all' || tenureFilter !== 'all';
-
-  // Combinable Search + Filter Logic
-  const filtered = useMemo(() => {
-    return customers.filter((c) => {
-      // 1. Search Query
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        const matchesName = c.fullName?.toLowerCase().includes(q);
-        const matchesNric = c.nric?.toLowerCase().includes(q);
-        const matchesPhone = c.phoneNumber?.toLowerCase().includes(q);
-        const matchesBranch = c.branch?.toLowerCase().includes(q);
-        if (!matchesName && !matchesNric && !matchesPhone && !matchesBranch) return false;
-      }
-
-      // 2. Language Filter
-      if (languageFilter !== 'all' && c.preferredLanguage !== languageFilter) {
-        return false;
-      }
-
-      // 3. Branch Filter
-      if (branchFilter !== 'all' && c.branch !== branchFilter) {
-        return false;
-      }
-
-      // 4. Tenure Filter (evaluated against c.tenureMonths or fallback calculation)
-      if (tenureFilter !== 'all') {
-        const tenureMonths = c.tenureMonths !== undefined ? c.tenureMonths : 36;
-        if (tenureFilter === 'under_1' && tenureMonths >= 12) return false;
-        if (tenureFilter === '1_3' && (tenureMonths < 12 || tenureMonths > 36)) return false;
-        if (tenureFilter === '3_5' && (tenureMonths < 36 || tenureMonths > 60)) return false;
-        if (tenureFilter === '5_plus' && tenureMonths <= 60) return false;
-      }
-
-      return true;
-    });
-  }, [customers, search, languageFilter, branchFilter, tenureFilter]);
+  const hasActiveFilters = search.trim() !== '' || languageFilter !== 'all' || branchFilter !== 'all';
 
   return (
     <div className="customer-dir-page">
-      {/* 1. BLUE GRADIENT HEADER BANNER (Matching Lead Directory Reference) */}
+      {/* 1. BLUE GRADIENT HEADER BANNER */}
       <div className="customer-dir-page__header">
         <div className="customer-dir-banner">
           <div className="customer-dir-banner__left">
@@ -257,14 +253,11 @@ export function CustomerDirectoryPage() {
               <Users size={22} color="#ffffff" />
             </div>
             <div className="customer-dir-banner__content">
-              <div className="customer-dir-banner__badge">
-                <Sparkles size={11} /> Module &middot; Customer 360
-              </div>
               <h1 className="customer-dir-banner__title">Customer Directory</h1>
               <p className="customer-dir-banner__subtitle">
                 {isLoading
                   ? 'Loading customer base…'
-                  : `${totalCount.toLocaleString()} customer${totalCount !== 1 ? 's' : ''} · Omni Customer Base`}
+                  : `${totalCount.toLocaleString()} Customers`}
               </p>
             </div>
           </div>
@@ -297,12 +290,12 @@ export function CustomerDirectoryPage() {
             <input
               type="search"
               className="customer-dir-search-input"
-              placeholder="Search name, IC, phone, branch..."
+              placeholder="Search name, ID, phone, branch..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={handleSearchChange}
             />
             {search && (
-              <button className="customer-dir-search-clear" onClick={() => setSearch('')} title="Clear search">
+              <button className="customer-dir-search-clear" onClick={() => { setSearch(''); setPage(1); }} title="Clear search">
                 <X size={14} />
               </button>
             )}
@@ -315,7 +308,7 @@ export function CustomerDirectoryPage() {
             >
               <Filter size={15} />
               <span>Filter</span>
-              {(languageFilter !== 'all' || branchFilter !== 'all' || tenureFilter !== 'all') && (
+              {(languageFilter !== 'all' || branchFilter !== 'all') && (
                 <span className="filter-badge-dot" />
               )}
               <ChevronDown size={14} />
@@ -349,7 +342,7 @@ export function CustomerDirectoryPage() {
                     <select
                       className="filter-popover-select"
                       value={languageFilter}
-                      onChange={(e) => setLanguageFilter(e.target.value)}
+                      onChange={(e) => handleLanguageChange(e.target.value)}
                     >
                       <option value="all">All Languages</option>
                       {availableLanguages.map((lang) => (
@@ -366,7 +359,7 @@ export function CustomerDirectoryPage() {
                     <select
                       className="filter-popover-select"
                       value={branchFilter}
-                      onChange={(e) => setBranchFilter(e.target.value)}
+                      onChange={(e) => handleBranchChange(e.target.value)}
                     >
                       <option value="all">All Branches</option>
                       {availableBranches.map((br) => (
@@ -374,22 +367,6 @@ export function CustomerDirectoryPage() {
                           {br}
                         </option>
                       ))}
-                    </select>
-                  </div>
-
-                  {/* Tenure Filter */}
-                  <div className="filter-popover-field">
-                    <label className="filter-popover-label">Tenure</label>
-                    <select
-                      className="filter-popover-select"
-                      value={tenureFilter}
-                      onChange={(e) => setTenureFilter(e.target.value)}
-                    >
-                      <option value="all">All Tenure</option>
-                      <option value="under_1">&lt; 1 year</option>
-                      <option value="1_3">1–3 years</option>
-                      <option value="3_5">3–5 years</option>
-                      <option value="5_plus">5+ years</option>
                     </select>
                   </div>
                 </div>
@@ -423,7 +400,7 @@ export function CustomerDirectoryPage() {
               Retry
             </Button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : customers.length === 0 ? (
           <div className="customer-dir-empty">
             <Users size={40} style={{ opacity: 0.3 }} />
             <p className="customer-dir-empty__title">No customers found</p>
@@ -440,29 +417,32 @@ export function CustomerDirectoryPage() {
           </div>
         ) : (
           <div className="customer-dir-grid">
-            {filtered.map((c) => (
+            {customers.map((c) => (
               <CustomerCard key={c.id} customer={c} onClick={handleCustomerClick} mask={maskFn} />
             ))}
           </div>
         )}
-
-        {!isLoading && !error && filtered.length > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <Pagination
-              page={page}
-              pageSize={pageSize}
-              totalCount={totalCount}
-              totalPages={totalPages}
-              onPageChange={setPage}
-              onPageSizeChange={(newSize) => {
-                setPageSize(newSize);
-                setPage(1);
-              }}
-              isLoading={isLoading}
-            />
-          </div>
-        )}
       </div>
+
+      {/* 4. PINNED BOTTOM PAGINATION */}
+      {!isLoading && !error && customers.length > 0 && (
+        <div className="customer-dir-page__footer">
+          <Pagination
+            itemLabel="customers"
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={(newSize) => {
+              setPageSize(newSize);
+              setPage(1);
+            }}
+            pageSizeOptions={[10, 20, 50]}
+            isLoading={isLoading}
+          />
+        </div>
+      )}
 
       {/* Create Customer Drawer */}
       {isCreateOpen && (

@@ -283,6 +283,8 @@ public class CaseService : ICaseService
         if (caseDetail != null && _businessTimeService != null)
         {
             var (isHoliday, holidayName) = await _businessTimeService.GetActiveHolidayAsync(DateTime.UtcNow, ct);
+            var isWithinBusinessHours = await _businessTimeService.IsWithinBusinessHoursAsync(DateTime.UtcNow, ct);
+            caseDetail.IsBusinessHoursActive = isWithinBusinessHours;
             if (isHoliday)
             {
                 caseDetail.IsHolidayToday = true;
@@ -296,9 +298,11 @@ public class CaseService : ICaseService
     {
         if (cases == null || !cases.Any() || _businessTimeService == null) return;
         var (isHoliday, holidayName) = await _businessTimeService.GetActiveHolidayAsync(DateTime.UtcNow, ct);
-        if (isHoliday)
+        var isWithinBusinessHours = await _businessTimeService.IsWithinBusinessHoursAsync(DateTime.UtcNow, ct);
+        foreach (var c in cases)
         {
-            foreach (var c in cases)
+            c.IsBusinessHoursActive = isWithinBusinessHours;
+            if (isHoliday)
             {
                 c.IsHolidayToday = true;
                 c.HolidayName = holidayName;
@@ -1944,7 +1948,15 @@ public class CaseService : ICaseService
                 c.SlaBreachedAt = effectiveResolutionDue ?? now;
             }
 
-            double elapsedMinutes = Math.Max(0, (now - c.SlaStartTime).TotalMinutes - totalPaused);
+            double elapsedMinutes;
+            if (_businessTimeService != null)
+            {
+                elapsedMinutes = Math.Max(0, await _businessTimeService.GetElapsedBusinessMinutesAsync(c.SlaStartTime, now, ct) - totalPaused);
+            }
+            else
+            {
+                elapsedMinutes = Math.Max(0, (now - c.SlaStartTime).TotalMinutes - totalPaused);
+            }
             double consumptionPercent = (elapsedMinutes / totalTargetMinutes) * 100.0;
 
             if (consumptionPercent >= 70.0 && !c.Sla70ReminderSent)
@@ -2507,12 +2519,61 @@ public class CaseService : ICaseService
 
     public async Task ValidateCreateCaseMetadataAsync(CreateCaseDto dto, CancellationToken ct = default)
     {
-        // System invariants: CustomerId and DepartmentId are essential database relationships
+        // 1. Mandatory customer validation
         if (dto.CustomerId == Guid.Empty)
             throw new ArgumentException("A valid customer must be selected.");
-        if (dto.DepartmentId == Guid.Empty && _routingEngine == null)
-            throw new ArgumentException("A valid department must be selected.");
 
+        var customerExists = await _context.Customers.AnyAsync(c => c.Id == dto.CustomerId, ct);
+        if (!customerExists)
+            throw new ArgumentException("Selected customer does not exist.");
+
+        // 2. Mandatory department validation
+        if (dto.DepartmentId == Guid.Empty)
+            throw new ArgumentException("Department is required.");
+
+        var department = await _context.Departments.FirstOrDefaultAsync(d => d.Id == dto.DepartmentId, ct);
+        if (department == null || !department.IsActive)
+            throw new ArgumentException("Selected department is invalid or inactive.");
+
+        // 3. Mandatory CaseType validation: exactly Inquiry, Complaint, Service
+        var validCaseTypes = new[] { "Inquiry", "Complaint", "Service" };
+        if (string.IsNullOrWhiteSpace(dto.CaseType) || !validCaseTypes.Contains(dto.CaseType.Trim(), StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Case Type must be one of: Inquiry, Complaint, Service.");
+
+        // 4. Mandatory Subcategory validation & hierarchy check (Department -> Sub-Category)
+        if (string.IsNullOrWhiteSpace(dto.Subcategory))
+            throw new ArgumentException("Sub-category is required.");
+
+        var validSubcategory = await _context.DepartmentSubCategories
+            .AnyAsync(s => s.DepartmentId == dto.DepartmentId && s.Name.ToLower() == dto.Subcategory.Trim().ToLower() && s.IsActive, ct);
+        if (!validSubcategory)
+            throw new ArgumentException($"Sub-category '{dto.Subcategory}' is invalid for department '{department.Name}'.");
+
+        // 5. Mandatory Channel validations
+        var validSourceChannels = new[] { "Voice", "Email", "WhatsApp" };
+        var sourceChan = !string.IsNullOrWhiteSpace(dto.SourceChannel) 
+            ? dto.SourceChannel.Trim() 
+            : (!string.IsNullOrWhiteSpace(dto.CommunicationChannel) ? dto.CommunicationChannel.Trim() : "");
+        if (string.IsNullOrWhiteSpace(sourceChan) || !validSourceChannels.Contains(sourceChan, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Source Channel must be one of: Voice, Email, WhatsApp.");
+
+        var validPreferredChannels = new[] { "Phone", "Email", "WhatsApp" };
+        var prefChan = !string.IsNullOrWhiteSpace(dto.PreferredCommunicationChannel) ? dto.PreferredCommunicationChannel.Trim() : "Phone";
+        if (!validPreferredChannels.Contains(prefChan, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Preferred Communication Channel must be one of: Phone, Email, WhatsApp.");
+
+        // 6. Mandatory Title & Description
+        if (string.IsNullOrWhiteSpace(dto.Title))
+            throw new ArgumentException("Case Title is required.");
+        if (string.IsNullOrWhiteSpace(dto.Description))
+            throw new ArgumentException("Description is required.");
+
+        // 7. Mandatory Severity check
+        var validSeverities = new[] { "Critical", "High", "Medium", "Low" };
+        if (!string.IsNullOrWhiteSpace(dto.Severity) && !validSeverities.Contains(dto.Severity.Trim(), StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Severity must be one of: Critical, High, Medium, Low.");
+
+        // 8. FieldConfigurations dynamic checks
         var configs = await _context.FieldConfigurations
             .AsNoTracking()
             .Where(f => f.ModuleKey == "CaseManagement" && f.SectionKey == "CreateCase")
@@ -2541,13 +2602,6 @@ public class CaseService : ICaseService
             };
 
             var strVal = val?.Trim();
-
-            // If department is configured as required in FieldConfigurations, but automatic routing engine is active,
-            // the routing engine resolves and assigns the team automatically.
-            if (cfg.ApiField.Equals("departmentid", StringComparison.OrdinalIgnoreCase) && _routingEngine != null)
-            {
-                continue;
-            }
 
             // 1. Mandatory check
             if (cfg.IsRequired && string.IsNullOrEmpty(strVal))

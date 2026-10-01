@@ -1,143 +1,77 @@
 // ===== TRANSACTION TABLE COMPONENT =====
 
-import { useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, CheckCircle2, ChevronDown, Download } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import { formatDate } from '../../../utils/dateUtils.js';
 import './TransactionTable.css';
 
-export const MOCK_MONTHLY_CASHFLOW = [
-  { month: 'Jan', amount: 'MYR 5,800', barHeight: 65, active: false },
-  { month: 'Feb', amount: 'MYR 5,650', barHeight: 60, active: false },
-  { month: 'Mar', amount: 'MYR 5,900', barHeight: 70, active: false },
-  { month: 'Apr', amount: 'MYR 6,100', barHeight: 78, active: false },
-  { month: 'May', amount: 'MYR 6,420', barHeight: 88, active: false },
-  { month: 'Jun', amount: 'MYR 6,740', barHeight: 100, active: true },
-];
+export function TransactionTable({ transactions = [] }) {
+  const items = Array.isArray(transactions) ? transactions : [];
 
-export const MOCK_TRANSACTIONS = [
-  {
-    id: 'tx-1',
-    date: '15 Jun 2026',
-    description: 'Salary Credit - PETRONAS DAGANGAN BHD',
-    debit: '—',
-    credit: 'MYR 6,740.00',
-    balance: 'MYR 12,840.50',
-    status: 'Completed',
-    type: 'credit'
-  },
-  {
-    id: 'tx-2',
-    date: '14 Jun 2026',
-    description: 'ATM Withdrawal - BSN KL HQ Branch',
-    debit: 'MYR 500.00',
-    credit: '—',
-    balance: 'MYR 6,100.50',
-    status: 'Completed',
-    type: 'debit'
-  },
-  {
-    id: 'tx-3',
-    date: '10 Jun 2026',
-    description: 'DuitNow Transfer to Ahmad Zaki',
-    debit: 'MYR 350.00',
-    credit: '—',
-    balance: 'MYR 6,600.50',
-    status: 'Completed',
-    type: 'debit'
-  },
-  {
-    id: 'tx-4',
-    date: '05 Jun 2026',
-    description: 'JomPAY Bill Payment - TNB Electricity',
-    debit: 'MYR 185.20',
-    credit: '—',
-    balance: 'MYR 6,950.50',
-    status: 'Completed',
-    type: 'debit'
-  },
-  {
-    id: 'tx-5',
-    date: '01 Jun 2026',
-    description: 'Auto-Debit Standing Order - Home Financing-i',
-    debit: 'MYR 1,250.00',
-    credit: '—',
-    balance: 'MYR 7,135.70',
-    status: 'Completed',
-    type: 'debit'
-  },
-  {
-    id: 'tx-6',
-    date: '28 May 2026',
-    description: 'E-Commerce Purchase - Shopee Pay',
-    debit: 'MYR 145.00',
-    credit: '—',
-    balance: 'MYR 8,385.70',
-    status: 'Completed',
-    type: 'debit'
-  },
-  {
-    id: 'tx-7',
-    date: '15 May 2026',
-    description: 'Salary Credit - PETRONAS DAGANGAN BHD',
-    debit: '—',
-    credit: 'MYR 6,420.00',
-    balance: 'MYR 8,530.70',
-    status: 'Completed',
-    type: 'credit'
-  },
-  {
-    id: 'tx-8',
-    date: '10 May 2026',
-    description: 'BSN Term Deposit Profit Payout',
-    debit: '—',
-    credit: 'MYR 285.00',
-    balance: 'MYR 2,110.70',
-    status: 'Completed',
-    type: 'credit'
+  if (items.length === 0) {
+    return (
+      <div className="transaction-empty" style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--color-text-secondary)', background: 'var(--color-surface, #ffffff)', borderRadius: 'var(--radius-md, 8px)', border: '1px dashed var(--color-border, #e2e8f0)' }}>
+        <p style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>No transaction data available</p>
+        <p style={{ fontSize: '13px', marginTop: 4, color: 'var(--color-text-tertiary, #64748b)' }}>No transaction records found for this customer.</p>
+      </div>
+    );
   }
-];
-
-export function TransactionTable({ transactions = MOCK_TRANSACTIONS }) {
-  const [filterMonth, setFilterMonth] = useState('last 6 months');
 
   return (
     <div className="transaction-section">
-      {/* Header Banner */}
       <div className="transaction-section__header">
         <div className="transaction-section__header-title">
-          <span>From BSN EDW &middot; last 6 months</span>
-        </div>
-        <div className="transaction-section__filter-box">
-          <select
-            className="transaction-section__select"
-            value={filterMonth}
-            onChange={(e) => setFilterMonth(e.target.value)}
-          >
-            <option value="last 6 months">last 6 months</option>
-            <option value="last 3 months">last 3 months</option>
-            <option value="last 30 days">last 30 days</option>
-          </select>
+          <span>Customer Transactions ({items.length})</span>
         </div>
       </div>
 
-      {/* 6 Months Cashflow Cards Bar (Matching Screenshot 4) */}
-      <div className="cashflow-months-grid">
-        {MOCK_MONTHLY_CASHFLOW.map((m) => (
-          <div key={m.month} className={`cashflow-month-card ${m.active ? 'cashflow-month-card--active' : ''}`}>
-            <span className="cashflow-month-card__label">{m.month}</span>
-            <span className="cashflow-month-card__value">{m.amount}</span>
-            <div className="cashflow-month-card__bar-bg">
-              <div
-                className="cashflow-month-card__bar-fill"
-                style={{ height: `${m.barHeight}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
+      <div className="transaction-table-wrapper">
+        <table className="transaction-table">
+          <thead>
+            <tr>
+              <th>DATE</th>
+              <th>DESCRIPTION</th>
+              <th>DEBIT</th>
+              <th>CREDIT</th>
+              <th>BALANCE</th>
+              <th>STATUS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((tx, idx) => {
+              const isCredit = (tx.type || '').toLowerCase() === 'credit';
+              const amtFormatted = tx.amount != null ? `MYR ${Number(tx.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+              const balFormatted = tx.balanceAfter != null ? `MYR ${Number(tx.balanceAfter).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+              const dateFormatted = tx.transactionDate ? formatDate(tx.transactionDate) : (tx.date || '—');
 
-      {/* Subtext Notice */}
-      <div className="cashflow-summary-subtext">
-        Net positive cashflow &middot; 18% YoY growth &middot; stable salary credit pattern &middot; qualified for cross-sell (Home Financing-i propensity 0.87).
+              return (
+                <tr key={tx.id || idx}>
+                  <td className="tx-date">{dateFormatted}</td>
+                  <td>
+                    <div className="tx-desc">
+                      <span className={`tx-icon ${isCredit ? 'tx-icon-credit' : 'tx-icon-debit'}`}>
+                        {isCredit ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
+                      </span>
+                      <span>{tx.description || 'Transaction'}</span>
+                    </div>
+                  </td>
+                  <td className="tx-debit">
+                    {!isCredit ? <span className="tx-amount-debit">{amtFormatted}</span> : '—'}
+                  </td>
+                  <td className="tx-credit">
+                    {isCredit ? <span className="tx-amount-credit">{amtFormatted}</span> : '—'}
+                  </td>
+                  <td className="tx-balance">{balFormatted}</td>
+                  <td>
+                    <span className="tx-status-chip">
+                      <CheckCircle2 size={12} />
+                      <span>{tx.status || 'Completed'}</span>
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

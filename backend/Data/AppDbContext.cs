@@ -60,6 +60,34 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<LookupValue>()
             .HasIndex(lv => lv.TypeCode);
 
+        modelBuilder.Entity<Customer>(entity =>
+        {
+            entity.Property(c => c.NRIC).IsRequired(false);
+            entity.Property(c => c.Passport).IsRequired(false);
+            entity.Property(c => c.AccountNumber).IsRequired(false);
+            entity.Property(c => c.IdType).HasDefaultValue("NRIC Number");
+
+            entity.HasIndex(c => c.NRIC)
+                .IsUnique()
+                .HasFilter(@"""NRIC"" IS NOT NULL AND ""NRIC"" <> ''")
+                .HasDatabaseName("IX_Customers_NRIC_Unique");
+
+            entity.HasIndex(c => c.Passport)
+                .IsUnique()
+                .HasFilter(@"""Passport"" IS NOT NULL AND ""Passport"" <> ''")
+                .HasDatabaseName("IX_Customers_Passport_Unique");
+
+            entity.HasIndex(c => c.AccountNumber)
+                .IsUnique()
+                .HasFilter(@"""AccountNumber"" IS NOT NULL AND ""AccountNumber"" <> ''")
+                .HasDatabaseName("IX_Customers_AccountNumber_Unique");
+
+            entity.HasIndex(c => c.PhoneNumber)
+                .IsUnique()
+                .HasFilter(@"""PhoneNumber"" IS NOT NULL AND ""PhoneNumber"" <> ''")
+                .HasDatabaseName("IX_Customers_PhoneNumber_Unique");
+        });
+
         modelBuilder.Entity<CustomerCustomAttribute>()
             .HasOne(cca => cca.Customer)
             .WithMany(c => c.CustomAttributes)

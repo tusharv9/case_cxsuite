@@ -18,11 +18,13 @@ function SlaBadgeList({
   slaTotalPausedMinutes,
   isHolidayToday,
   holidayName,
+  isBusinessHoursActive,
 }) {
   const now = useNow(1000);
   const appContext = useApp();
   const effectiveHolidayToday = isHolidayToday ?? appContext?.isHolidayToday ?? false;
   const effectiveHolidayName = holidayName || appContext?.todayHolidayName || null;
+  const effectiveBusinessHoursActive = isBusinessHoursActive ?? appContext?.isBusinessHoursActive ?? true;
 
   const { internalHours } = getSlaConfig(severity, slaTargetHours);
   const sla = getSlaDisplay(
@@ -33,7 +35,8 @@ function SlaBadgeList({
     slaPausedAt,
     slaTotalPausedMinutes,
     effectiveHolidayToday,
-    effectiveHolidayName
+    effectiveHolidayName,
+    effectiveBusinessHoursActive
   );
 
   if (sla.status === 'within') {
@@ -50,6 +53,18 @@ function SlaBadgeList({
       <span
         className="case-list-sla case-list-sla--holiday-paused"
         title={sla.tooltip || `Today is a public holiday (${sla.holidayName || 'Holiday'}). SLA clock is paused.`}
+      >
+        <Pause size={10} strokeWidth={2.5} />
+        <span>{sla.label}</span>
+      </span>
+    );
+  }
+
+  if (sla.status === 'bh-paused') {
+    return (
+      <span
+        className="case-list-sla case-list-sla--holiday-paused"
+        title={sla.tooltip || 'SLA clock is paused (Outside Business Hours / Business Hours Disabled)'}
       >
         <Pause size={10} strokeWidth={2.5} />
         <span>{sla.label}</span>
@@ -332,6 +347,7 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
                     slaTotalPausedMinutes={c.slaTotalPausedMinutes}
                     isHolidayToday={c.isHolidayToday}
                     holidayName={c.holidayName}
+                    isBusinessHoursActive={c.isBusinessHoursActive}
                   />
                 </td>
 

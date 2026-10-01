@@ -16,9 +16,11 @@ export const customerService = {
   /**
    * Get server-side paginated and searched customers
    */
-  getPaginatedCustomers({ search, page = 1, pageSize = 20, signal } = {}) {
+  getPaginatedCustomers({ search, preferredLanguage, branch, page = 1, pageSize = 20, signal } = {}) {
     const params = { page, pageSize };
     if (search && search.trim() !== '') params.search = search.trim();
+    if (preferredLanguage && preferredLanguage.trim() !== '') params.preferredLanguage = preferredLanguage.trim();
+    if (branch && branch.trim() !== '') params.branch = branch.trim();
     return api.get('/api/customers', { params, signal }).then((r) => r.data);
   },
 
@@ -64,6 +66,15 @@ export const customerService = {
         delete customer360Requests[customerId];
       });
     return customer360Requests[customerId];
+  },
+
+  /**
+   * Get server-side paginated cases for a customer
+   */
+  getCustomerCases(customerId, { page = 1, pageSize = 10, signal } = {}) {
+    return api
+      .get(`/api/customers/${customerId}/cases`, { params: { page, pageSize }, signal })
+      .then((r) => r.data);
   },
 
   clearCache() {

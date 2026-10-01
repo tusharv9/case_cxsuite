@@ -20,14 +20,19 @@ public class CustomersController : BaseApiController
     [HttpGet]
     public async Task<IActionResult> GetAllCustomers(
         [FromQuery] string? search,
+        [FromQuery] string? preferredLanguage,
+        [FromQuery] string? branch,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        // Server-side pagination / search when parameters are present
-        if (!string.IsNullOrWhiteSpace(search) || page > 1 || pageSize < 1000)
+        // Server-side pagination / search / filter when parameters are present
+        if (!string.IsNullOrWhiteSpace(search) ||
+            !string.IsNullOrWhiteSpace(preferredLanguage) ||
+            !string.IsNullOrWhiteSpace(branch) ||
+            page > 1 || pageSize < 1000)
         {
-            var paged = await _customerService.GetPaginatedCustomersAsync(search, page, pageSize, ct);
+            var paged = await _customerService.GetPaginatedCustomersAsync(search, preferredLanguage, branch, page, pageSize, ct);
             return Ok(paged);
         }
 
@@ -48,11 +53,29 @@ public class CustomersController : BaseApiController
         return Ok(customer);
     }
 
+    [HttpGet("{id:guid}/cases")]
+    public async Task<IActionResult> GetCustomerCases(
+        Guid id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken ct = default)
+    {
+        var result = await _customerService.GetCustomerCasesAsync(id, page, pageSize, ct);
+        return Ok(result);
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateCustomer([FromBody] CreateCustomerDto dto)
     {
-        var newCustomer = await _customerService.CreateCustomerAsync(dto, CurrentUserId);
-        return CreatedAtAction(nameof(GetCustomer360), new { id = newCustomer.Id }, newCustomer);
+        try
+        {
+            var newCustomer = await _customerService.CreateCustomerAsync(dto, CurrentUserId);
+            return CreatedAtAction(nameof(GetCustomer360), new { id = newCustomer.Id }, newCustomer);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpPost("search")]

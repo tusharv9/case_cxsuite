@@ -99,13 +99,37 @@
   cursor: pointer;
 }
 
-/* --- Error --- */
+/* --- Error & Helper Text --- */
 .form-error {
   font-size: var(--font-size-sm);
-  color: var(--color-danger);
+  color: #ef4444;
   display: flex;
   align-items: center;
   gap: var(--space-1);
+}
+
+.form-input--error,
+.form-input.field-error,
+.form-select.field-error,
+.custom-select-trigger.field-error,
+.field-error {
+  border-color: #ef4444 !important;
+}
+
+.form-input--error:focus,
+.form-input.field-error:focus,
+.form-select.field-error:focus,
+.custom-select-trigger.field-error:focus,
+.field-error:focus {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important;
+}
+
+.form-helper-text {
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+  margin-top: 2px;
 }
 
 /* Custom Select Dropdown Styling (WHITE PALETTE SYSTEM) */

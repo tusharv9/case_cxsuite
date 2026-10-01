@@ -136,8 +136,10 @@ public class RoutingEngineService : IRoutingEngineService
         var rule = await _context.RoutingRules.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (rule == null) throw new KeyNotFoundException("Routing rule not found.");
 
-        _context.RoutingRules.Remove(rule);
-        await RecordAuditLogAsync("RULE_DELETED", rule.Name, $"Deleted routing rule '{rule.Name}'", rule.Name, null, actingUserId);
+        rule.IsActive = false;
+        rule.UpdatedAt = DateTime.UtcNow;
+
+        await RecordAuditLogAsync("RULE_DEACTIVATED", rule.Name, $"Deactivated routing rule '{rule.Name}' (soft-delete to preserve history)", "Active", "Inactive", actingUserId);
         await _context.SaveChangesAsync(ct);
     }
 
@@ -250,7 +252,7 @@ public class RoutingEngineService : IRoutingEngineService
 
         Department? targetDepartment = null;
 
-        if (matchedRule != null && matchedRule.TargetDepartment != null)
+        if (matchedRule != null && matchedRule.TargetDepartment != null && matchedRule.TargetDepartment.IsActive)
         {
             targetDepartment = matchedRule.TargetDepartment;
             result.MatchedRuleId = matchedRule.Id;
@@ -260,13 +262,14 @@ public class RoutingEngineService : IRoutingEngineService
         }
         else
         {
-            // Fallback: If newCase has an explicitly selected valid department, keep it
-            targetDepartment = await _context.Departments.FirstOrDefaultAsync(d => d.Id == newCase.DepartmentId, ct)
-                               ?? await _context.Departments.OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
+            // Fallback: If newCase has an explicitly selected valid active department, keep it
+            targetDepartment = await _context.Departments.FirstOrDefaultAsync(d => d.Id == newCase.DepartmentId && d.IsActive, ct)
+                               ?? await _context.Departments.FirstOrDefaultAsync(d => d.Code == "CC" && d.IsActive, ct)
+                               ?? await _context.Departments.Where(d => d.IsActive).OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
 
             result.TargetDepartmentId = targetDepartment?.Id ?? newCase.DepartmentId;
-            result.TargetDepartmentName = targetDepartment?.Name ?? "Default Team";
-            result.MatchedRuleName = "Default Fallback";
+            result.TargetDepartmentName = targetDepartment?.Name ?? "Contact Center";
+            result.MatchedRuleName = "Default Active Fallback";
         }
 
         // Apply team to case
@@ -317,47 +320,51 @@ public class RoutingEngineService : IRoutingEngineService
 
         var matches = new List<bool>();
 
-        // 1. Case Type
-        if (!string.IsNullOrWhiteSpace(conds.CaseType))
+        // 1. Department (Structured Criterion)
+        if (!string.IsNullOrWhiteSpace(conds.Department))
         {
-            matches.Add(string.Equals(c.CaseType, conds.CaseType.Trim(), StringComparison.OrdinalIgnoreCase));
+            var dept = _context.Departments.AsNoTracking().FirstOrDefault(d => d.Id == c.DepartmentId);
+            var deptName = dept?.Name ?? "";
+            var deptCode = dept?.Code ?? "";
+            bool deptMatch = string.Equals(deptName, conds.Department.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(deptCode, conds.Department.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                             deptName.Contains(conds.Department.Trim(), StringComparison.OrdinalIgnoreCase);
+            matches.Add(deptMatch);
         }
 
-        // 2. Channel
-        if (!string.IsNullOrWhiteSpace(conds.Channel))
-        {
-            var raw = conds.Channel.ToLowerInvariant();
-            var caseCh = (c.SourceChannel ?? c.CommunicationChannel ?? "").ToLowerInvariant();
-            var isChannelMatch = raw.Contains(caseCh) || caseCh.Contains(raw);
-            matches.Add(isChannelMatch);
-        }
-
-        // 3. Priority
-        if (!string.IsNullOrWhiteSpace(conds.Priority))
-        {
-            matches.Add(string.Equals(c.Severity, conds.Priority.Trim(), StringComparison.OrdinalIgnoreCase));
-        }
-
-        // 4. Customer Segment
-        if (!string.IsNullOrWhiteSpace(conds.CustomerSegment))
-        {
-            var custSeg = (cust?.CustomerSegment ?? "").ToLowerInvariant();
-            matches.Add(custSeg.Contains(conds.CustomerSegment.Trim().ToLowerInvariant()));
-        }
-
-        // 5. Category
+        // 2. Case Category / Sub-Category (Structured Criterion)
         if (!string.IsNullOrWhiteSpace(conds.Category))
         {
             var subcat = (c.Subcategory ?? "").ToLowerInvariant();
             matches.Add(subcat.Contains(conds.Category.Trim().ToLowerInvariant()));
         }
 
-        // 6. Keywords in Subject/Title or Description
-        if (conds.Keywords != null && conds.Keywords.Any())
+        // 3. Case Type (Structured Criterion)
+        if (!string.IsNullOrWhiteSpace(conds.CaseType))
         {
-            var fullText = $"{c.Title} {c.Description}".ToLowerInvariant();
-            var hasKeyword = conds.Keywords.Any(k => !string.IsNullOrWhiteSpace(k) && fullText.Contains(k.Trim().ToLowerInvariant()));
-            matches.Add(hasKeyword);
+            matches.Add(string.Equals(c.CaseType, conds.CaseType.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        // 4. Severity / Priority (Structured Criterion)
+        if (!string.IsNullOrWhiteSpace(conds.Priority))
+        {
+            matches.Add(string.Equals(c.Severity, conds.Priority.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        // 5. Customer Type / Customer Segment (Structured Criterion)
+        if (!string.IsNullOrWhiteSpace(conds.CustomerSegment))
+        {
+            var custSeg = (cust?.CustomerSegment ?? "").ToLowerInvariant();
+            matches.Add(custSeg.Contains(conds.CustomerSegment.Trim().ToLowerInvariant()));
+        }
+
+        // 6. Source / Communication Channel (Structured Criterion)
+        if (!string.IsNullOrWhiteSpace(conds.Channel))
+        {
+            var raw = conds.Channel.ToLowerInvariant();
+            var caseCh = (c.SourceChannel ?? c.CommunicationChannel ?? "").ToLowerInvariant();
+            var isChannelMatch = raw.Contains(caseCh) || caseCh.Contains(raw);
+            matches.Add(isChannelMatch);
         }
 
         if (!matches.Any()) return true; // Rule with no conditions matches everything

@@ -45,6 +45,41 @@ export function checkIsPublicHolidayToday(publicHolidays, targetDate = new Date(
 }
 
 /**
+ * Helper to check if current time is within active business hours window in MYT
+ * @param {Array} businessHours
+ * @param {Date|number} [targetDate]
+ * @returns {boolean}
+ */
+export function checkIsBusinessHoursActive(businessHours, targetDate = new Date()) {
+  if (!Array.isArray(businessHours) || businessHours.length === 0) return true;
+  
+  // Convert targetDate to Malaysia Standard Time (UTC+8)
+  const d = new Date(targetDate);
+  const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+  const mytDate = new Date(utc + (3600000 * 8));
+
+  const dayOfWeek = mytDate.getDay(); // 0 is Sunday, 1 is Monday...
+  const bh = businessHours.find((b) => b.dayOfWeek === dayOfWeek);
+  if (!bh || !bh.isEnabled) {
+    return false;
+  }
+
+  // Parse start and end time (format "HH:mm" or "HH:mm:ss")
+  const currentMinutes = mytDate.getHours() * 60 + mytDate.getMinutes();
+  
+  const parseTimeMinutes = (timeStr) => {
+    if (!timeStr) return 0;
+    const parts = timeStr.split(':');
+    return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+  };
+
+  const startMinutes = parseTimeMinutes(bh.startTime || '09:00');
+  const endMinutes = parseTimeMinutes(bh.endTime || '17:00');
+
+  return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+}
+
+/**
  * SLA Display Helper for CaseCard, CaseList & CaseDrawer
  */
 export function getSlaDisplay(
@@ -55,7 +90,8 @@ export function getSlaDisplay(
   slaPausedAt = null,
   slaTotalPausedMinutes = 0,
   isHolidayToday = false,
-  holidayName = null
+  holidayName = null,
+  isBusinessHoursActive = true
 ) {
   if (status === 'Resolved' || status === 'Closed') {
     return { status: 'within', label: 'SLA Met', color: '#16a34a' };
@@ -70,6 +106,18 @@ export function getSlaDisplay(
       shortLabel: 'Holiday Paused',
       tooltip: `SLA Clock Paused: Today is a Public Holiday (${hName})`,
       holidayName: hName,
+      color: '#b45309',
+    };
+  }
+
+  if (isBusinessHoursActive === false) {
+    return {
+      status: 'bh-paused',
+      isHoliday: false,
+      isBusinessHoursOff: true,
+      label: 'Clock paused (Business Hours)',
+      shortLabel: 'BH Paused',
+      tooltip: 'SLA Clock Paused: Outside configured business hours schedule',
       color: '#b45309',
     };
   }
@@ -139,7 +187,7 @@ export function formatSlaRemaining(slaStartTime, slaTargetHours = 24, currentTim
  * @param {string} [holidayName]
  * @returns {Object} { external, internal, isInternalBreached, isExternalBreached, isPaused, isHoliday }
  */
-export function calculateDualSla(caseItem, currentTimestamp, isHolidayToday = null, holidayName = null) {
+export function calculateDualSla(caseItem, currentTimestamp, isHolidayToday = null, holidayName = null, isBusinessHoursActive = null) {
   if (!caseItem) return null;
   const isResolved = caseItem.status === 'Resolved' || caseItem.status === 'Closed';
 
@@ -176,6 +224,26 @@ export function calculateDualSla(caseItem, currentTimestamp, isHolidayToday = nu
       holidayName: activeHolidayName,
       internalLabel: `SLA Clock Paused (Public Holiday: ${activeHolidayName})`,
       externalLabel: `SLA Clock Paused (Public Holiday: ${activeHolidayName})`,
+    };
+  }
+
+  const bhActive = isBusinessHoursActive !== null && isBusinessHoursActive !== undefined
+    ? Boolean(isBusinessHoursActive)
+    : (caseItem.isBusinessHoursActive !== undefined ? Boolean(caseItem.isBusinessHoursActive) : true);
+
+  if (!bhActive) {
+    return {
+      externalTargetHours: 0,
+      internalTargetHours: 0,
+      externalRemainingFormatted: 'Clock paused (Business Hours)',
+      internalRemainingFormatted: 'Clock paused (Business Hours)',
+      isExternalBreached: false,
+      isInternalBreached: false,
+      isPaused: true,
+      isHoliday: false,
+      isBusinessHoursOff: true,
+      internalLabel: 'SLA Clock Paused (Outside / Disabled Business Hours)',
+      externalLabel: 'SLA Clock Paused (Outside / Disabled Business Hours)',
     };
   }
 

@@ -1,7 +1,5 @@
-// ===== TEAMS PAGE — Omni CX Suite =====
-
 import { useState, useEffect } from 'react';
-import { Plus, Phone, MessageSquare, Mail, Megaphone, Users, RefreshCw } from 'lucide-react';
+import { Plus, Phone, MessageSquare, Mail, Megaphone, Users, AlertTriangle, X } from 'lucide-react';
 import { Button } from '../../components/common/Button/Button.jsx';
 import { Avatar } from '../../components/common/Avatar/Avatar.jsx';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
@@ -15,6 +13,8 @@ export function TeamsPage() {
   const [teams, setTeams] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(null); // { team, member }
+  const [isRemoving, setIsRemoving] = useState(false);
 
   const fetchTeams = async () => {
     setIsLoading(true);
@@ -73,6 +73,32 @@ export function TeamsPage() {
     );
   };
 
+  const handleToggleTeam = async (team) => {
+    try {
+      const updated = await teamService.toggleStatus(team.id);
+      toast.success(`Team "${team.name}" is now ${updated.isActive ? 'Active' : 'Inactive'}.`);
+      setTeams((prev) => prev.map((t) => (t.id === team.id ? { ...t, isActive: updated.isActive } : t)));
+    } catch (err) {
+      toast.error(err.message || 'Failed to toggle team status.');
+    }
+  };
+
+  const handleExecuteRemoveMember = async () => {
+    if (!confirmRemove) return;
+    const { team, member } = confirmRemove;
+    setIsRemoving(true);
+    try {
+      await teamService.removeMember(team.id, member.userId || member.id);
+      toast.success(`Removed ${member.name} from ${team.name}.`);
+      setConfirmRemove(null);
+      fetchTeams();
+    } catch (err) {
+      toast.error(err.message || 'Failed to remove member.');
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
   return (
     <div className="teams-page">
       {/* Header */}
@@ -116,9 +142,10 @@ export function TeamsPage() {
               const initials = getInitials(team.name);
               const avatarVariants = ['sd', 'sp', 'cs'];
               const variantClass = `team-avatar--${avatarVariants[idx % avatarVariants.length]}`;
+              const isActive = team.isActive !== false;
 
               return (
-                <div key={team.id} className="team-card">
+                <div key={team.id} className={`team-card ${!isActive ? 'team-card--inactive' : ''}`}>
                   {/* Card Header */}
                   <div className="team-card__header">
                     <div className={`team-card__avatar ${variantClass}`}>
@@ -127,6 +154,21 @@ export function TeamsPage() {
                     <div className="team-card__title-wrap">
                       <h2 className="team-card__name">{team.name}</h2>
                       <p className="team-card__function">{team.function}</p>
+                    </div>
+                    {/* Active / Inactive Status Management */}
+                    <div className="team-card__status-toggle-wrap">
+                      <span className={`team-status-badge ${isActive ? 'team-status-badge--active' : 'team-status-badge--inactive'}`}>
+                        {isActive ? 'Active' : 'Inactive'}
+                      </span>
+                      <button
+                        type="button"
+                        className={`team-toggle-switch ${isActive ? 'team-toggle-switch--on' : 'team-toggle-switch--off'}`}
+                        onClick={() => handleToggleTeam(team)}
+                        title={`Click to set team ${isActive ? 'Inactive' : 'Active'}`}
+                        aria-label={`Toggle ${team.name} status`}
+                      >
+                        <span className="team-toggle-slider" />
+                      </button>
                     </div>
                   </div>
 
@@ -155,6 +197,18 @@ export function TeamsPage() {
                                 </span>
                               )}
                             </div>
+                            {/* Remove Member Button */}
+                            {!isLead && (
+                              <button
+                                type="button"
+                                className="team-card__member-remove-btn"
+                                title={`Remove ${member.name} from team`}
+                                onClick={() => setConfirmRemove({ team, member })}
+                                aria-label={`Remove ${member.name}`}
+                              >
+                                <X size={13} />
+                              </button>
+                            )}
                           </div>
                         );
                       })
@@ -179,6 +233,42 @@ export function TeamsPage() {
           </div>
         )}
       </div>
+
+      {/* Confirmation Dialog for Removing Member */}
+      {confirmRemove && (
+        <div className="team-modal-overlay" onClick={() => !isRemoving && setConfirmRemove(null)}>
+          <div className="team-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="team-modal__header">
+              <div className="team-modal__icon-wrap">
+                <AlertTriangle size={20} color="#dc2626" />
+              </div>
+              <h3 className="team-modal__title">Remove Member from Team</h3>
+            </div>
+            <p className="team-modal__text">
+              Are you sure you want to remove <strong>{confirmRemove.member.name}</strong> from <strong>{confirmRemove.team.name}</strong>?
+            </p>
+            <p className="team-modal__subtext">
+              This action removes the agent from the squad assignment. The underlying user profile and account will <strong>not</strong> be deleted.
+            </p>
+            <div className="team-modal__actions">
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmRemove(null)}
+                disabled={isRemoving}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleExecuteRemoveMember}
+                isLoading={isRemoving}
+              >
+                Confirm Removal
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Team Drawer */}
       <CreateTeamDrawer

@@ -4,11 +4,13 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, UserPlus } from 'lucide-react';
 import { Button } from '../../common/Button/Button.jsx';
-import { Input, Select, Checkbox } from '../../common/Input/Input.jsx';
+import { Input, Select, Checkbox, FormGroup } from '../../common/Input/Input.jsx';
 import { customerService } from '../../../services/customerService.js';
 import { configurableSettingsService } from '../../../services/configurableSettingsService.js';
 import { useToast } from '../../../hooks/useToast.js';
+import { SUPPORTED_ID_TYPES, validateIdentification, validatePhoneNumber, validateNricDateWithDob } from '../../../utils/validationUtils.js';
 import '../CreateCaseDrawer/CreateCaseDrawer.css';
+import './CreateCustomerDrawer.css';
 
 export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   const toast = useToast();
@@ -16,8 +18,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   const [fieldConfigs, setFieldConfigs] = useState([]);
   const [languages, setLanguages] = useState([]);
   const [branches, setBranches] = useState([]);
-  const [idTypes, setIdTypes] = useState(['NRIC Number', 'IC Number', 'ID Number', 'Passport', 'Account Number']);
-  // Options for custom dropdown fields, keyed by the master lookup code chosen for the field
+  const [idTypes, setIdTypes] = useState(SUPPORTED_ID_TYPES);
   const [customLookups, setCustomLookups] = useState({});
 
   const [form, setForm] = useState({
@@ -25,10 +26,10 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     idType: 'NRIC Number',
     nric: '',
     dateOfBirth: '',
-    phoneNumber: '',
+    phoneDigits: '',
     email: '',
     branch: '',
-    customerSegment: 'Mass Retail',
+    customerSegment: '',
     preferredLanguage: '',
     customFields: {},
   });
@@ -52,28 +53,32 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         if (!isMounted) return;
 
         const sortedFields = (fieldsData || [])
-          .filter((f) => f.isVisible !== false)
+          .filter((f) => f.isVisible !== false && f.apiField?.toLowerCase() !== 'tenure')
           .sort((a, b) => a.displayOrder - b.displayOrder);
 
         setFieldConfigs(sortedFields);
 
         const activeLangs = (langsData || []).map((l) => l.value);
         const activeBranches = (branchData || []).map((b) => b.value);
-        const activeIdTypes = (idTypeData || []).map((i) => i.value);
+        
+        // Filter strictly to the 3 supported ID types
+        const filteredIdTypes = (idTypeData || [])
+          .map((i) => i.value)
+          .filter((val) => SUPPORTED_ID_TYPES.includes(val));
+
+        const finalIdTypes = filteredIdTypes.length > 0 ? filteredIdTypes : SUPPORTED_ID_TYPES;
 
         if (activeLangs.length > 0) setLanguages(activeLangs);
         if (activeBranches.length > 0) setBranches(activeBranches);
-        if (activeIdTypes.length > 0) setIdTypes(activeIdTypes);
+        setIdTypes(finalIdTypes);
 
         setForm((prev) => ({
           ...prev,
           preferredLanguage: prev.preferredLanguage || activeLangs[0] || 'Bahasa Malaysia',
           branch: prev.branch || activeBranches[0] || 'KL HQ',
-          idType: prev.idType || (activeIdTypes.length > 0 ? activeIdTypes[0] : 'NRIC Number'),
+          idType: prev.idType && finalIdTypes.includes(prev.idType) ? prev.idType : finalIdTypes[0],
         }));
 
-        // A custom dropdown field is bound to whichever master lookup the administrator picked,
-        // so those lists are fetched by code rather than defaulting to the language list.
         const codes = [
           ...new Set(
             sortedFields
@@ -84,7 +89,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         const preloaded = {
           PREFERRED_LANGUAGE: activeLangs,
           HOME_BRANCH: activeBranches,
-          ID_TYPE: activeIdTypes,
+          ID_TYPE: finalIdTypes,
         };
         const missing = codes.filter((c) => !preloaded[c]);
         const fetched = await Promise.all(
@@ -108,9 +113,24 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     };
   }, [isOpen]);
 
+  // Clean phone input to exactly digits, maximum 10 digits
+  const handlePhoneChange = (e) => {
+    let input = e.target.value.replace(/\D/g, '');
+    // If user starts typing or pastes with 60 or leading 0, strip it
+    if (input.startsWith('60')) {
+      input = input.slice(2);
+    } else if (input.startsWith('0')) {
+      input = input.slice(1);
+    }
+    const cleanDigits = input.slice(0, 10);
+    setForm((prev) => ({ ...prev, phoneDigits: cleanDigits }));
+    setErrors((prev) => ({ ...prev, phoneNumber: undefined }));
+  };
+
   const setCore = (field) => (e) => {
-    setForm((prev) => ({ ...prev, [field]: e.target.value }));
-    setErrors((prev) => ({ ...prev, [field]: undefined }));
+    const val = e.target.value;
+    setForm((prev) => ({ ...prev, [field]: val }));
+    setErrors((prev) => ({ ...prev, [field]: undefined, ...(field === 'nric' ? { idValue: undefined } : {}) }));
   };
 
   const setCustom = (apiField) => (e) => {
@@ -122,26 +142,158 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     setErrors((prev) => ({ ...prev, [apiField]: undefined }));
   };
 
-  const validate = () => {
+  const handleIdTypeChange = (e) => {
+    const newType = e.target.value;
+    setForm((prev) => ({ ...prev, idType: newType }));
+    setErrors((prev) => ({ ...prev, idType: undefined, nric: undefined, idValue: undefined }));
+    if (form.nric && form.nric.trim()) {
+      const res = validateIdentification(form.nric, newType);
+      if (!res.isValid) {
+        setErrors((prev) => ({ ...prev, nric: res.error, idValue: res.error }));
+      }
+    }
+  };
+
+  // Blur validation for any field
+  const handleBlur = (field) => {
+    if (field === 'fullName') {
+      if (!form.fullName || !form.fullName.trim()) {
+        setErrors((prev) => ({ ...prev, fullName: 'This field is required' }));
+      }
+    } else if (field === 'nric' || field === 'idValue') {
+      if (!form.nric || !form.nric.trim()) {
+        setErrors((prev) => ({ ...prev, nric: 'This field is required', idValue: 'This field is required' }));
+      } else {
+        const res = validateIdentification(form.nric, form.idType);
+        if (!res.isValid) {
+          setErrors((prev) => ({ ...prev, nric: res.error, idValue: res.error }));
+        } else {
+          setErrors((prev) => ({ ...prev, nric: undefined, idValue: undefined }));
+          if (form.idType === 'NRIC Number' && form.dateOfBirth) {
+            const dobRes = validateNricDateWithDob(form.nric, form.dateOfBirth);
+            if (!dobRes.isValid) {
+              setErrors((prev) => ({ ...prev, dateOfBirth: dobRes.error }));
+            } else if (errors.dateOfBirth === 'Date of Birth does not match the date in the NRIC number.') {
+              setErrors((prev) => ({ ...prev, dateOfBirth: undefined }));
+            }
+          }
+        }
+      }
+    } else if (field === 'dateOfBirth') {
+      if (!form.dateOfBirth) {
+        setErrors((prev) => ({ ...prev, dateOfBirth: 'This field is required' }));
+      } else {
+        const d = new Date(form.dateOfBirth);
+        if (d > new Date()) {
+          setErrors((prev) => ({ ...prev, dateOfBirth: 'Date of birth cannot be in the future.' }));
+        } else if (form.idType === 'NRIC Number' && form.nric && form.nric.trim()) {
+          const dobRes = validateNricDateWithDob(form.nric, form.dateOfBirth);
+          if (!dobRes.isValid) {
+            setErrors((prev) => ({ ...prev, dateOfBirth: dobRes.error }));
+          } else {
+            setErrors((prev) => ({ ...prev, dateOfBirth: undefined }));
+          }
+        } else {
+          setErrors((prev) => ({ ...prev, dateOfBirth: undefined }));
+        }
+      }
+    } else if (field === 'phoneNumber') {
+      if (!form.phoneDigits) {
+        setErrors((prev) => ({ ...prev, phoneNumber: 'This field is required' }));
+      } else if (form.phoneDigits.length !== 10) {
+        setErrors((prev) => ({
+          ...prev,
+          phoneNumber: `Phone number must contain exactly 10 contact digits (currently ${form.phoneDigits.length}).`,
+        }));
+      }
+    } else if (field === 'email') {
+      if (!form.email || !form.email.trim()) {
+        setErrors((prev) => ({ ...prev, email: 'This field is required' }));
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+        setErrors((prev) => ({ ...prev, email: 'Please enter a valid email address.' }));
+      }
+    } else if (field === 'branch') {
+      if (!form.branch || !form.branch.trim()) {
+        setErrors((prev) => ({ ...prev, branch: 'This field is required' }));
+      }
+    } else if (field === 'preferredLanguage') {
+      if (!form.preferredLanguage || !form.preferredLanguage.trim()) {
+        setErrors((prev) => ({ ...prev, preferredLanguage: 'This field is required' }));
+      }
+    } else {
+      // Dynamic custom fields
+      const val = form.customFields[field];
+      if (val === undefined || val === null || (typeof val === 'string' && !val.trim())) {
+        setErrors((prev) => ({ ...prev, [field]: 'This field is required' }));
+      }
+    }
+  };
+
+  // Comprehensive submit validation: ALL fields are mandatory
+  const validateForm = () => {
     const e = {};
 
-    fieldConfigs.forEach((f) => {
-      const fieldKey = f.apiField;
-      const isCore = ['fullName', 'idType', 'idValue', 'nric', 'dateOfBirth', 'phoneNumber', 'email', 'preferredLanguage', 'branch'].includes(fieldKey);
-      const val = isCore ? (fieldKey === 'idValue' ? form.nric : form[fieldKey]) : form.customFields[fieldKey];
+    if (!form.fullName || !form.fullName.trim()) {
+      e.fullName = 'This field is required';
+    }
 
-      // Required check
-      if (f.isRequired && (!val || (typeof val === 'string' && !val.trim()))) {
-        e[fieldKey] = `${f.displayLabel || fieldKey} is required.`;
-      } else if (f.validationRegex && val && typeof val === 'string') {
-        // Regex check
-        try {
-          const reg = new RegExp(f.validationRegex);
-          if (!reg.test(val.trim())) {
-            e[fieldKey] = `${f.displayLabel || fieldKey} is invalid format.`;
-          }
-        } catch (err) {
-          // fallback if regex is malformed
+    if (!form.idType) {
+      e.idType = 'This field is required';
+    }
+
+    if (!form.nric || !form.nric.trim()) {
+      e.nric = 'This field is required';
+      e.idValue = 'This field is required';
+    } else {
+      const idRes = validateIdentification(form.nric, form.idType);
+      if (!idRes.isValid) {
+        e.nric = idRes.error;
+        e.idValue = idRes.error;
+      }
+    }
+
+    if (!form.dateOfBirth) {
+      e.dateOfBirth = 'This field is required';
+    } else {
+      const d = new Date(form.dateOfBirth);
+      if (d > new Date()) {
+        e.dateOfBirth = 'Date of birth cannot be in the future.';
+      } else if (form.idType === 'NRIC Number' && form.nric && form.nric.trim()) {
+        const dobRes = validateNricDateWithDob(form.nric, form.dateOfBirth);
+        if (!dobRes.isValid) {
+          e.dateOfBirth = dobRes.error;
+        }
+      }
+    }
+
+    if (!form.phoneDigits) {
+      e.phoneNumber = 'This field is required';
+    } else if (form.phoneDigits.length !== 10) {
+      e.phoneNumber = `Phone number must contain exactly 10 contact digits (currently ${form.phoneDigits.length}).`;
+    }
+
+    if (!form.email || !form.email.trim()) {
+      e.email = 'This field is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      e.email = 'Please enter a valid email address.';
+    }
+
+    if (!form.branch || !form.branch.trim()) {
+      e.branch = 'This field is required';
+    }
+
+    if (!form.preferredLanguage || !form.preferredLanguage.trim()) {
+      e.preferredLanguage = 'This field is required';
+    }
+
+    // Custom fields validation
+    fieldConfigs.forEach((f) => {
+      const key = f.apiField;
+      const isCore = ['fullName', 'idType', 'idValue', 'nric', 'dateOfBirth', 'phoneNumber', 'email', 'preferredLanguage', 'branch'].includes(key);
+      if (!isCore) {
+        const val = form.customFields[key];
+        if (val === undefined || val === null || (typeof val === 'string' && !val.trim())) {
+          e[key] = 'This field is required';
         }
       }
     });
@@ -150,9 +302,9 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   };
 
   const handleSubmit = async () => {
-    const e = validate();
-    if (Object.keys(e).length > 0) {
-      setErrors(e);
+    const validationErrors = validateForm();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
       return;
     }
 
@@ -164,15 +316,24 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
           customAttributesMap[k] = String(v);
         }
       });
+      // Store chosen idType
+      customAttributesMap['idType'] = form.idType;
+      customAttributesMap['idValue'] = form.nric.trim();
+
+      const normalizedPhone = `+60 ${form.phoneDigits}`;
 
       const newCustomer = await customerService.createCustomer({
         fullName: form.fullName.trim(),
-        nric: form.nric.trim(),
-        dateOfBirth: form.dateOfBirth ? new Date(form.dateOfBirth).toISOString() : undefined,
-        phoneNumber: form.phoneNumber.trim(),
-        email: form.email.trim() || undefined,
+        idType: form.idType,
+        idValue: form.nric.trim(),
+        nric: form.idType === 'NRIC Number' ? form.nric.trim() : null,
+        passport: form.idType === 'Passport Number' ? form.nric.trim() : null,
+        accountNumber: form.idType === 'Account Number' ? form.nric.trim() : null,
+        dateOfBirth: new Date(form.dateOfBirth).toISOString(),
+        phoneNumber: normalizedPhone,
+        email: form.email.trim(),
         branch: form.branch,
-        customerSegment: form.customerSegment,
+        customerSegment: form.customerSegment || null,
         preferredLanguage: form.preferredLanguage,
         customAttributes: Object.keys(customAttributesMap).length > 0 ? customAttributesMap : undefined,
       });
@@ -181,7 +342,25 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
       onSuccess?.(newCustomer);
       onClose();
     } catch (err) {
-      toast.error(err.message || 'Failed to add customer.');
+      const errorMsg = err.response?.data?.message || err.message || 'Failed to add customer.';
+      const msgLower = errorMsg.toLowerCase();
+
+      if (msgLower.includes('nric')) {
+        setErrors((prev) => ({
+          ...prev,
+          nric: 'A customer already exists with this NRIC number.',
+          idValue: 'A customer already exists with this NRIC number.',
+        }));
+        toast.error('A customer already exists with this NRIC number.');
+      } else if (msgLower.includes('phone')) {
+        setErrors((prev) => ({
+          ...prev,
+          phoneNumber: 'A customer already exists with this phone number.',
+        }));
+        toast.error('A customer already exists with this phone number.');
+      } else {
+        toast.error(errorMsg);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -189,11 +368,9 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
 
   if (!isOpen) return null;
 
-  // Helper to render individual field dynamically based on metadata
   const renderField = (fieldConfig) => {
     const key = fieldConfig.apiField;
     const label = fieldConfig.displayLabel || key;
-    const isRequired = fieldConfig.isRequired;
     const isEditable = fieldConfig.isEditable !== false;
 
     if (key === 'fullName') {
@@ -201,11 +378,12 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         <Input
           key={key}
           label={label}
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           placeholder="e.g. Siti Nurhaliza"
           value={form.fullName}
           onChange={setCore('fullName')}
+          onBlur={() => handleBlur('fullName')}
           error={errors.fullName}
         />
       );
@@ -216,10 +394,11 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         <Select
           key={key}
           label={label || 'Choose an ID'}
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           value={form.idType}
-          onChange={setCore('idType')}
+          onChange={handleIdTypeChange}
+          error={errors.idType}
         >
           {idTypes.map((type) => (
             <option key={type} value={type}>{type}</option>
@@ -229,16 +408,25 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     }
 
     if (key === 'idValue' || key === 'nric') {
+      const isPassport = form.idType === 'Passport Number';
+      const isAccount = form.idType === 'Account Number';
+      const placeholder = isPassport
+        ? 'e.g. A98765432'
+        : isAccount
+          ? 'e.g. ACC-98765432'
+          : 'e.g. 920514-10-5432';
+
       return (
         <Input
           key={key}
           label={`${form.idType || 'ID'} Value`}
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
-          placeholder={`Enter ${form.idType || 'ID'} (e.g. 920514-10-5432)`}
+          placeholder={placeholder}
           value={form.nric}
           onChange={setCore('nric')}
-          error={errors.nric}
+          onBlur={() => handleBlur('nric')}
+          error={errors.nric || errors.idValue}
         />
       );
     }
@@ -249,10 +437,11 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
           key={key}
           label={label}
           type="date"
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           value={form.dateOfBirth}
           onChange={setCore('dateOfBirth')}
+          onBlur={() => handleBlur('dateOfBirth')}
           error={errors.dateOfBirth}
         />
       );
@@ -260,16 +449,23 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
 
     if (key === 'phoneNumber') {
       return (
-        <Input
-          key={key}
-          label={label}
-          required={isRequired}
-          disabled={!isEditable}
-          placeholder="e.g. +60123456789"
-          value={form.phoneNumber}
-          onChange={setCore('phoneNumber')}
-          error={errors.phoneNumber}
-        />
+        <div key={key} className="form-group phone-input-container">
+          <label className="form-label form-label--required">{label}</label>
+          <div className="phone-input-group">
+            <span className="phone-input-group__prefix">+60</span>
+            <input
+              type="tel"
+              className={`form-input phone-input-group__input ${errors.phoneNumber ? 'form-input--error field-error' : ''}`}
+              disabled={!isEditable}
+              placeholder="1234567890"
+              maxLength={10}
+              value={form.phoneDigits}
+              onChange={handlePhoneChange}
+              onBlur={() => handleBlur('phoneNumber')}
+            />
+          </div>
+          {errors.phoneNumber && <span className="form-error">{errors.phoneNumber}</span>}
+        </div>
       );
     }
 
@@ -279,11 +475,12 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
           key={key}
           label={label}
           type="email"
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           placeholder="e.g. customer@example.com"
           value={form.email}
           onChange={setCore('email')}
+          onBlur={() => handleBlur('email')}
           error={errors.email}
         />
       );
@@ -294,10 +491,11 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         <Select
           key={key}
           label={label}
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           value={form.preferredLanguage}
           onChange={setCore('preferredLanguage')}
+          onBlur={() => handleBlur('preferredLanguage')}
           error={errors.preferredLanguage}
         >
           {languages.map((lang) => (
@@ -312,10 +510,11 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         <Select
           key={key}
           label={label}
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           value={form.branch}
           onChange={setCore('branch')}
+          onBlur={() => handleBlur('branch')}
           error={errors.branch}
         >
           {branches.map((br) => (
@@ -325,7 +524,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
       );
     }
 
-    // Dynamic custom fields added via "+ ADD NEW FIELD"
+    // Dynamic custom fields
     const customVal = form.customFields[key] || '';
     if (fieldConfig.fieldType === 'Date') {
       return (
@@ -333,10 +532,11 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
           key={key}
           label={label}
           type="date"
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           value={customVal}
           onChange={setCustom(key)}
+          onBlur={() => handleBlur(key)}
           error={errors[key]}
         />
       );
@@ -348,18 +548,13 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         <Select
           key={key}
           label={label}
-          required={isRequired}
+          required={true}
           disabled={!isEditable}
           value={customVal}
           onChange={setCustom(key)}
+          onBlur={() => handleBlur(key)}
           error={errors[key]}
-          placeholder={
-            fieldConfig.lookupTypeCode
-              ? options.length > 0
-                ? 'Select option...'
-                : 'No options configured'
-              : 'No master lookup configured'
-          }
+          placeholder={options.length > 0 ? 'Select option...' : 'No options configured'}
         >
           {options.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
@@ -394,11 +589,12 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         key={key}
         label={label}
         type={inputType}
-        required={isRequired}
+        required={true}
         disabled={!isEditable}
         placeholder={`Enter ${label}...`}
         value={customVal}
         onChange={setCustom(key)}
+        onBlur={() => handleBlur(key)}
         error={errors[key]}
       />
     );

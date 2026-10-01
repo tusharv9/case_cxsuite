@@ -1,0 +1,46 @@
+/* ===== CREATE CUSTOMER DRAWER SPECIFIC STYLES ===== */
+
+.phone-input-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.phone-input-container .form-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.phone-input-group {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.phone-input-group__prefix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  background-color: #f1f5f9;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-right: none;
+  border-radius: var(--radius-md, 6px) 0 0 var(--radius-md, 6px);
+  font-size: var(--font-size-base, 14px);
+  font-weight: 600;
+  color: #334155;
+  user-select: none;
+}
+
+.phone-input-group__input {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  flex: 1;
+}
+
+.phone-input-group__input.field-error,
+.phone-input-group__input.form-input--error {
+  border-color: #ef4444 !important;
+}

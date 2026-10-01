@@ -3,11 +3,14 @@ namespace CaseManagement.Api.DTOs;
 public class CreateCustomerDto
 {
     public string FullName { get; set; } = string.Empty;
-    public string NRIC { get; set; } = string.Empty;
+    public string IdType { get; set; } = "NRIC Number";
+    public string? IdValue { get; set; }
+    public string? NRIC { get; set; }
+    public string? Passport { get; set; }
+    public string? AccountNumber { get; set; }
     public string PhoneNumber { get; set; } = string.Empty;
-    public string? Email { get; set; }
-    public string? Branch { get; set; }
-    public int TenureMonths { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public string Branch { get; set; } = string.Empty;
     public string? CustomerSegment { get; set; }
     public string PreferredLanguage { get; set; } = "Bahasa Malaysia";
     public DateTime? DateOfBirth { get; set; }

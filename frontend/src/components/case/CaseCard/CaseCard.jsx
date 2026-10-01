@@ -17,11 +17,13 @@ function SlaBadge({
   slaTotalPausedMinutes,
   isHolidayToday,
   holidayName,
+  isBusinessHoursActive,
 }) {
   const now = useNow(1000);
   const appContext = useApp();
   const effectiveHolidayToday = isHolidayToday ?? appContext?.isHolidayToday ?? false;
   const effectiveHolidayName = holidayName || appContext?.todayHolidayName || null;
+  const effectiveBusinessHoursActive = isBusinessHoursActive ?? appContext?.isBusinessHoursActive ?? true;
 
   const { internalHours } = getSlaConfig(severity, slaTargetHours);
   const sla = getSlaDisplay(
@@ -32,7 +34,8 @@ function SlaBadge({
     slaPausedAt,
     slaTotalPausedMinutes,
     effectiveHolidayToday,
-    effectiveHolidayName
+    effectiveHolidayName,
+    effectiveBusinessHoursActive
   );
 
   if (sla.status === 'within') {
@@ -49,6 +52,18 @@ function SlaBadge({
       <span
         className="case-card-sla-badge case-card-sla-badge--holiday-paused"
         title={sla.tooltip || `Today is a public holiday (${sla.holidayName || 'Holiday'}). SLA clock is paused.`}
+      >
+        <Pause size={10} strokeWidth={2.5} />
+        <span>{sla.label}</span>
+      </span>
+    );
+  }
+
+  if (sla.status === 'bh-paused') {
+    return (
+      <span
+        className="case-card-sla-badge case-card-sla-badge--holiday-paused"
+        title={sla.tooltip || 'SLA clock is paused (Outside Business Hours / Business Hours Disabled)'}
       >
         <Pause size={10} strokeWidth={2.5} />
         <span>{sla.label}</span>
@@ -127,6 +142,7 @@ export function CaseCard({ caseData, isSelected, onClick }) {
     slaTotalPausedMinutes,
     isHolidayToday,
     holidayName,
+    isBusinessHoursActive,
     sourceChannel,
     communicationChannel,
   } = caseData;
@@ -157,6 +173,7 @@ export function CaseCard({ caseData, isSelected, onClick }) {
           slaTotalPausedMinutes={slaTotalPausedMinutes}
           isHolidayToday={isHolidayToday}
           holidayName={holidayName}
+          isBusinessHoursActive={isBusinessHoursActive}
         />
       </div>
 

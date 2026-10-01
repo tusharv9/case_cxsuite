@@ -2,48 +2,24 @@
 
 import './ProductHoldingCards.css';
 
-export const MOCK_PRODUCT_HOLDINGS = [
-  {
-    id: 'prod-1',
-    name: 'Akaun Simpanan BSN-i',
-    type: 'Shariah savings',
-    balance: 'MYR 12,840',
-  },
-  {
-    id: 'prod-2',
-    name: 'GIRO BSN-i',
-    type: 'Current account',
-    balance: 'MYR 3,420',
-  },
-  {
-    id: 'prod-3',
-    name: 'Personal Financing-i',
-    type: 'Tenure 5y - 18mo in',
-    balance: 'MYR 28,500',
-  },
-  {
-    id: 'prod-4',
-    name: 'BSN Visa Debit',
-    type: 'Active',
-    balance: 'Linked',
-  },
-  {
-    id: 'prod-5',
-    name: 'SSPN-i Plus',
-    type: 'Education fund',
-    balance: 'MYR 4,200',
-  },
-];
+export function ProductHoldingCards({ products = [] }) {
+  const items = Array.isArray(products) ? products : [];
 
-export function ProductHoldingCards({ products = MOCK_PRODUCT_HOLDINGS }) {
-  const items = products && products.length > 0 ? products : MOCK_PRODUCT_HOLDINGS;
+  if (items.length === 0) {
+    return (
+      <div className="product-holdings-empty" style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--color-text-secondary)', background: 'var(--color-surface, #ffffff)', borderRadius: 'var(--radius-md, 8px)', border: '1px dashed var(--color-border, #e2e8f0)' }}>
+        <p style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>No products available</p>
+        <p style={{ fontSize: '13px', marginTop: 4, color: 'var(--color-text-tertiary, #64748b)' }}>No product holding records available for this customer.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="product-holdings-grid">
       {items.map((item, idx) => {
-        const title = item.name || item.title || 'Product';
-        const sub = item.type || item.sub || item.accountNo || '';
-        const val = item.balance || item.value || 'Active';
+        const title = item.productName || item.name || item.title || 'Product';
+        const sub = item.productType || item.type || item.sub || item.accountNumber || '';
+        const val = item.balance || item.value || item.status || 'Active';
 
         return (
           <div key={item.id || idx} className="product-holding-card">

@@ -84,15 +84,3 @@ export function formatFullDateTime(dateString) {
   const timePart = formatTime(date);
   return `${datePart} ${timePart}`;
 }
-
-/**
- * Format tenure in months to human readable
- */
-export function formatTenure(months) {
-  if (!months) return '—';
-  const years = Math.floor(months / 12);
-  const remainingMonths = months % 12;
-  if (years === 0) return `${remainingMonths} months`;
-  if (remainingMonths === 0) return `${years} year${years !== 1 ? 's' : ''}`;
-  return `${years} year${years !== 1 ? 's' : ''} ${remainingMonths} month${remainingMonths !== 1 ? 's' : ''}`;
-}

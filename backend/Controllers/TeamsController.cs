@@ -79,4 +79,11 @@ public class TeamsController : BaseApiController
         await _teamService.RemoveMemberAsync(id, userId, CurrentUserId, ct);
         return Ok(new { message = "Member removed from team successfully." });
     }
+
+    [HttpPost("{id:guid}/toggle")]
+    public async Task<IActionResult> ToggleStatus(Guid id, CancellationToken ct)
+    {
+        var team = await _teamService.ToggleTeamStatusAsync(id, CurrentUserId, ct);
+        return Ok(team);
+    }
 }

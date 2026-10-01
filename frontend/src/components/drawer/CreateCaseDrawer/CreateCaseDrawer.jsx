@@ -28,9 +28,9 @@ const DEFAULT_CREATE_CASE_FIELDS = [
   { apiField: 'description', displayLabel: 'Description', isVisible: true, isRequired: true, displayOrder: 3 },
   { apiField: 'selectCustomer', displayLabel: 'Select Customer', isVisible: true, isRequired: true, displayOrder: 4 },
   { apiField: 'departmentId', displayLabel: 'Department', isVisible: true, isRequired: true, displayOrder: 5 },
-  { apiField: 'subCategory', displayLabel: 'Subcategory', isVisible: true, isRequired: false, displayOrder: 6 },
+  { apiField: 'subCategory', displayLabel: 'Subcategory', isVisible: true, isRequired: true, displayOrder: 6 },
   { apiField: 'preferredLanguage', displayLabel: 'Preferred Language', isVisible: true, isRequired: false, displayOrder: 7 },
-  { apiField: 'preferredCommunicationChannel', displayLabel: 'Preferred Communication Channel', isVisible: true, isRequired: false, displayOrder: 8 },
+  { apiField: 'preferredCommunicationChannel', displayLabel: 'Preferred Communication Channel', isVisible: true, isRequired: true, displayOrder: 8 },
   { apiField: 'sourceChannel', displayLabel: 'Source Channel', isVisible: true, isRequired: true, displayOrder: 9 },
   { apiField: 'severity', displayLabel: 'Severity', isVisible: true, isRequired: true, displayOrder: 10 },
 ];
@@ -53,6 +53,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
   });
 
   const [errors, setErrors] = useState({});
+  const [touched, setTouched] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -191,9 +192,30 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       setSelectedCustomer(null);
       setCustomerMode('existing');
       setErrors({});
+      setTouched({});
     }
     prevIsOpenRef.current = isOpen;
   }, [isOpen]);
+
+  // Dynamic customer ID resolution
+  const getIdLabel = (cust) => {
+    if (!cust) return 'ID';
+    const type = (cust.idType || '').toLowerCase();
+    if (type.includes('passport')) return 'Passport';
+    if (type.includes('account')) return 'Account No';
+    if (cust.passport) return 'Passport';
+    if (cust.accountNumber) return 'Account No';
+    return 'NRIC';
+  };
+
+  const getIdValue = (cust) => {
+    if (!cust) return '—';
+    if (cust.idValue) return cust.idValue;
+    const type = (cust.idType || '').toLowerCase();
+    if (type.includes('passport')) return cust.passport || cust.nric || '—';
+    if (type.includes('account')) return cust.accountNumber || cust.nric || '—';
+    return cust.nric || cust.passport || cust.accountNumber || '—';
+  };
 
   // Update selected customer object whenever form.customerId is set
   useEffect(() => {
@@ -216,6 +238,18 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     return ['General Request', 'Issue Escalation', 'Information Update'];
   }, [dbSubCategories, form.departmentId]);
 
+  const handleBlur = (field) => () => {
+    const errKey = field === 'selectCustomer' ? 'customerId' : (field === 'subCategory' ? 'subcategory' : field);
+    setTouched((prev) => ({ ...prev, [errKey]: true }));
+    let val = form[field];
+    if (field === 'selectCustomer' || field === 'customerId') val = form.customerId;
+    if (field === 'subCategory' || field === 'subcategory') val = form.subcategory;
+
+    if (!val || (typeof val === 'string' && !val.trim())) {
+      setErrors((prev) => ({ ...prev, [errKey]: 'This field is required' }));
+    }
+  };
+
   const handleDepartmentChange = (e) => {
     const newDeptId = e.target.value;
     setForm((prev) => ({
@@ -223,7 +257,13 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       departmentId: newDeptId,
       subcategory: '',
     }));
-    setErrors((prev) => ({ ...prev, departmentId: undefined, subcategory: undefined }));
+    if (newDeptId) {
+      setErrors((prev) => ({ ...prev, departmentId: undefined }));
+    } else if (touched.departmentId) {
+      setErrors((prev) => ({ ...prev, departmentId: 'This field is required' }));
+    }
+    // Subcategory is reset when department changes
+    setErrors((prev) => ({ ...prev, subcategory: undefined }));
   };
 
   const handleSubcategoryChange = (e) => {
@@ -239,7 +279,11 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       }
       return updated;
     });
-    setErrors((prev) => ({ ...prev, subcategory: undefined, severity: undefined }));
+    if (chosenSubcat && chosenSubcat.trim()) {
+      setErrors((prev) => ({ ...prev, subcategory: undefined, severity: undefined }));
+    } else if (touched.subcategory) {
+      setErrors((prev) => ({ ...prev, subcategory: 'This field is required' }));
+    }
   };
 
   const handleSeverityChange = (e) => {
@@ -252,12 +296,22 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       severity: newSeverity,
       slaTargetHours: String(hours),
     }));
-    setErrors((prev) => ({ ...prev, severity: undefined }));
+    if (newSeverity && newSeverity.trim()) {
+      setErrors((prev) => ({ ...prev, severity: undefined }));
+    } else if (touched.severity) {
+      setErrors((prev) => ({ ...prev, severity: 'This field is required' }));
+    }
   };
 
   const set = (field) => (e) => {
-    setForm((prev) => ({ ...prev, [field]: e.target.value }));
-    setErrors((prev) => ({ ...prev, [field]: undefined }));
+    const val = e.target.value;
+    const errKey = field === 'subCategory' ? 'subcategory' : field;
+    setForm((prev) => ({ ...prev, [field]: val }));
+    if (val && (typeof val !== 'string' || val.trim())) {
+      setErrors((prev) => ({ ...prev, [errKey]: undefined }));
+    } else if (touched[errKey]) {
+      setErrors((prev) => ({ ...prev, [errKey]: 'This field is required' }));
+    }
   };
 
   // Handle New Customer Creation inside Create Case
@@ -286,26 +340,45 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
   const validate = () => {
     const e = {};
 
-    // System invariants
+    // Strict Mandatory Invariants per specification:
+    // Customer, Department, Sub-Category, Case Type, Preferred Channel, Source Channel, Severity, Title, Description
     if (!form.customerId) {
-      e.customerId = 'Please select a customer.';
+      e.customerId = 'This field is required';
     }
     if (!form.departmentId) {
-      e.departmentId = 'Please select a department.';
+      e.departmentId = 'This field is required';
+    }
+    if (!form.subcategory?.trim()) {
+      e.subcategory = 'This field is required';
+    }
+    if (!form.caseType?.trim()) {
+      e.caseType = 'This field is required';
+    }
+    if (!form.preferredCommunicationChannel?.trim()) {
+      e.preferredCommunicationChannel = 'This field is required';
+    }
+    if (!form.sourceChannel?.trim()) {
+      e.sourceChannel = 'This field is required';
+    }
+    if (!form.severity?.trim()) {
+      e.severity = 'This field is required';
+    }
+    if (!form.title?.trim()) {
+      e.title = 'This field is required';
+    }
+    if (!form.description?.trim()) {
+      e.description = 'This field is required';
     }
 
-    // Metadata-driven field validation
+    // Dynamic fieldConfigs length/regex validations
     fieldConfigs.forEach((cfg) => {
       if (cfg.isVisible === false) return;
-
       const fieldKey = cfg.apiField;
       const label = cfg.displayLabel || fieldKey;
       let val = form[fieldKey];
 
       if (fieldKey === 'selectCustomer') {
-        if (cfg.isRequired && !form.customerId) {
-          e.customerId = `${label} is required.`;
-        }
+        if (!form.customerId) e.customerId = 'This field is required';
         return;
       }
       if (fieldKey === 'subCategory') {
@@ -315,29 +388,21 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       const strVal = typeof val === 'string' ? val.trim() : (val != null ? String(val) : '');
 
       if (cfg.isRequired && !strVal) {
-        e[fieldKey] = `${label} is required.`;
+        const errKey = fieldKey === 'subCategory' ? 'subcategory' : fieldKey;
+        e[errKey] = 'This field is required';
         return;
       }
 
       if (strVal) {
         if (cfg.minLength && strVal.length < cfg.minLength) {
-          e[fieldKey] = `${label} must be at least ${cfg.minLength} characters.`;
+          const errKey = fieldKey === 'subCategory' ? 'subcategory' : fieldKey;
+          e[errKey] = `${label} must be at least ${cfg.minLength} characters.`;
           return;
         }
         if (cfg.maxLength && strVal.length > cfg.maxLength) {
-          e[fieldKey] = `${label} cannot exceed ${cfg.maxLength} characters.`;
+          const errKey = fieldKey === 'subCategory' ? 'subcategory' : fieldKey;
+          e[errKey] = `${label} cannot exceed ${cfg.maxLength} characters.`;
           return;
-        }
-        if (cfg.validationRegex) {
-          try {
-            const rx = new RegExp(cfg.validationRegex);
-            if (!rx.test(strVal)) {
-              e[fieldKey] = `${label} format is invalid.`;
-              return;
-            }
-          } catch (regexErr) {
-            console.warn(`Invalid regex on field ${fieldKey}:`, regexErr);
-          }
         }
       }
     });
@@ -350,6 +415,19 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
   };
 
   const handleSubmit = async () => {
+    // Touch all required fields on submit
+    setTouched({
+      customerId: true,
+      departmentId: true,
+      subcategory: true,
+      caseType: true,
+      preferredCommunicationChannel: true,
+      sourceChannel: true,
+      severity: true,
+      title: true,
+      description: true,
+    });
+
     const e = validate();
     if (Object.keys(e).length > 0) {
       setErrors(e);
@@ -402,6 +480,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           disabled={!isEditable}
           value={form.caseType}
           onChange={set('caseType')}
+          onBlur={handleBlur('caseType')}
           error={errors.caseType}
         >
           <option value="">Select Case Type…</option>
@@ -422,6 +501,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           placeholder="e.g. PF-i monthly deduction dispute"
           value={form.title}
           onChange={set('title')}
+          onBlur={handleBlur('title')}
           error={errors.title}
         />
       );
@@ -437,6 +517,8 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           placeholder="Describe the issue in detail…"
           value={form.description}
           onChange={set('description')}
+          onBlur={handleBlur('description')}
+          error={errors.description}
           rows={4}
         />
       );
@@ -479,7 +561,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
                 <div className="selected-customer-card__details">
                   <p className="selected-customer-card__name">{selectedCustomer.fullName}</p>
                   <p className="selected-customer-card__meta">
-                    NRIC: {selectedCustomer.nric || '—'} &middot; Phone: {selectedCustomer.phoneNumber || '—'}
+                    {getIdLabel(selectedCustomer)}: {getIdValue(selectedCustomer)} &middot; Phone: {selectedCustomer.phoneNumber || '—'}
                   </p>
                   <p className="selected-customer-card__submeta">
                     {selectedCustomer.dateOfBirth ? `DOB: ${formatDate(selectedCustomer.dateOfBirth)} · ` : ''}
@@ -493,6 +575,9 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
                 onClick={() => {
                   setSelectedCustomer(null);
                   setForm((prev) => ({ ...prev, customerId: '' }));
+                  if (touched.customerId) {
+                    setErrors((prev) => ({ ...prev, customerId: 'This field is required' }));
+                  }
                 }}
               >
                 Change
@@ -514,6 +599,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           disabled={!isEditable}
           value={form.departmentId}
           onChange={handleDepartmentChange}
+          onBlur={handleBlur('departmentId')}
           error={errors.departmentId}
         >
           <option value="">Select department…</option>
@@ -533,6 +619,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           disabled={!isEditable || !form.departmentId}
           value={form.subcategory}
           onChange={handleSubcategoryChange}
+          onBlur={handleBlur('subcategory')}
           error={errors.subcategory}
         >
           <option value="">
@@ -554,6 +641,8 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           disabled={!isEditable}
           value={form.preferredLanguage}
           onChange={set('preferredLanguage')}
+          onBlur={handleBlur('preferredLanguage')}
+          error={errors.preferredLanguage}
         >
           {languages.map((o) => (
             <option key={o.id || o.value} value={o.value}>{o.label || o.value}</option>
@@ -571,6 +660,8 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           disabled={!isEditable}
           value={form.preferredCommunicationChannel}
           onChange={set('preferredCommunicationChannel')}
+          onBlur={handleBlur('preferredCommunicationChannel')}
+          error={errors.preferredCommunicationChannel}
         >
           {PREFERRED_COMMUNICATION_CHANNEL_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -588,6 +679,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           disabled={!isEditable}
           value={form.sourceChannel}
           onChange={set('sourceChannel')}
+          onBlur={handleBlur('sourceChannel')}
           error={errors.sourceChannel}
         >
           {SOURCE_CHANNEL_OPTIONS.map((o) => (
@@ -601,25 +693,28 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       const mappedPriority = categoryPriorityMap[form.subcategory?.trim().toLowerCase()];
       const hasAutoPriority = Boolean(mappedPriority);
       return (
-        <div key={key}>
-          <Select
-            label={label}
-            required={isRequired}
-            disabled={!isEditable || hasAutoPriority}
-            value={form.severity}
-            onChange={handleSeverityChange}
-            error={errors.severity}
-          >
-            {(severities.length > 0 ? severities.map((s) => s.name) : ['Low', 'Medium', 'High', 'Critical']).map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </Select>
-          {hasAutoPriority && (
-            <div style={{ fontSize: '11px', color: '#1d4ed8', fontWeight: 600, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span>• Priority locked to <strong>{mappedPriority}</strong> based on Category SLA policy</span>
-            </div>
-          )}
-        </div>
+        <Select
+          key={key}
+          label={label}
+          required={isRequired}
+          disabled={!isEditable || hasAutoPriority}
+          value={form.severity}
+          onChange={handleSeverityChange}
+          onBlur={handleBlur('severity')}
+          error={errors.severity}
+          helperText={
+            hasAutoPriority ? (
+              <span className="priority-lock-helper-text">
+                <span className="priority-lock-icon" aria-hidden="true">🔒</span>
+                <span>Priority locked to <strong>{mappedPriority}</strong> based on Category SLA policy</span>
+              </span>
+            ) : null
+          }
+        >
+          {(severities.length > 0 ? severities.map((s) => s.name) : ['Low', 'Medium', 'High', 'Critical']).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </Select>
       );
     }
 
@@ -632,6 +727,8 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
         placeholder={`Enter ${label}…`}
         value={form[key] || ''}
         onChange={set(key)}
+        onBlur={handleBlur(key)}
+        error={errors[key]}
       />
     );
   };

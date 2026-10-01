@@ -23,10 +23,40 @@ public class MetadataValidationTests
         return new AppDbContext(options);
     }
 
+    private async Task<(Customer customer, Department department, string subcategory)> SeedValidCustomerAndDepartmentAsync(AppDbContext db)
+    {
+        var cust = new Customer
+        {
+            Id = Guid.NewGuid(),
+            FullName = "Test Customer",
+            NRIC = "123456-78-9012"
+        };
+        var dept = new Department
+        {
+            Id = Guid.NewGuid(),
+            Name = "Contact Center",
+            Code = "CC",
+            IsActive = true
+        };
+        var subcat = new DepartmentSubCategory
+        {
+            Id = Guid.NewGuid(),
+            DepartmentId = dept.Id,
+            Name = "General Inquiry",
+            IsActive = true
+        };
+        db.Customers.Add(cust);
+        db.Departments.Add(dept);
+        db.DepartmentSubCategories.Add(subcat);
+        await db.SaveChangesAsync();
+        return (cust, dept, subcat.Name);
+    }
+
     [Fact]
     public async Task ValidateCreateCase_MissingRequiredField_ThrowsArgumentException()
     {
         using var db = CreateInMemoryDbContext();
+        var (cust, dept, subcat) = await SeedValidCustomerAndDepartmentAsync(db);
 
         db.FieldConfigurations.Add(new FieldConfiguration
         {
@@ -53,8 +83,13 @@ public class MetadataValidationTests
 
         var dto = new CreateCaseDto
         {
-            CustomerId = Guid.NewGuid(),
-            DepartmentId = Guid.NewGuid(),
+            CustomerId = cust.Id,
+            DepartmentId = dept.Id,
+            CaseType = "Inquiry",
+            Subcategory = subcat,
+            SourceChannel = "Voice",
+            PreferredCommunicationChannel = "Phone",
+            Severity = "Medium",
             Title = "Valid Title",
             Description = "" // Empty description when required
         };
@@ -67,6 +102,7 @@ public class MetadataValidationTests
     public async Task ValidateCreateCase_MinLengthViolation_ThrowsArgumentException()
     {
         using var db = CreateInMemoryDbContext();
+        var (cust, dept, subcat) = await SeedValidCustomerAndDepartmentAsync(db);
 
         db.FieldConfigurations.Add(new FieldConfiguration
         {
@@ -94,8 +130,13 @@ public class MetadataValidationTests
 
         var dto = new CreateCaseDto
         {
-            CustomerId = Guid.NewGuid(),
-            DepartmentId = Guid.NewGuid(),
+            CustomerId = cust.Id,
+            DepartmentId = dept.Id,
+            CaseType = "Inquiry",
+            Subcategory = subcat,
+            SourceChannel = "Voice",
+            PreferredCommunicationChannel = "Phone",
+            Severity = "Medium",
             Title = "Short", // Length 5 < 10
             Description = "A valid description for this test case."
         };
@@ -108,6 +149,7 @@ public class MetadataValidationTests
     public async Task ValidateCreateCase_RegexViolation_ThrowsArgumentException()
     {
         using var db = CreateInMemoryDbContext();
+        var (cust, dept, subcat) = await SeedValidCustomerAndDepartmentAsync(db);
 
         db.FieldConfigurations.Add(new FieldConfiguration
         {
@@ -134,8 +176,13 @@ public class MetadataValidationTests
 
         var dto = new CreateCaseDto
         {
-            CustomerId = Guid.NewGuid(),
-            DepartmentId = Guid.NewGuid(),
+            CustomerId = cust.Id,
+            DepartmentId = dept.Id,
+            CaseType = "Inquiry",
+            Subcategory = subcat,
+            SourceChannel = "Voice",
+            PreferredCommunicationChannel = "Phone",
+            Severity = "Medium",
             Title = "lowercase start title",
             Description = "Valid description here."
         };

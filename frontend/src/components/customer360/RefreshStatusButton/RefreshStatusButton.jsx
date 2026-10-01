@@ -15,8 +15,9 @@ export function RefreshStatusButton({ onRefresh }) {
     setIsRefreshing(true);
 
     try {
-      // Simulate API refresh
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (onRefresh) {
+        await onRefresh();
+      }
 
       const timeString = new Date().toLocaleTimeString('en-US', {
         hour: '2-digit',
@@ -27,7 +28,6 @@ export function RefreshStatusButton({ onRefresh }) {
 
       setLastRefreshed(`refreshed at ${timeString}`);
       toast.success('Customer 360 data refreshed successfully.');
-      onRefresh?.();
     } catch (e) {
       toast.error('Failed to refresh data.');
     } finally {

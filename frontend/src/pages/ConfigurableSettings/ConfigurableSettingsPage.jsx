@@ -541,7 +541,9 @@ export function ConfigurableSettingsPage() {
       ]);
       const cleanLangs = langs || [];
       const cleanBrs = brs || [];
-      const cleanIds = ids || [];
+      const cleanIds = (ids || []).filter((i) =>
+        ['NRIC Number', 'Passport Number', 'Account Number'].includes(i.value)
+      );
       setLanguages(cleanLangs);
       setSavedLanguages(JSON.parse(JSON.stringify(cleanLangs)));
       setBranches(cleanBrs);
@@ -2369,7 +2371,7 @@ export function ConfigurableSettingsPage() {
                   <div>
                     <h3 className="master-card__title">Customer Identification (ID Types)</h3>
                     <p className="master-card__desc">
-                      Fixed predefined identification options controlled by the backend (NRIC Number, IC Number, Passport, etc.).
+                      Fixed predefined identification options controlled by the backend (NRIC Number, Passport Number, Account Number).
                     </p>
                   </div>
                   {/* NO ADD OPTION FORM OR BUTTON */}

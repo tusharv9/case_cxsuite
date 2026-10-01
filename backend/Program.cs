@@ -139,6 +139,22 @@ using (var scope = app.Services.CreateScope())
     {
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""PreferredLanguage"" text DEFAULT 'Bahasa Malaysia';");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""DateOfBirth"" timestamp with time zone NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""Passport"" text NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""AccountNumber"" text NULL;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""IdType"" text DEFAULT 'NRIC Number';");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ALTER COLUMN ""NRIC"" DROP NOT NULL;");
+
+        // Physical removal of obsolete Customer 360 tables and columns
+        db.Database.ExecuteSqlRaw(@"DROP TABLE IF EXISTS ""CustomerProducts"" CASCADE;");
+        db.Database.ExecuteSqlRaw(@"DROP TABLE IF EXISTS ""CustomerTransactions"" CASCADE;");
+        db.Database.ExecuteSqlRaw(@"DROP TABLE IF EXISTS ""CustomerReferrals"" CASCADE;");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" DROP COLUMN IF EXISTS ""TenureMonths"";");
+        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" DROP COLUMN IF EXISTS ""ReferralStatus"";");
+        db.Database.ExecuteSqlRaw(@"UPDATE ""Customers"" SET ""CustomerSegment"" = NULL WHERE ""CustomerSegment"" IN ('Gold', 'Mass', 'Retail', 'Mass Retail', 'Premier');");
+        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_PhoneNumber_Unique"" ON ""Customers"" (""PhoneNumber"") WHERE ""PhoneNumber"" IS NOT NULL AND ""PhoneNumber"" <> '';");
+        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_NRIC_Unique"" ON ""Customers"" (""NRIC"") WHERE ""NRIC"" IS NOT NULL AND ""NRIC"" <> '';");
+        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_Passport_Unique"" ON ""Customers"" (""Passport"") WHERE ""Passport"" IS NOT NULL AND ""Passport"" <> '';");
+        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_AccountNumber_Unique"" ON ""Customers"" (""AccountNumber"") WHERE ""AccountNumber"" IS NOT NULL AND ""AccountNumber"" <> '';");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""CaseType"" text DEFAULT 'Complaint';");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""ParentCaseId"" uuid NULL;");
         db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""LinkedSourceCaseId"" uuid NULL;");

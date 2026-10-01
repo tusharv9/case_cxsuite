@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Radio, Star, Clock, AlertTriangle, ArrowDown, Users, Phone, MessageSquare, Mail, Megaphone, Send } from 'lucide-react';
 import { Avatar } from '../../components/common/Avatar/Avatar.jsx';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
+import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import { teamMonitoringService } from '../../services/teamMonitoringService.js';
 import { useToast } from '../../hooks/useToast.js';
 import './TeamMonitoringPage.css';
@@ -13,6 +14,8 @@ export function TeamMonitoringPage() {
 
   const [summary, setSummary] = useState(null);
   const [agents, setAgents] = useState([]);
+  const [agentPage, setAgentPage] = useState(1);
+  const [agentPageSize, setAgentPageSize] = useState(5);
   const [queueHealth, setQueueHealth] = useState([]);
   const [slaAtRisk, setSlaAtRisk] = useState([]);
 
@@ -196,65 +199,98 @@ export function TeamMonitoringPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {agents.map((agent) => (
-                    <tr key={agent.userId}>
-                      {/* Agent */}
-                      <td>
-                        <div className="agent-cell">
-                          <Avatar name={agent.name} size="md" />
-                          <div className="agent-cell__details">
-                            <span className="agent-cell__name">{agent.name}</span>
-                            <span className="agent-cell__role">{agent.role}</span>
+                  {(() => {
+                    const totalAgents = agents.length;
+                    const totalPages = Math.max(1, Math.ceil(totalAgents / agentPageSize));
+                    const safePage = Math.min(agentPage, totalPages);
+                    const displayedAgents = agents.slice((safePage - 1) * agentPageSize, safePage * agentPageSize);
+
+                    if (displayedAgents.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: 'var(--color-gray-500)' }}>
+                            No agents found
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return displayedAgents.map((agent) => (
+                      <tr key={agent.userId}>
+                        {/* Agent */}
+                        <td>
+                          <div className="agent-cell">
+                            <Avatar name={agent.name} size="md" />
+                            <div className="agent-cell__details">
+                              <span className="agent-cell__name">{agent.name}</span>
+                              <span className="agent-cell__role">{agent.role}</span>
+                            </div>
                           </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* State */}
-                      <td>{renderStateBadge(agent.state)}</td>
+                        {/* State */}
+                        <td>{renderStateBadge(agent.state)}</td>
 
-                      {/* Open Cases */}
-                      <td>
-                        <div className="open-cases-cell">
-                          <span className="open-cases-num">{agent.openCasesCount}</span>
-                          {agent.breachedCasesCount > 0 && (
-                            <span className="breach-pill">
-                              {agent.breachedCasesCount} breach
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                        {/* Open Cases */}
+                        <td>
+                          <div className="open-cases-cell">
+                            <span className="open-cases-num">{agent.openCasesCount}</span>
+                            {agent.breachedCasesCount > 0 && (
+                              <span className="breach-pill">
+                                {agent.breachedCasesCount} breach
+                              </span>
+                            )}
+                          </div>
+                        </td>
 
-                      {/* Today */}
-                      <td>
-                        <span className="handled-today-cell">
-                          {agent.handledTodayCount} handled
-                        </span>
-                      </td>
+                        {/* Today */}
+                        <td>
+                          <span className="handled-today-cell">
+                            {agent.handledTodayCount} handled
+                          </span>
+                        </td>
 
-                      {/* CSAT */}
-                      <td>
-                        <div className="csat-cell">
-                          <Star size={13} className="csat-star-icon" />
-                          <span>{Number(agent.csatScore).toFixed(1)}</span>
-                        </div>
-                      </td>
+                        {/* CSAT */}
+                        <td>
+                          <div className="csat-cell">
+                            <Star size={13} className="csat-star-icon" />
+                            <span>{Number(agent.csatScore).toFixed(1)}</span>
+                          </div>
+                        </td>
 
-                      {/* Action */}
-                      <td className="td-action">
-                        <button
-                          className="btn-nudge"
-                          onClick={() => handleNudge(agent)}
-                          disabled={nudgingAgentId === agent.userId}
-                          title={`Send nudge to ${agent.name}`}
-                        >
-                          {nudgingAgentId === agent.userId ? 'Nudging…' : 'Nudge'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        {/* Action */}
+                        <td className="td-action">
+                          <button
+                            className="btn-nudge"
+                            onClick={() => handleNudge(agent)}
+                            disabled={nudgingAgentId === agent.userId}
+                            title={`Send nudge to ${agent.name}`}
+                          >
+                            {nudgingAgentId === agent.userId ? 'Nudging…' : 'Nudge'}
+                          </button>
+                        </td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
+
+            {agents.length > 0 && (
+              <Pagination
+                itemLabel="agents"
+                page={Math.min(agentPage, Math.max(1, Math.ceil(agents.length / agentPageSize)))}
+                pageSize={agentPageSize}
+                totalCount={agents.length}
+                totalPages={Math.max(1, Math.ceil(agents.length / agentPageSize))}
+                onPageChange={setAgentPage}
+                onPageSizeChange={(newSize) => {
+                  setAgentPageSize(newSize);
+                  setAgentPage(1);
+                }}
+                pageSizeOptions={[5, 10, 20]}
+              />
+            )}
           </div>
         </div>
 

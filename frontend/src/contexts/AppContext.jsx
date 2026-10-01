@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 import { userService } from '../services/userService.js';
 import { slaRoutingService } from '../services/slaRoutingService.js';
-import { checkIsPublicHolidayToday } from '../utils/slaUtils.js';
+import { checkIsPublicHolidayToday, checkIsBusinessHoursActive } from '../utils/slaUtils.js';
 import { LOGGED_IN_USER_ID_KEY, DEFAULT_USER_ID } from '../constants/index.js';
 
 // Bootstrap: ensure localStorage always has a valid X-User-Id before first fetch
@@ -19,6 +19,8 @@ const initialState = {
   publicHolidays: [],
   isHolidayToday: false,
   todayHolidayName: null,
+  businessHours: [],
+  isBusinessHoursActive: true,
 };
 
 // --- Reducer ---
@@ -39,6 +41,20 @@ function appReducer(state, action) {
         isHolidayToday: isHoliday,
         todayHolidayName: holidayName,
       };
+    }
+    case 'SET_BUSINESS_HOURS': {
+      const hours = action.payload || [];
+      const isActive = checkIsBusinessHoursActive(hours);
+      return {
+        ...state,
+        businessHours: hours,
+        isBusinessHoursActive: isActive,
+      };
+    }
+    case 'EVALUATE_BUSINESS_HOURS': {
+      const isActive = checkIsBusinessHoursActive(state.businessHours);
+      if (isActive === state.isBusinessHoursActive) return state;
+      return { ...state, isBusinessHoursActive: isActive };
     }
     case 'ADD_TOAST':
       return { ...state, toasts: [...state.toasts, action.payload] };
@@ -76,11 +92,14 @@ export function AppProvider({ children }) {
         dispatch({ type: 'SET_LOADING_USER', payload: false });
       });
 
-    // Load active public holidays
+    // Load active public holidays and business hours
     slaRoutingService.getConfiguration()
       .then((cfg) => {
         if (cfg?.publicHolidays) {
           dispatch({ type: 'SET_PUBLIC_HOLIDAYS', payload: cfg.publicHolidays });
+        }
+        if (cfg?.businessHours) {
+          dispatch({ type: 'SET_BUSINESS_HOURS', payload: cfg.businessHours });
         }
       })
       .catch(() => {});

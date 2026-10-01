@@ -111,33 +111,23 @@ export const PRIORITY_FILTER_OPTIONS = [
   { value: 'Low', label: 'Low' },
 ];
 
-// Explicitly excludes 'Mobile App' per specification
 export const CHANNEL_FILTER_OPTIONS = [
   { value: 'all', label: 'All channels' },
   { value: 'Voice', label: 'Voice' },
   { value: 'Email', label: 'Email' },
   { value: 'WhatsApp', label: 'WhatsApp' },
-  { value: 'SMS', label: 'SMS' },
-  { value: 'Branch', label: 'Branch' },
-  { value: 'Web Chat', label: 'Web Chat' },
-  { value: 'Social', label: 'Social' },
 ];
 
 export const SOURCE_CHANNEL_OPTIONS = [
   { value: 'Voice', label: 'Voice' },
   { value: 'Email', label: 'Email' },
   { value: 'WhatsApp', label: 'WhatsApp' },
-  { value: 'SMS', label: 'SMS' },
-  { value: 'Branch', label: 'Branch' },
-  { value: 'Web Chat', label: 'Web Chat' },
-  { value: 'Social', label: 'Social' },
 ];
 
 export const PREFERRED_COMMUNICATION_CHANNEL_OPTIONS = [
   { value: 'Phone', label: 'Phone' },
   { value: 'Email', label: 'Email' },
   { value: 'WhatsApp', label: 'WhatsApp' },
-  { value: 'SMS', label: 'SMS' },
 ];
 
 // Resolve dispositions

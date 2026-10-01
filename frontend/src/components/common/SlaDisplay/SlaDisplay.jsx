@@ -15,7 +15,8 @@ export function SlaDisplay({ caseItem, size = 'md' }) {
   const appContext = useApp();
   const effectiveHolidayToday = caseItem?.isHolidayToday ?? appContext?.isHolidayToday ?? false;
   const effectiveHolidayName = caseItem?.holidayName || appContext?.todayHolidayName || null;
-  const sla = calculateDualSla(caseItem, now, effectiveHolidayToday, effectiveHolidayName);
+  const effectiveBusinessHoursActive = caseItem?.isBusinessHoursActive ?? appContext?.isBusinessHoursActive ?? true;
+  const sla = calculateDualSla(caseItem, now, effectiveHolidayToday, effectiveHolidayName, effectiveBusinessHoursActive);
   if (!sla) return null;
 
   const isResolved = caseItem?.status === 'Resolved' || caseItem?.status === 'Closed';
@@ -25,6 +26,8 @@ export function SlaDisplay({ caseItem, size = 'md' }) {
     badgeVariant = 'sla-badge--breached';
   } else if (sla.isHoliday) {
     badgeVariant = 'sla-badge--holiday-paused';
+  } else if (sla.isBusinessHoursPaused) {
+    badgeVariant = 'sla-badge--bh-paused';
   } else if (sla.isPaused) {
     badgeVariant = 'sla-badge--paused';
   }
@@ -33,7 +36,13 @@ export function SlaDisplay({ caseItem, size = 'md' }) {
     <div className={`sla-display sla-display--${size}`}>
       <div
         className={`sla-badge ${badgeVariant}`}
-        title={sla.isHoliday ? `SLA clock paused today for ${sla.holidayName || 'Public Holiday'}` : undefined}
+        title={
+          sla.isHoliday
+            ? `SLA clock paused today for ${sla.holidayName || 'Public Holiday'}`
+            : sla.isBusinessHoursPaused
+            ? 'SLA clock paused (Outside Business Hours / Business Hours Disabled)'
+            : undefined
+        }
       >
         <span className="sla-badge__value">
           {sla.isPaused ? <Pause size={11} strokeWidth={2.5} /> : <Clock size={12} />}

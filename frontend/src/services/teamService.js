@@ -31,6 +31,10 @@ export const teamService = {
     return api.delete(`/api/teams/${teamId}/members/${userId}`).then((r) => r.data);
   },
 
+  toggleStatus(id) {
+    return api.post(`/api/teams/${id}/toggle`).then((r) => r.data);
+  },
+
   getAvailableUsers() {
     return api.get('/api/users').then((r) => r.data);
   },

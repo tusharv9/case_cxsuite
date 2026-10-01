@@ -8,35 +8,96 @@
 }
 
 .customer360-page__header {
-  padding: var(--space-5) var(--space-6) var(--space-5);
+  padding: var(--space-5) var(--space-6) var(--space-4);
+  flex-shrink: 0;
+  background-color: var(--color-background);
+}
+
+/* Blue Gradient Banner matching Customer Directory Reference */
+.customer360-banner {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 45%, #2563eb 100%);
+  color: #ffffff;
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-6);
+  box-shadow: 0 4px 16px rgba(30, 58, 138, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  overflow: visible;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.customer360-banner__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  z-index: 1;
+}
+
+.customer360-banner__icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
-.customer360-page__breadcrumb {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  color: var(--color-brand-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: var(--space-1);
-}
-
-.customer360-page__header-top {
+.customer360-banner__content {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.customer360-page__title {
-  font-size: var(--font-size-2xl);
+.customer360-banner__title {
+  font-size: 20px;
   font-weight: 700;
-  color: var(--color-text-primary);
-  letter-spacing: -0.02em;
+  color: #ffffff;
+  margin: 0;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.customer360-page__refresh {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
+.customer360-banner__subtitle {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  margin: 0;
+}
+
+.customer360-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  z-index: 1;
+}
+
+/* Ensure refresh button and timestamp look great on the blue banner */
+.customer360-banner .refresh-status-timestamp {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.customer360-banner .check-icon {
+  color: #86efac;
+}
+
+.customer360-banner .refresh-status-btn {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #ffffff;
+  backdrop-filter: blur(4px);
+}
+
+.customer360-banner .refresh-status-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 /* Layout: left profile panel + right tabs */

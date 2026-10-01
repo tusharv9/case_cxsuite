@@ -1,20 +1,20 @@
 {
   "format": 1,
   "restore": {
-    "/Users/mukulgarg/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj": {}
+    "/Users/tusharvashisht/Downloads/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj": {}
   },
   "projects": {
-    "/Users/mukulgarg/case_cxsuite/backend/CaseManagement.Api.csproj": {
+    "/Users/tusharvashisht/Downloads/case_cxsuite/backend/CaseManagement.Api.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/mukulgarg/case_cxsuite/backend/CaseManagement.Api.csproj",
+        "projectUniqueName": "/Users/tusharvashisht/Downloads/case_cxsuite/backend/CaseManagement.Api.csproj",
         "projectName": "CaseManagement.Api",
-        "projectPath": "/Users/mukulgarg/case_cxsuite/backend/CaseManagement.Api.csproj",
-        "packagesPath": "/Users/mukulgarg/.nuget/packages/",
-        "outputPath": "/Users/mukulgarg/case_cxsuite/backend/obj/",
+        "projectPath": "/Users/tusharvashisht/Downloads/case_cxsuite/backend/CaseManagement.Api.csproj",
+        "packagesPath": "/Users/tusharvashisht/.nuget/packages/",
+        "outputPath": "/Users/tusharvashisht/Downloads/case_cxsuite/backend/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "/Users/mukulgarg/.nuget/NuGet/NuGet.Config"
+          "/Users/tusharvashisht/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net10.0"
@@ -514,17 +514,17 @@
         }
       }
     },
-    "/Users/mukulgarg/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj": {
+    "/Users/tusharvashisht/Downloads/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/mukulgarg/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj",
+        "projectUniqueName": "/Users/tusharvashisht/Downloads/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj",
         "projectName": "CaseManagement.Tests",
-        "projectPath": "/Users/mukulgarg/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj",
-        "packagesPath": "/Users/mukulgarg/.nuget/packages/",
-        "outputPath": "/Users/mukulgarg/case_cxsuite/tests/CaseManagement.Tests/obj/",
+        "projectPath": "/Users/tusharvashisht/Downloads/case_cxsuite/tests/CaseManagement.Tests/CaseManagement.Tests.csproj",
+        "packagesPath": "/Users/tusharvashisht/.nuget/packages/",
+        "outputPath": "/Users/tusharvashisht/Downloads/case_cxsuite/tests/CaseManagement.Tests/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "/Users/mukulgarg/.nuget/NuGet/NuGet.Config"
+          "/Users/tusharvashisht/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net10.0"
@@ -536,8 +536,8 @@
           "net10.0": {
             "targetAlias": "net10.0",
             "projectReferences": {
-              "/Users/mukulgarg/case_cxsuite/backend/CaseManagement.Api.csproj": {
-                "projectPath": "/Users/mukulgarg/case_cxsuite/backend/CaseManagement.Api.csproj"
+              "/Users/tusharvashisht/Downloads/case_cxsuite/backend/CaseManagement.Api.csproj": {
+                "projectPath": "/Users/tusharvashisht/Downloads/case_cxsuite/backend/CaseManagement.Api.csproj"
               }
             }
           }

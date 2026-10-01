@@ -19,12 +19,13 @@ public class RoutingRuleDto
 public class RuleConditionsDto
 {
     public string MatchType { get; set; } = "ALL"; // "ALL" or "ANY"
+    public string? Department { get; set; } // Department name or code
+    public string? Category { get; set; } // Sub-category
     public string? CaseType { get; set; } // "Complaint", "Inquiry", "Service"
-    public string? Channel { get; set; } // "Phone", "Email", "Social", "Chat", "WhatsApp"
     public string? Priority { get; set; } // "Critical", "High", "Medium", "Low"
-    public string? CustomerSegment { get; set; } // "Priority", "SME", "Retail"
-    public string? Category { get; set; }
-    public List<string>? Keywords { get; set; } // e.g. ["fraud", "unauthorised", "stolen"]
+    public string? CustomerSegment { get; set; } // "Premier", "Mass Retail", "Gold", "SME"
+    public string? Channel { get; set; } // "Voice", "Email", "WhatsApp"
+    public List<string>? Keywords { get; set; } // Deprecated; retained for backwards-deserialization safety
 }
 
 public class CreateRoutingRuleDto

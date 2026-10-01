@@ -1,6 +1,7 @@
 // ===== PAGINATION =====
 // Previous / numbered pages / Next, with a "Showing x–y of n" summary and page-size selector.
 
+import { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './Pagination.css';
 
@@ -27,7 +28,28 @@ export function Pagination({
   onPageSizeChange,
   pageSizeOptions = [10, 25, 50],
   isLoading = false,
+  itemLabel = 'cases',
 }) {
+  const numericOptions = pageSizeOptions.filter((n) => typeof n === 'number');
+  const hasCustomOption = pageSizeOptions.some(
+    (opt) => String(opt).toLowerCase() === 'custom'
+  );
+
+  const [isCustomMode, setIsCustomMode] = useState(
+    hasCustomOption && !numericOptions.includes(pageSize)
+  );
+  const [customInputValue, setCustomInputValue] = useState(String(pageSize));
+
+  useEffect(() => {
+    if (numericOptions.includes(pageSize)) {
+      setIsCustomMode(false);
+      setCustomInputValue(String(pageSize));
+    } else if (hasCustomOption) {
+      setIsCustomMode(true);
+      setCustomInputValue(String(pageSize));
+    }
+  }, [pageSize, numericOptions, hasCustomOption]);
+
   if (!totalCount) return null;
 
   const safeTotalPages = Math.max(1, totalPages || Math.ceil(totalCount / pageSize));
@@ -38,11 +60,34 @@ export function Pagination({
     onPageChange(p);
   };
 
+  const handleSelectChange = (e) => {
+    const val = e.target.value;
+    if (val === 'custom') {
+      setIsCustomMode(true);
+      const parsed = parseInt(customInputValue, 10);
+      if (!isNaN(parsed) && parsed >= 1 && parsed <= 100) {
+        onPageSizeChange(parsed);
+      }
+    } else {
+      setIsCustomMode(false);
+      onPageSizeChange(Number(val));
+    }
+  };
+
+  const handleCustomInputChange = (e) => {
+    const raw = e.target.value;
+    setCustomInputValue(raw);
+    const num = parseInt(raw, 10);
+    if (!isNaN(num) && num >= 1 && num <= 100) {
+      onPageSizeChange(num);
+    }
+  };
+
   return (
-    <nav className="pagination" aria-label="Case list pages">
+    <nav className="pagination" aria-label={`${itemLabel} list pages`}>
       <span className="pagination__summary">
         Showing <strong>{from.toLocaleString()}–{to.toLocaleString()}</strong> of{' '}
-        <strong>{totalCount.toLocaleString()}</strong> cases
+        <strong>{totalCount.toLocaleString()}</strong> {itemLabel}
       </span>
 
       <div className="pagination__controls">
@@ -87,14 +132,33 @@ export function Pagination({
       </div>
 
       {onPageSizeChange && (
-        <label className="pagination__size">
+        <div className="pagination__size">
           <span>Rows per page</span>
-          <select value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>
-            {pageSizeOptions.map((n) => (
+          <select
+            value={isCustomMode ? 'custom' : pageSize}
+            onChange={handleSelectChange}
+            aria-label="Rows per page"
+          >
+            {numericOptions.map((n) => (
               <option key={n} value={n}>{n}</option>
             ))}
+            {hasCustomOption && <option value="custom">Custom</option>}
           </select>
-        </label>
+
+          {isCustomMode && (
+            <input
+              type="number"
+              min="1"
+              max="100"
+              className="pagination__custom-input"
+              value={customInputValue}
+              onChange={handleCustomInputChange}
+              placeholder="1–100"
+              title="Enter custom rows per page (1–100)"
+              aria-label="Custom rows per page"
+            />
+          )}
+        </div>
       )}
     </nav>
   );

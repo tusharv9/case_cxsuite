@@ -408,6 +408,12 @@
   padding: var(--space-5) var(--space-6);
 }
 
+/* 4. Bottom Pagination Footer */
+.customer-dir-page__footer {
+  flex-shrink: 0;
+  background-color: var(--color-white, #ffffff);
+}
+
 .customer-dir-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

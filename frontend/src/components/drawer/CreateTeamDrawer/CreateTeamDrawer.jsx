@@ -102,7 +102,7 @@ export function CreateTeamDrawer({ isOpen, onClose, onSuccess }) {
         {/* Header */}
         <div className="create-drawer__header">
           <div className="create-drawer__header-content">
-            <h2>Create team</h2>
+            <h2>Create Team</h2>
             <p>Configure operational squad, assigned lead, and active members</p>
           </div>
           <button className="create-drawer__close" onClick={onClose} aria-label="Close drawer">
@@ -226,7 +226,7 @@ export function CreateTeamDrawer({ isOpen, onClose, onSuccess }) {
 
         {/* Footer */}
         <div className="create-drawer__footer">
-          <Button variant="secondary" onClick={onClose} disabled={isLoading}>
+          <Button variant="ghost" onClick={onClose} disabled={isLoading}>
             Cancel
           </Button>
           <Button

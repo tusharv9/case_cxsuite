@@ -20,11 +20,12 @@ export function CreateRoutingRuleDrawer({
 
   // Conditions
   const [matchType, setMatchType] = useState('ALL');
+  const [department, setDepartment] = useState('');
+  const [subCategory, setSubCategory] = useState('');
   const [caseType, setCaseType] = useState('');
   const [channel, setChannel] = useState('');
   const [priority, setPriority] = useState('');
   const [customerSegment, setCustomerSegment] = useState('');
-  const [keywords, setKeywords] = useState('');
 
   // Destination Team / Queue
   const [targetDepartmentId, setTargetDepartmentId] = useState('');
@@ -44,11 +45,12 @@ export function CreateRoutingRuleDrawer({
 
       const conds = editingRule.conditions || {};
       setMatchType(conds.matchType || 'ALL');
+      setDepartment(conds.department || '');
+      setSubCategory(conds.subCategory || conds.category || '');
       setCaseType(conds.caseType || '');
       setChannel(conds.channel || '');
       setPriority(conds.priority || '');
       setCustomerSegment(conds.customerSegment || '');
-      setKeywords(Array.isArray(conds.keywords) ? conds.keywords.join(', ') : '');
 
       setTargetDepartmentId(editingRule.targetDepartmentId || '');
       setTargetQueueName(editingRule.targetQueueName || '');
@@ -58,11 +60,12 @@ export function CreateRoutingRuleDrawer({
       setDescription('');
       setIsActive(true);
       setMatchType('ALL');
+      setDepartment('');
+      setSubCategory('');
       setCaseType('');
       setChannel('');
       setPriority('');
       setCustomerSegment('');
-      setKeywords('');
       setTargetDepartmentId(availableDepartments[0]?.id || '');
       setTargetQueueName('');
       setActionDescription('');
@@ -88,18 +91,15 @@ export function CreateRoutingRuleDrawer({
     setErrors({});
 
     try {
-      const keywordList = keywords
-        .split(',')
-        .map((k) => k.trim())
-        .filter(Boolean);
-
       const conditionsPayload = {
         matchType,
+        department: department || null,
+        category: subCategory || null,
+        subCategory: subCategory || null,
         caseType: caseType || null,
         channel: channel || null,
         priority: priority || null,
         customerSegment: customerSegment || null,
-        keywords: keywordList.length > 0 ? keywordList : null
       };
 
       const selectedDept = availableDepartments.find((d) => d.id === targetDepartmentId);
@@ -235,6 +235,31 @@ export function CreateRoutingRuleDrawer({
 
             <div className="crr-grid">
               <div className="crr-field">
+                <label className="crr-label">Department</label>
+                <select
+                  className="crr-select"
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                >
+                  <option value="">Any Department</option>
+                  {availableDepartments.map((d) => (
+                    <option key={d.id} value={d.name}>{d.name} ({d.code || 'Team'})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="crr-field">
+                <label className="crr-label">Category / Sub-Category</label>
+                <input
+                  type="text"
+                  className="crr-input"
+                  placeholder="e.g. Fraudulent Transactions, Financing Disbursement"
+                  value={subCategory}
+                  onChange={(e) => setSubCategory(e.target.value)}
+                />
+              </div>
+
+              <div className="crr-field">
                 <label className="crr-label">Case Type</label>
                 <select
                   className="crr-select"
@@ -242,25 +267,9 @@ export function CreateRoutingRuleDrawer({
                   onChange={(e) => setCaseType(e.target.value)}
                 >
                   <option value="">Any Type</option>
-                  <option value="Complaint">Complaint</option>
-                  <option value="Inquiry">Inquiry</option>
-                  <option value="Service">Service</option>
-                </select>
-              </div>
-
-              <div className="crr-field">
-                <label className="crr-label">Intake Channel</label>
-                <select
-                  className="crr-select"
-                  value={channel}
-                  onChange={(e) => setChannel(e.target.value)}
-                >
-                  <option value="">Any Channel</option>
-                  <option value="Social">Social Media (Twitter/FB/IG)</option>
-                  <option value="Email">Email</option>
-                  <option value="Voice">Phone / Voice</option>
-                  <option value="Chat">Web Chat</option>
-                  <option value="WhatsApp">WhatsApp</option>
+                  <option value="Complaint">Complaint (C-#####)</option>
+                  <option value="Inquiry">Inquiry (I-#####)</option>
+                  <option value="Service">Service (S-#####)</option>
                 </select>
               </div>
 
@@ -292,20 +301,20 @@ export function CreateRoutingRuleDrawer({
                   <option value="Retail">Retail</option>
                 </select>
               </div>
-            </div>
 
-            <div className="crr-field">
-              <label className="crr-label">Trigger Keywords (comma-separated)</label>
-              <input
-                type="text"
-                className="crr-input"
-                placeholder="e.g. fraud, unauthorised, stolen, chargeback, phishing"
-                value={keywords}
-                onChange={(e) => setKeywords(e.target.value)}
-              />
-              <span className="crr-helper-text">
-                Evaluated against the case Title and Description on intake.
-              </span>
+              <div className="crr-field">
+                <label className="crr-label">Intake Channel</label>
+                <select
+                  className="crr-select"
+                  value={channel}
+                  onChange={(e) => setChannel(e.target.value)}
+                >
+                  <option value="">Any Channel</option>
+                  <option value="Voice">Phone / Voice</option>
+                  <option value="Email">Email</option>
+                  <option value="WhatsApp">WhatsApp</option>
+                </select>
+              </div>
             </div>
           </div>
 

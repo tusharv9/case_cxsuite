@@ -102,8 +102,17 @@ public static class MappingExtensions
                 Id = c.Customer.Id,
                 FullName = c.Customer.FullName,
                 NRIC = c.Customer.NRIC,
+                Passport = c.Customer.Passport,
+                AccountNumber = c.Customer.AccountNumber,
+                IdType = !string.IsNullOrEmpty(c.Customer.IdType) ? c.Customer.IdType : (c.Customer.CustomAttributes
+                    .Where(ca => ca.FieldKey == "idType" || ca.FieldKey == "IdType")
+                    .Select(ca => ca.FieldValue)
+                    .FirstOrDefault() ?? "NRIC Number"),
+                IdValue = c.Customer.IdType == "Passport Number" ? (c.Customer.Passport ?? c.Customer.NRIC ?? "") : (c.Customer.IdType == "Account Number" ? (c.Customer.AccountNumber ?? c.Customer.NRIC ?? "") : (c.Customer.NRIC ?? "")),
                 PhoneNumber = c.Customer.PhoneNumber,
                 DateOfBirth = c.Customer.DateOfBirth,
+                Branch = c.Customer.Branch,
+                PreferredLanguage = c.Customer.PreferredLanguage,
                 OpenCasesCount = c.Customer.Cases.Count(x => x.Status != CaseStatus.Resolved && x.Status != CaseStatus.Closed && x.Status != CaseStatus.Cancelled),
                 TotalCasesCount = c.Customer.Cases.Count()
             } : null!,
@@ -190,10 +199,16 @@ public static class MappingExtensions
             Id = c.Id,
             FullName = c.FullName,
             NRIC = c.NRIC,
+            Passport = c.Passport,
+            AccountNumber = c.AccountNumber,
+            IdType = !string.IsNullOrEmpty(c.IdType) ? c.IdType : (c.CustomAttributes
+                .Where(ca => ca.FieldKey == "idType" || ca.FieldKey == "IdType")
+                .Select(ca => ca.FieldValue)
+                .FirstOrDefault() ?? "NRIC Number"),
+            IdValue = c.IdType == "Passport Number" ? (c.Passport ?? c.NRIC ?? "") : (c.IdType == "Account Number" ? (c.AccountNumber ?? c.NRIC ?? "") : (c.NRIC ?? "")),
             PhoneNumber = c.PhoneNumber,
             Email = c.Email,
             Branch = c.Branch,
-            TenureMonths = c.TenureMonths,
             CustomerSegment = c.CustomerSegment,
             PreferredLanguage = c.PreferredLanguage ?? "Bahasa Malaysia",
             DateOfBirth = c.DateOfBirth,
