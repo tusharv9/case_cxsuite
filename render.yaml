@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: case-cxsuite-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ConnectionStrings__DefaultConnection
+        sync: false
+      - key: AllowedOrigins
+        sync: false
+      - key: EnableSwagger
+        value: "true"

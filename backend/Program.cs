@@ -24,11 +24,19 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
     });
 
+// Dynamic port support for Render / container platforms
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(port))
+{
+    builder.WebHost.UseUrls($"http://*:{port}");
+}
+
 // CORS allow-list is driven by configuration so production can restrict origins
 // without code changes. The development config includes localhost ports.
 var allowedOriginsRaw = builder.Configuration["AllowedOrigins"] ?? "http://localhost:3000,http://localhost:5173";
 var allowedOrigins = allowedOriginsRaw
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(o => o.TrimEnd('/'))
     .ToArray();
 
 builder.Services.AddCors(options =>
@@ -36,7 +44,21 @@ builder.Services.AddCors(options =>
     options.AddPolicy("ReactPolicy", policy =>
     {
         policy
-            .WithOrigins(allowedOrigins)
+            .SetIsOriginAllowed(origin =>
+            {
+                if (string.IsNullOrEmpty(origin)) return false;
+                var trimmed = origin.TrimEnd('/');
+                if (allowedOrigins.Any(ao => string.Equals(ao, trimmed, StringComparison.OrdinalIgnoreCase)))
+                    return true;
+                if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                {
+                    if (uri.Host == "localhost" || uri.Host == "127.0.0.1")
+                        return true;
+                    if (uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                return false;
+            })
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -49,6 +71,12 @@ builder.Services.AddSwaggerGen();
 
 // Configure PostgreSQL
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Database connection string 'DefaultConnection' was not found. " +
+        "Ensure 'ConnectionStrings__DefaultConnection' is configured in your environment variables or appsettings.json.");
+}
 
 builder.Services.AddDbContextPool<AppDbContext>(options =>
     options.UseNpgsql(connectionString, npgsqlOptions => 
@@ -122,7 +150,7 @@ app.Use(async (context, next) =>
 });
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || builder.Configuration.GetValue<bool>("EnableSwagger", true))
 {
     app.UseSwagger();
     app.UseSwaggerUI();
@@ -650,6 +678,13 @@ using (var scope = app.Services.CreateScope())
     DbSeeder.Seed(db);
 }
 
+// Forward headers from reverse proxies (Render, load balancers)
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+                       Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+});
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
@@ -659,6 +694,9 @@ app.UseCors("ReactPolicy");
 
 app.UseMiddleware<UserAuthorizationMiddleware>();
 app.UseAuthorization();
+
+// Zero-downtime health probe for Render
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
 app.MapControllers();
 
