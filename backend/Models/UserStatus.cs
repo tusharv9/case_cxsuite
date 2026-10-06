@@ -4,5 +4,7 @@ public enum UserStatus
 {
     Available,
     Busy,
-    Away
+    Away,
+    /// <summary>Not working. Appended last: statuses are stored as integers, so existing values must not shift.</summary>
+    Offline
 }

@@ -21,12 +21,12 @@ public class AppDbContext : DbContext
     public DbSet<LookupType> LookupTypes { get; set; } = null!;
     public DbSet<LookupValue> LookupValues { get; set; } = null!;
     public DbSet<CustomerCustomAttribute> CustomerCustomAttributes { get; set; } = null!;
+    public DbSet<CaseCustomAttribute> CaseCustomAttributes { get; set; } = null!;
     public DbSet<CaseAttachment> CaseAttachments { get; set; } = null!;
     public DbSet<CaseCollaborationActivity> CaseCollaborationActivities { get; set; } = null!;
 
     public DbSet<CaseTypeConfig> CaseTypeConfigs { get; set; } = null!;
     public DbSet<DepartmentSubCategory> DepartmentSubCategories { get; set; } = null!;
-    public DbSet<SlaConfiguration> SlaConfigurations { get; set; } = null!;
 
     // Cases SLA & Routing
     public DbSet<PrioritySlaRule> PrioritySlaRules { get; set; } = null!;
@@ -47,6 +47,12 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // Host-user projection: the Host's user id is unique among linked users.
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.ExternalUserId)
+            .IsUnique()
+            .HasFilter(@"""ExternalUserId"" IS NOT NULL");
 
         modelBuilder.Entity<SeedHistoryEntry>(entity =>
         {
@@ -96,6 +102,15 @@ public class AppDbContext : DbContext
                 .IsUnique()
                 .HasFilter(@"""PhoneNumber"" IS NOT NULL AND ""PhoneNumber"" <> ''")
                 .HasDatabaseName("IX_Customers_PhoneNumber_Unique");
+        });
+
+        modelBuilder.Entity<CaseCustomAttribute>(entity =>
+        {
+            entity.HasOne(a => a.Case)
+                .WithMany(c => c.CustomAttributes)
+                .HasForeignKey(a => a.CaseId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(a => new { a.CaseId, a.FieldKey }).IsUnique();
         });
 
         modelBuilder.Entity<CustomerCustomAttribute>()
@@ -298,8 +313,9 @@ public class AppDbContext : DbContext
             .HasIndex(r => r.Priority)
             .IsUnique();
 
+        // One priority per sub-category.
         modelBuilder.Entity<PriorityCategoryMapping>()
-            .HasIndex(m => m.CategoryName)
+            .HasIndex(m => m.DepartmentSubCategoryId)
             .IsUnique();
 
         modelBuilder.Entity<PriorityCategoryMapping>()
@@ -312,8 +328,8 @@ public class AppDbContext : DbContext
             .HasOne(m => m.DepartmentSubCategory)
             .WithMany()
             .HasForeignKey(m => m.DepartmentSubCategoryId)
-            .IsRequired(false)
-            .OnDelete(DeleteBehavior.SetNull);
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<BusinessHour>()
             .HasIndex(b => b.DayOfWeek)

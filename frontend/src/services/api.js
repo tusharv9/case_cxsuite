@@ -1,33 +1,21 @@
 // ===== AXIOS BASE INSTANCE =====
 
 import axios from 'axios';
-import { API_BASE_URL, LOGGED_IN_USER_ID_KEY, DEFAULT_USER_ID } from '../constants/index.js';
+import { getApiBaseUrl, getAuthHeaders, notifyUnauthorized } from './hostBridge.js';
 
-// ---- Resolve the active user ID ----
-// Priority: localStorage value → fallback to seeded DEFAULT_USER_ID
-// This is evaluated once at module load and then kept live via the interceptor below.
-function getActiveUserId() {
-  return localStorage.getItem(LOGGED_IN_USER_ID_KEY) || DEFAULT_USER_ID;
-}
-
+// No identity is baked in here: every request asks the host bridge who the caller is, so a token
+// refreshed by the Host App (or a different dev user) is picked up immediately.
 const api = axios.create({
-  baseURL: API_BASE_URL,
   timeout: 15000,
-  headers: {
-    'Content-Type': 'application/json',
-    // Set the header at instance level so it is always present — even before
-    // the interceptor runs (e.g. during module initialization or edge cases).
-    'X-User-Id': getActiveUserId(),
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
 // ---- Request Interceptor ----
-// Re-reads the active user from localStorage on every request so that
-// switching users (future feature) is reflected immediately without
-// re-creating the Axios instance.
 api.interceptors.request.use(
-  (config) => {
-    config.headers['X-User-Id'] = getActiveUserId();
+  async (config) => {
+    config.baseURL = getApiBaseUrl();
+    const auth = await getAuthHeaders();
+    for (const [name, value] of Object.entries(auth)) config.headers.set(name, value);
     return config;
   },
   (error) => Promise.reject(error)
@@ -37,6 +25,7 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    const status = error.response?.status;
     const data = error.response?.data;
 
     // Extract FluentValidation errors (RFC-7807 structure: { errors: { field: [messages] } })
@@ -58,9 +47,15 @@ api.interceptors.response.use(
         'An unexpected error occurred';
     }
 
+    if (status === 401) {
+      notifyUnauthorized();
+    } else if (status === 403 && !data?.error) {
+      message = 'You do not have permission to do that.';
+    }
+
     // Re-throw with a clean message
     const enhancedError = new Error(message);
-    enhancedError.status = error.response?.status;
+    enhancedError.status = status;
     enhancedError.original = error;
     return Promise.reject(enhancedError);
   }

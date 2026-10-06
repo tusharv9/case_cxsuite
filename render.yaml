@@ -25,6 +25,14 @@ services:
       # users. Existing databases are never re-seeded either way.
       - key: Database__Seed
         value: "Development"
+      # No Host App exists yet, so this deployment runs in Standalone mode, which has NO real
+      # authentication (callers name themselves with a header). It is refused in production unless
+      # allowed explicitly, as here. When the Host is ready: set HostIntegration__Mode=Host, remove
+      # AllowStandaloneInProduction and configure HostIntegration__Jwt__* (see HOST_INTEGRATION.md).
+      - key: HostIntegration__Mode
+        value: Standalone
+      - key: HostIntegration__AllowStandaloneInProduction
+        value: "true"
       - key: AllowedHosts
         sync: false
       - key: EnableSwagger

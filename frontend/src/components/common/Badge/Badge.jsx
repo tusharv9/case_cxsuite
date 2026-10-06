@@ -1,6 +1,6 @@
 // ===== BADGE COMPONENT =====
 
-import { CASE_STATUS_LABELS, SEVERITY_LABELS } from '../../../constants/index.js';
+import { CASE_STATUS_LABELS } from '../../../constants/index.js';
 import './Badge.css';
 
 /**
@@ -32,10 +32,10 @@ export function StatusBadge({ status, size = 'md' }) {
 }
 
 /**
- * Severity Badge — Ok | Info | Warn | Bad
+ * Priority badge. Names are administrator-configured, so the name is shown as-is.
  */
 export function SeverityBadge({ severity, size = 'md' }) {
-  const label = SEVERITY_LABELS[severity] || severity;
+  const label = severity;
   const sizeClass = size !== 'md' ? `badge--${size}` : '';
   // Severities are administrator-configurable, so the name is slugified rather than assumed
   // to be a single word.

@@ -17,11 +17,9 @@ public class DashboardSummaryDto
     public int SlaHealthyCases { get; set; }
     public decimal SlaAdherencePercent { get; set; }
 
-    // Severity breakdown
-    public int CriticalCases { get; set; }
-    public int HighCases { get; set; }
-    public int MediumCases { get; set; }
-    public int LowCases { get; set; }
+    // Priority breakdown, in the configured display order (most urgent first). Priorities are
+    // administrator-defined, so this is a list rather than one property per name.
+    public List<SeverityCaseCount> CasesBySeverity { get; set; } = new();
 
     // Cases by department
     public List<DepartmentCaseCount> CasesByDepartment { get; set; } = new();
@@ -92,4 +90,11 @@ public class RecentActivityItem
     public string Sub { get; set; } = string.Empty;
     public Guid CaseId { get; set; }
     public DateTime Timestamp { get; set; }
+}
+
+public class SeverityCaseCount
+{
+    public string Severity { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public int DisplayOrder { get; set; }
 }

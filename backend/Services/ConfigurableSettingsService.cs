@@ -8,9 +8,6 @@ using Microsoft.EntityFrameworkCore;
 
 public class ConfigurableSettingsService : IConfigurableSettingsService
 {
-    /// <summary>Lookup type that holds the administrator-configurable case severities.</summary>
-    public const string SeverityLookupCode = "CASE_SEVERITY";
-
     private const int MaxSlaHours = 8760; // one year
 
     private readonly IConfigurableSettingsRepository _repository;
@@ -66,6 +63,40 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         }
     }
 
+    /// <summary>Built-in field keys of the Create Case and Add Customer forms; a custom field may not reuse them.</summary>
+    private static readonly HashSet<string> ReservedFieldKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "caseType", "title", "description", "selectCustomer", "departmentId", "subCategory", "severity", "sourceChannel",
+        "preferredLanguage", "preferredCommunicationChannel", "communicationChannel", "customerId",
+        "fullName", "idType", "idValue", "nric", "passport", "accountNumber", "dateOfBirth", "phoneNumber", "email", "branch", "customerSegment"
+    };
+
+    private static readonly string[] AllowedFieldTypes = { "Text", "Number", "Date", "Email", "Phone", "Dropdown", "Checkbox" };
+
+    /// <summary>
+    /// Rejects field metadata the validation engine could not honour, at SAVE time — so a typo in a pattern is an
+    /// immediate, clear error for the administrator instead of a silently ignored rule later.
+    /// </summary>
+    private async Task ValidateFieldMetadataAsync(string label, string fieldType, string? regex, int? minLength, int? maxLength, string? lookupTypeCode, bool visible, CancellationToken ct)
+    {
+        if (!AllowedFieldTypes.Contains(fieldType ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"'{fieldType}' is not a valid field type for '{label}'. Valid types: {string.Join(", ", AllowedFieldTypes)}.");
+        if (minLength is < 0 || maxLength is < 0)
+            throw new InvalidOperationException($"Length limits for '{label}' cannot be negative.");
+        if (minLength.HasValue && maxLength.HasValue && minLength > maxLength)
+            throw new InvalidOperationException($"Minimum length for '{label}' cannot be greater than its maximum length.");
+        if (!string.IsNullOrWhiteSpace(regex))
+        {
+            try { _ = new System.Text.RegularExpressions.Regex(regex, System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(250)); }
+            catch (ArgumentException ex) { throw new InvalidOperationException($"The validation pattern for '{label}' is not a valid regular expression: {ex.Message}"); }
+        }
+        if (string.Equals(fieldType, "Dropdown", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(lookupTypeCode))
+        {
+            var known = await _context.LookupTypes.AsNoTracking().AnyAsync(t => t.Code == lookupTypeCode, ct);
+            if (!known) throw new InvalidOperationException($"The list '{lookupTypeCode}' chosen for '{label}' does not exist.");
+        }
+    }
+
     public async Task<IEnumerable<FieldConfigurationDto>> GetFieldConfigurationsAsync(string moduleKey, string? sectionKey = null, CancellationToken ct = default)
     {
         var fields = await _repository.GetFieldConfigurationsAsync(moduleKey, sectionKey, ct);
@@ -74,6 +105,9 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
     public async Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfigurationDto> fields, CancellationToken ct = default)
     {
+        foreach (var dto in fields)
+            await ValidateFieldMetadataAsync(dto.DisplayLabel, dto.FieldType, dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.LookupTypeCode, dto.IsVisible, ct);
+
         var entities = fields.Select(dto => MapToEntity(dto, moduleKey, sectionKey));
         await _repository.SaveFieldConfigurationsAsync(moduleKey, sectionKey, entities, ct);
         await RecordAuditLogAsync("UPDATE", $"Section Fields: {sectionKey}", $"Saved field configurations layout for {sectionKey}", null, $"{fields.Count()} fields updated", ct);
@@ -81,6 +115,10 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
     public async Task<FieldConfigurationDto> AddCustomFieldAsync(CreateCustomFieldDto dto, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(dto.DisplayLabel))
+            throw new InvalidOperationException("A field needs a display label.");
+        await ValidateFieldMetadataAsync(dto.DisplayLabel, dto.FieldType, dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.LookupTypeCode, dto.IsVisible, ct);
+
         var entity = new FieldConfiguration
         {
             ModuleKey = string.IsNullOrWhiteSpace(dto.ModuleKey) ? "Customer360" : dto.ModuleKey,
@@ -95,9 +133,20 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             MaskingRule = dto.MaskingRule,
             VisibleChars = dto.VisibleChars,
             DisplayOrder = dto.DisplayOrder,
-            LookupTypeCode = dto.LookupTypeCode,
+            LookupTypeCode = string.IsNullOrWhiteSpace(dto.LookupTypeCode) ? null : dto.LookupTypeCode,
+            ValidationRegex = string.IsNullOrWhiteSpace(dto.ValidationRegex) ? null : dto.ValidationRegex,
+            ValidationMessage = string.IsNullOrWhiteSpace(dto.ValidationMessage) ? null : dto.ValidationMessage.Trim(),
+            MinLength = dto.MinLength,
+            MaxLength = dto.MaxLength,
             IsCustomField = true
         };
+
+        // The key becomes a property name in API payloads and a column value key: keep it a plain identifier, and
+        // never let it shadow one of the form's built-in fields.
+        if (!System.Text.RegularExpressions.Regex.IsMatch(entity.ApiField, @"^[A-Za-z][A-Za-z0-9_]{0,49}$"))
+            throw new InvalidOperationException($"'{entity.ApiField}' is not a valid field key. Use letters, digits and underscores, starting with a letter (max 50).");
+        if (ReservedFieldKeys.Contains(entity.ApiField))
+            throw new InvalidOperationException($"'{entity.ApiField}' is a built-in field name and cannot be used for a custom field.");
 
         if (await _repository.FieldExistsAsync(entity.ModuleKey, entity.SectionKey, entity.ApiField, null, ct))
         {
@@ -114,14 +163,18 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         if (string.IsNullOrWhiteSpace(dto.DisplayLabel))
             throw new InvalidOperationException("Display label is required.");
 
-        var existingList = await _repository.GetFieldConfigurationsAsync("Customer360", null, ct);
-        var existing = existingList.FirstOrDefault(f => f.Id == id);
+        var fieldType = string.IsNullOrWhiteSpace(dto.FieldType) ? "Text" : dto.FieldType;
+        await ValidateFieldMetadataAsync(dto.DisplayLabel, fieldType, dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.LookupTypeCode, dto.IsVisible, ct);
+
+        // Looked up by id alone: the old code searched only the Customer360 module, so the audit "before" value
+        // was missing for every other module.
+        var existing = await _repository.GetFieldConfigurationAsync(id, ct);
         var oldVal = existing != null ? $"Label: {existing.DisplayLabel}, Type: {existing.FieldType}, Visible: {existing.IsVisible}, Required: {existing.IsRequired}, Masking: {existing.MaskingRule}" : null;
 
         var entity = new FieldConfiguration
         {
             DisplayLabel = dto.DisplayLabel.Trim(),
-            FieldType = string.IsNullOrWhiteSpace(dto.FieldType) ? "Text" : dto.FieldType,
+            FieldType = fieldType,
             IsVisible = dto.IsVisible,
             IsRequired = dto.IsRequired,
             IsEditable = dto.IsEditable,
@@ -129,7 +182,11 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             MaskingRule = string.IsNullOrWhiteSpace(dto.MaskingRule) ? "None" : dto.MaskingRule,
             VisibleChars = dto.VisibleChars < 0 ? 0 : dto.VisibleChars,
             DisplayOrder = dto.DisplayOrder,
-            LookupTypeCode = string.IsNullOrWhiteSpace(dto.LookupTypeCode) ? null : dto.LookupTypeCode
+            LookupTypeCode = string.IsNullOrWhiteSpace(dto.LookupTypeCode) ? null : dto.LookupTypeCode,
+            ValidationRegex = string.IsNullOrWhiteSpace(dto.ValidationRegex) ? null : dto.ValidationRegex,
+            ValidationMessage = string.IsNullOrWhiteSpace(dto.ValidationMessage) ? null : dto.ValidationMessage.Trim(),
+            MinLength = dto.MinLength,
+            MaxLength = dto.MaxLength
         };
 
         var updated = await _repository.UpdateFieldConfigurationAsync(id, entity, ct);
@@ -143,8 +200,9 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
     public async Task<bool> DeleteFieldConfigurationAsync(Guid id, CancellationToken ct = default)
     {
-        var existingList = await _repository.GetFieldConfigurationsAsync("Customer360", null, ct);
-        var existing = existingList.FirstOrDefault(f => f.Id == id);
+        var existing = await _repository.GetFieldConfigurationAsync(id, ct);
+        if (existing is { IsSystemRequired: true })
+            throw new InvalidOperationException($"'{existing.DisplayLabel}' is a built-in field the system needs and cannot be deleted.");
         var oldVal = existing != null ? $"Label: {existing.DisplayLabel}, ApiField: {existing.ApiField}, Section: {existing.SectionKey}, Type: {existing.FieldType}" : $"ID: {id}";
         var fieldName = existing?.DisplayLabel ?? "Field";
 
@@ -154,6 +212,12 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             await RecordAuditLogAsync("DELETE", $"Field: {fieldName}", $"Deleted configurable field '{fieldName}'", oldVal, null, ct);
         }
         return success;
+    }
+
+    public async Task<IEnumerable<LookupTypeDto>> GetLookupTypesAsync(CancellationToken ct = default)
+    {
+        var types = await _context.LookupTypes.AsNoTracking().OrderBy(t => t.Name).ToListAsync(ct);
+        return types.Select(t => new LookupTypeDto { Code = t.Code, Name = t.Name, Description = t.Description });
     }
 
     public async Task<IEnumerable<LookupValueDto>> GetLookupValuesAsync(string typeCode, bool activeOnly = true, CancellationToken ct = default)
@@ -233,30 +297,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         return char.ToLowerInvariant(cleaned[0]) + cleaned[1..];
     }
 
-    private static FieldConfigurationDto MapToDto(FieldConfiguration entity)
-    {
-        return new FieldConfigurationDto
-        {
-            Id = entity.Id,
-            ModuleKey = entity.ModuleKey,
-            SectionKey = entity.SectionKey,
-            ApiField = entity.ApiField,
-            DisplayLabel = entity.DisplayLabel,
-            IsVisible = entity.IsVisible,
-            IsRequired = entity.IsRequired,
-            IsEditable = entity.IsEditable,
-            IsSensitive = entity.IsSensitive,
-            MaskingRule = entity.MaskingRule,
-            VisibleChars = entity.VisibleChars,
-            DisplayOrder = entity.DisplayOrder,
-            FieldType = entity.FieldType,
-            ValidationRegex = entity.ValidationRegex,
-            MinLength = entity.MinLength,
-            MaxLength = entity.MaxLength,
-            LookupTypeCode = entity.LookupTypeCode,
-            IsCustomField = entity.IsCustomField
-        };
-    }
+    private static FieldConfigurationDto MapToDto(FieldConfiguration entity) => FieldConfigurationDto.From(entity);
 
     private static FieldConfiguration MapToEntity(FieldConfigurationDto dto, string defaultModule, string defaultSection)
     {
@@ -275,7 +316,8 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             VisibleChars = dto.VisibleChars,
             DisplayOrder = dto.DisplayOrder,
             FieldType = dto.FieldType,
-            ValidationRegex = dto.ValidationRegex,
+            ValidationRegex = string.IsNullOrWhiteSpace(dto.ValidationRegex) ? null : dto.ValidationRegex,
+            ValidationMessage = string.IsNullOrWhiteSpace(dto.ValidationMessage) ? null : dto.ValidationMessage.Trim(),
             MinLength = dto.MinLength,
             MaxLength = dto.MaxLength,
             LookupTypeCode = dto.LookupTypeCode,
@@ -496,21 +538,11 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         return await _repository.DeleteSubCategoryAsync(id, ct);
     }
 
-    public async Task<IEnumerable<SlaConfigurationDto>> GetSlaConfigurationsAsync(CancellationToken ct = default)
-    {
-        var items = await _repository.GetSlaConfigurationsAsync(ct);
-        return items.Select(s => new SlaConfigurationDto
-        {
-            Id = s.Id,
-            Severity = s.Severity,
-            InternalHours = s.InternalHours,
-            ExternalHours = s.ExternalHours,
-            FirstResponseMinutes = s.FirstResponseMinutes,
-            IsActive = s.IsActive
-        });
-    }
+    // ===== PRIORITY ("SEVERITY") MASTER DATA =====
+    // A priority is one PrioritySlaRule row. The Cases SLA & Routing screen edits its targets and which
+    // sub-categories map to it; this screen edits its name, order, active flag and (in whole hours) its
+    // targets. Same rows, so the two screens can never disagree.
 
-    /// <summary>SLA hours are whole hours: zero, negative and absurd values are rejected.</summary>
     private static void ValidateSlaHours(int hours, string label)
     {
         if (hours <= 0)
@@ -519,50 +551,28 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             throw new InvalidOperationException($"{label} cannot exceed {MaxSlaHours} hours (1 year).");
     }
 
-    // ===== SEVERITY MASTER DATA =====
-    // A severity is one CASE_SEVERITY lookup value plus one SLA configuration row. Both are
-    // written together so the SLA Configuration screen always lists exactly the configured
-    // severities, and cases can only ever be stored with a severity that exists here.
+    private static int ToHours(int minutes) => (int)Math.Ceiling(minutes / 60.0);
 
-    private static readonly string[] SystemSeverities = { "Low", "Medium", "High", "Critical" };
-
-    public async Task<IEnumerable<string>> GetSeveritiesAsync(CancellationToken ct = default)
+    private async Task<SeverityDto> ToSeverityDtoAsync(PrioritySlaRule rule, CancellationToken ct) => new()
     {
-        var values = (await _repository.GetLookupValuesAsync(SeverityLookupCode, true, ct))
-            .Select(v => v.Value)
-            .ToList();
-
-        if (values.Count > 0) return values;
-
-        // Falls back to whatever SLA rows exist so a database seeded before severities became
-        // configurable still resolves.
-        var fromSla = (await _repository.GetSlaConfigurationsAsync(ct)).Select(x => x.Severity).ToList();
-        return fromSla.Count > 0 ? fromSla : SystemSeverities;
-    }
+        Id = rule.Id,
+        Name = rule.Priority,
+        DisplayOrder = rule.DisplayOrder,
+        InternalHours = ToHours(rule.InternalResolutionMinutes),
+        ExternalHours = ToHours(rule.ExternalResolutionMinutes),
+        FirstResponseMinutes = rule.FirstResponseMinutes,
+        IsSystem = false,
+        CasesUsing = await _repository.CountCasesBySeverityAsync(rule.Priority, ct),
+        IsActive = rule.IsActive
+    };
 
     public async Task<IEnumerable<SeverityDto>> GetSeverityConfigurationsAsync(CancellationToken ct = default)
     {
-        var lookups = (await _repository.GetLookupValuesAsync(SeverityLookupCode, false, ct)).ToList();
-        var slas = (await _repository.GetSlaConfigurationsAsync(ct)).ToList();
+        var rules = await _context.PrioritySlaRules.AsNoTracking()
+            .OrderBy(r => r.DisplayOrder).ThenBy(r => r.Priority).ToListAsync(ct);
 
         var result = new List<SeverityDto>();
-        foreach (var lookup in lookups)
-        {
-            var sla = slas.FirstOrDefault(s => s.Severity.Equals(lookup.Value, StringComparison.OrdinalIgnoreCase));
-            result.Add(new SeverityDto
-            {
-                Id = lookup.Id,
-                Name = lookup.Value,
-                DisplayOrder = lookup.DisplayOrder,
-                InternalHours = sla?.InternalHours ?? 0,
-                ExternalHours = sla?.ExternalHours ?? 0,
-                FirstResponseMinutes = sla?.FirstResponseMinutes ?? 240,
-                IsSystem = SystemSeverities.Contains(lookup.Value, StringComparer.OrdinalIgnoreCase),
-                CasesUsing = await _repository.CountCasesBySeverityAsync(lookup.Value, ct),
-                IsActive = lookup.IsActive
-            });
-        }
-
+        foreach (var rule in rules) result.Add(await ToSeverityDtoAsync(rule, ct));
         return result;
     }
 
@@ -570,12 +580,13 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
     {
         var name = dto.Name?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(name))
-            throw new InvalidOperationException("Severity name is required.");
+            throw new InvalidOperationException("Priority name is required.");
         if (name.Length > 50)
-            throw new InvalidOperationException("Severity name cannot exceed 50 characters.");
+            throw new InvalidOperationException("Priority name cannot exceed 50 characters.");
 
-        if (await _repository.LookupValueExistsAsync(SeverityLookupCode, name, null, ct))
-            throw new InvalidOperationException($"Severity '{name}' already exists.");
+        var lowered = name.ToLower();
+        if (await _context.PrioritySlaRules.AnyAsync(r => r.Priority.ToLower() == lowered, ct))
+            throw new InvalidOperationException($"Priority '{name}' already exists.");
 
         var internalHours = dto.InternalHours <= 0 ? 22 : dto.InternalHours;
         var externalHours = dto.ExternalHours <= 0 ? 24 : dto.ExternalHours;
@@ -583,123 +594,158 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         ValidateSlaHours(internalHours, "Internal SLA");
         ValidateSlaHours(externalHours, "External SLA");
 
-        var created = await _repository.AddLookupValueAsync(new LookupValue
+        var nextOrder = (await _context.PrioritySlaRules.MaxAsync(r => (int?)r.DisplayOrder, ct) ?? 0) + 1;
+        var rule = new PrioritySlaRule
         {
-            TypeCode = SeverityLookupCode,
-            Value = name,
-            Label = name,
-            DisplayOrder = dto.DisplayOrder,
-            IsActive = true
-        }, ct);
-
-        // The matching SLA row is created in the same operation, so a new severity is never
-        // missing from SLA Configuration.
-        await _repository.SaveSlaConfigurationAsync(new SlaConfiguration
-        {
-            Severity = name,
-            InternalHours = internalHours,
-            ExternalHours = externalHours,
+            Id = Guid.NewGuid(),
+            Priority = name,
+            DisplayOrder = dto.DisplayOrder > 0 ? dto.DisplayOrder : nextOrder,
+            IsActive = true,
+            FirstResponseValue = firstResponseMinutes,
+            FirstResponseUnit = "Minutes",
             FirstResponseMinutes = firstResponseMinutes,
-            IsActive = true
-        }, ct);
-
-        return new SeverityDto
-        {
-            Id = created.Id,
-            Name = created.Value,
-            DisplayOrder = created.DisplayOrder,
-            InternalHours = internalHours,
-            ExternalHours = externalHours,
-            FirstResponseMinutes = firstResponseMinutes,
-            IsSystem = false,
-            CasesUsing = 0
+            InternalResolutionValue = internalHours,
+            InternalResolutionUnit = "Hours",
+            InternalResolutionMinutes = internalHours * 60,
+            ExternalResolutionValue = externalHours,
+            ExternalResolutionUnit = "Hours",
+            ExternalResolutionMinutes = externalHours * 60,
+            Version = 1,
+            CreatedAt = DateTime.UtcNow
         };
+        _context.PrioritySlaRules.Add(rule);
+        await _context.SaveChangesAsync(ct);
+
+        await RecordAuditLogAsync("CREATE", $"Priority: {name}", $"Created priority '{name}'", null,
+            $"Internal: {internalHours}h, External: {externalHours}h, First response: {firstResponseMinutes}m", ct);
+        return await ToSeverityDtoAsync(rule, ct);
     }
 
     public async Task<SeverityDto?> UpdateSeverityAsync(Guid id, UpdateSeverityDto dto, CancellationToken ct = default)
     {
         var name = dto.Name?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(name))
-            throw new InvalidOperationException("Severity name is required.");
+            throw new InvalidOperationException("Priority name is required.");
+        if (name.Length > 50)
+            throw new InvalidOperationException("Priority name cannot exceed 50 characters.");
 
-        var current = await _repository.GetLookupValueAsync(id, ct);
-        if (current == null || current.TypeCode != SeverityLookupCode) return null;
+        var rule = await _context.PrioritySlaRules.FirstOrDefaultAsync(r => r.Id == id, ct);
+        if (rule == null) return null;
 
-        if (await _repository.LookupValueExistsAsync(SeverityLookupCode, name, id, ct))
-            throw new InvalidOperationException($"Severity '{name}' already exists.");
+        var lowered = name.ToLower();
+        if (await _context.PrioritySlaRules.AnyAsync(r => r.Id != id && r.Priority.ToLower() == lowered, ct))
+            throw new InvalidOperationException($"Priority '{name}' already exists.");
 
-        var oldName = current.Value;
+        if (!dto.IsActive && rule.IsActive &&
+            !await _context.PrioritySlaRules.AnyAsync(r => r.Id != id && r.IsActive, ct))
+            throw new InvalidOperationException("At least one priority must stay active.");
 
-        await _repository.UpdateLookupValueAsync(id, new LookupValue
+        var oldName = rule.Priority;
+        var oldSummary = $"Name: {oldName}, Order: {rule.DisplayOrder}, Active: {rule.IsActive}, Internal: {ToHours(rule.InternalResolutionMinutes)}h, External: {ToHours(rule.ExternalResolutionMinutes)}h";
+
+        rule.Priority = name;
+        rule.DisplayOrder = dto.DisplayOrder > 0 ? dto.DisplayOrder : rule.DisplayOrder;
+        rule.IsActive = dto.IsActive;
+
+        // Targets are edited in whole hours here; only values that were supplied change.
+        var slaChanged = false;
+        if (dto.InternalHours.HasValue)
         {
-            Value = name,
-            Label = name,
-            DisplayOrder = dto.DisplayOrder,
-            IsActive = dto.IsActive
-        }, ct);
+            ValidateSlaHours(dto.InternalHours.Value, "Internal SLA");
+            var minutes = dto.InternalHours.Value * 60;
+            slaChanged |= minutes != rule.InternalResolutionMinutes;
+            rule.InternalResolutionValue = dto.InternalHours.Value;
+            rule.InternalResolutionUnit = "Hours";
+            rule.InternalResolutionMinutes = minutes;
+        }
+        if (dto.ExternalHours.HasValue)
+        {
+            ValidateSlaHours(dto.ExternalHours.Value, "External SLA");
+            var minutes = dto.ExternalHours.Value * 60;
+            slaChanged |= minutes != rule.ExternalResolutionMinutes;
+            rule.ExternalResolutionValue = dto.ExternalHours.Value;
+            rule.ExternalResolutionUnit = "Hours";
+            rule.ExternalResolutionMinutes = minutes;
+        }
+        if (dto.FirstResponseMinutes.HasValue)
+        {
+            if (dto.FirstResponseMinutes.Value <= 0)
+                throw new InvalidOperationException("First response target must be at least 1 minute.");
+            slaChanged |= dto.FirstResponseMinutes.Value != rule.FirstResponseMinutes;
+            rule.FirstResponseValue = dto.FirstResponseMinutes.Value;
+            rule.FirstResponseUnit = "Minutes";
+            rule.FirstResponseMinutes = dto.FirstResponseMinutes.Value;
+        }
+        if (slaChanged) rule.Version += 1;   // cases snapshot this version
+        rule.UpdatedAt = DateTime.UtcNow;
 
+        // Everything that refers to the priority BY NAME follows a rename, so nothing is left dangling.
         if (!oldName.Equals(name, StringComparison.Ordinal))
         {
-            await _repository.RenameSlaConfigurationAsync(oldName, name, ct);
-            // Cases already stored under the previous name follow the rename so no case is
-            // left pointing at a severity that no longer exists.
             await _repository.RenameCaseSeverityAsync(oldName, name, ct);
+            await RenamePriorityInRoutingRulesAsync(oldName, name, ct);
         }
 
-        var sla = (await _repository.GetSlaConfigurationsAsync(ct))
-            .FirstOrDefault(x => x.Severity.Equals(name, StringComparison.OrdinalIgnoreCase));
+        await _context.SaveChangesAsync(ct);
 
-        // SLA hours are edited together with the severity (the separate SLA Configuration
-        // screen was removed). Only values that were supplied are changed.
-        if (dto.InternalHours.HasValue || dto.ExternalHours.HasValue || dto.FirstResponseMinutes.HasValue)
-        {
-            var internalHours = dto.InternalHours ?? sla?.InternalHours ?? 22;
-            var externalHours = dto.ExternalHours ?? sla?.ExternalHours ?? 24;
-            var firstResponse = dto.FirstResponseMinutes ?? sla?.FirstResponseMinutes ?? 240;
-            ValidateSlaHours(internalHours, "Internal SLA");
-            ValidateSlaHours(externalHours, "External SLA");
-            if (firstResponse <= 0)
-                throw new InvalidOperationException("First response target must be at least 1 minute.");
-
-            sla = await _repository.SaveSlaConfigurationAsync(new SlaConfiguration
-            {
-                Severity = name,
-                InternalHours = internalHours,
-                ExternalHours = externalHours,
-                FirstResponseMinutes = firstResponse,
-                IsActive = true
-            }, ct);
-        }
-
-        return new SeverityDto
-        {
-            Id = id,
-            Name = name,
-            DisplayOrder = dto.DisplayOrder,
-            InternalHours = sla?.InternalHours ?? 0,
-            ExternalHours = sla?.ExternalHours ?? 0,
-            FirstResponseMinutes = sla?.FirstResponseMinutes ?? 240,
-            IsSystem = SystemSeverities.Contains(name, StringComparer.OrdinalIgnoreCase),
-            CasesUsing = await _repository.CountCasesBySeverityAsync(name, ct),
-            IsActive = dto.IsActive
-        };
+        await RecordAuditLogAsync("UPDATE", $"Priority: {name}", $"Updated priority '{name}'", oldSummary,
+            $"Name: {name}, Order: {rule.DisplayOrder}, Active: {rule.IsActive}, Internal: {ToHours(rule.InternalResolutionMinutes)}h, External: {ToHours(rule.ExternalResolutionMinutes)}h", ct);
+        return await ToSeverityDtoAsync(rule, ct);
     }
 
     public async Task<bool> DeleteSeverityAsync(Guid id, CancellationToken ct = default)
     {
-        var current = await _repository.GetLookupValueAsync(id, ct);
-        if (current == null || current.TypeCode != SeverityLookupCode) return false;
+        var rule = await _context.PrioritySlaRules.FirstOrDefaultAsync(r => r.Id == id, ct);
+        if (rule == null) return false;
 
-        var inUse = await _repository.CountCasesBySeverityAsync(current.Value, ct);
+        var inUse = await _repository.CountCasesBySeverityAsync(rule.Priority, ct);
         if (inUse > 0)
             throw new InvalidOperationException(
-                $"'{current.Value}' cannot be deleted because {inUse} case(s) currently use it.");
+                $"'{rule.Priority}' cannot be deleted because {inUse} case(s) use it. Deactivate it instead.");
 
-        var remaining = (await _repository.GetLookupValuesAsync(SeverityLookupCode, true, ct)).Count();
-        if (remaining <= 1)
-            throw new InvalidOperationException("At least one severity must remain configured.");
+        var referencingRules = await RoutingRulesReferencingPriorityAsync(rule.Priority, ct);
+        if (referencingRules.Count > 0)
+            throw new InvalidOperationException(
+                $"'{rule.Priority}' cannot be deleted because routing rule(s) match on it: {string.Join(", ", referencingRules)}.");
 
-        await _repository.DeleteSlaConfigurationBySeverityAsync(current.Value, ct);
-        return await _repository.DeleteLookupValueAsync(id, ct);
+        if (!await _context.PrioritySlaRules.AnyAsync(r => r.Id != id, ct))
+            throw new InvalidOperationException("At least one priority must remain configured.");
+
+        _context.PrioritySlaRules.Remove(rule);   // its sub-category mappings are removed with it (cascade)
+        await _context.SaveChangesAsync(ct);
+
+        await RecordAuditLogAsync("DELETE", $"Priority: {rule.Priority}", $"Deleted priority '{rule.Priority}'", rule.Priority, null, ct);
+        return true;
+    }
+
+    private static string? ConditionPriority(string conditionsJson)
+    {
+        try
+        {
+            return System.Text.Json.JsonSerializer
+                .Deserialize<RuleConditionsDto>(conditionsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })?.Priority;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    private async Task<List<string>> RoutingRulesReferencingPriorityAsync(string priority, CancellationToken ct)
+    {
+        var rules = await _context.RoutingRules.AsNoTracking().Select(r => new { r.Name, r.ConditionsJson }).ToListAsync(ct);
+        return rules
+            .Where(r => string.Equals(ConditionPriority(r.ConditionsJson), priority, StringComparison.OrdinalIgnoreCase))
+            .Select(r => r.Name).ToList();
+    }
+
+    private async Task RenamePriorityInRoutingRulesAsync(string oldName, string newName, CancellationToken ct)
+    {
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        foreach (var rule in await _context.RoutingRules.ToListAsync(ct))
+        {
+            if (!string.Equals(ConditionPriority(rule.ConditionsJson), oldName, StringComparison.OrdinalIgnoreCase)) continue;
+            var conditions = System.Text.Json.JsonSerializer.Deserialize<RuleConditionsDto>(rule.ConditionsJson, options)!;
+            conditions.Priority = newName;
+            rule.ConditionsJson = System.Text.Json.JsonSerializer.Serialize(conditions);
+            rule.UpdatedAt = DateTime.UtcNow;
+        }
     }
 }

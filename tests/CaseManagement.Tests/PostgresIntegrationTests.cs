@@ -179,14 +179,22 @@ public class PostgresIntegrationTests
     {
         await using var db = await TempDatabase.CreateAsync();
 
-        // Build a database exactly the way the OLD startup did: EnsureCreated, no migration history.
+        // A legacy database = exactly the Baseline schema (what the old startup code produced) with NO
+        // migration history. Build it by applying only the Baseline migration, then forgetting that it ran.
         var deptId = Guid.NewGuid();
         await using (var legacy = db.NewContext())
         {
-            await legacy.Database.EnsureCreatedAsync();
-            legacy.Departments.Add(new Department { Id = deptId, Name = "Legacy Dept", Code = "LD", CreatedAt = DateTime.UtcNow });
-            legacy.Users.Add(new User { Id = Guid.NewGuid(), Name = "Legacy User", Email = "legacy@example.test", Role = "Agent", DepartmentId = deptId, CreatedAt = DateTime.UtcNow });
-            await legacy.SaveChangesAsync();
+            var baseline = LegacySchemaAdopter.BaselineMigrationId;
+            await Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+                .GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>(legacy)
+                .MigrateAsync(baseline);
+            await legacy.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
+            await legacy.Database.ExecuteSqlRawAsync(
+                "INSERT INTO \"Departments\" (\"Id\",\"Name\",\"Code\",\"Function\",\"Channels\",\"IsActive\",\"CreatedAt\") " +
+                $"VALUES ('{deptId}','Legacy Dept','LD','','Voice',true,NOW());");
+            await legacy.Database.ExecuteSqlRawAsync(
+                "INSERT INTO \"Users\" (\"Id\",\"Name\",\"Email\",\"Role\",\"Status\",\"DepartmentId\",\"CreatedAt\") " +
+                $"VALUES ('{Guid.NewGuid()}','Legacy User','legacy@example.test','Agent',0,'{deptId}',NOW());");
         }
         Assert.Equal(0L, await db.ScalarAsync<long>("SELECT count(*) FROM pg_tables WHERE tablename = '__EFMigrationsHistory'"));
 
@@ -194,8 +202,13 @@ public class PostgresIntegrationTests
         Assert.True(await initializer.RunAsync(false, CancellationToken.None));
         Assert.Equal(DatabaseInitializationStatus.Ready, state.Status);
 
-        // Baseline recorded; existing rows untouched; and, crucially, nothing was seeded into it.
-        Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"__EFMigrationsHistory\""));
+        // Baseline adopted, later migrations applied; existing rows untouched; and, crucially,
+        // nothing was seeded into it.
+        Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" LIKE '%Baseline'"));
+        Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" LIKE '%AddHostUserProjection'"));
+        Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" LIKE '%UnifyPriorities'"));
+        // The pre-existing user is linked to the Host-id scheme and stays active.
+        Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"Users\" WHERE \"ExternalUserId\" = \"Id\"::text AND \"IsActive\""));
         Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"Users\""));
         Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"Departments\""));
         Assert.Equal(0L, await db.ScalarAsync<long>("SELECT count(*) FROM \"LookupValues\""));
@@ -214,7 +227,12 @@ public class PostgresIntegrationTests
     {
         await using var db = await TempDatabase.CreateAsync();
         await using (var legacy = db.NewContext())
-            await legacy.Database.EnsureCreatedAsync();
+        {
+            await Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+                .GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>(legacy)
+                .MigrateAsync(LegacySchemaAdopter.BaselineMigrationId);
+            await legacy.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
+        }
 
         var (initializer, state) = CreateInitializer(db, migrateOnStartup: false, SeedMode.Bootstrap);
         Assert.False(await initializer.RunAsync(false, CancellationToken.None));
@@ -251,7 +269,7 @@ public class PostgresIntegrationTests
         var freeSub = Guid.NewGuid();
 
         await using var ctx = db.NewContext();
-        var rule = new PrioritySlaRule { Id = Guid.NewGuid(), Priority = "High", CreatedAt = DateTime.UtcNow };
+        var rule = new PrioritySlaRule { Id = Guid.NewGuid(), Priority = "High", DisplayOrder = 1, CreatedAt = DateTime.UtcNow };
         ctx.AddRange(
             new Department { Id = deptId, Name = "D", Code = "D", CreatedAt = DateTime.UtcNow },
             rule);
@@ -263,7 +281,7 @@ public class PostgresIntegrationTests
             new DepartmentSubCategory { Id = freeSub, DepartmentId = deptId, Name = "Free", Code = "F", IsActive = true, CreatedAt = DateTime.UtcNow });
         await ctx.SaveChangesAsync();
         ctx.AddRange(
-            new PriorityCategoryMapping { Id = Guid.NewGuid(), PrioritySlaRuleId = rule.Id, Priority = "High", CategoryName = "Free", CreatedAt = DateTime.UtcNow },
+            new PriorityCategoryMapping { Id = Guid.NewGuid(), PrioritySlaRuleId = rule.Id, DepartmentSubCategoryId = freeSub, CreatedAt = DateTime.UtcNow },
             new Case
             {
                 Id = Guid.NewGuid(), CaseNumber = "C-00001", CaseType = "Complaint", Title = "t", Description = "d",
@@ -281,6 +299,6 @@ public class PostgresIntegrationTests
         Assert.Equal(1L, await db.ScalarAsync<long>($"SELECT count(*) FROM \"DepartmentSubCategories\" WHERE \"Id\" = '{usedSub}'"));
 
         Assert.True(await service.DeleteSubCategoryAsync(freeSub));
-        Assert.Equal(0L, await db.ScalarAsync<long>("SELECT count(*) FROM \"PriorityCategoryMappings\" WHERE \"CategoryName\" = 'Free'"));
+        Assert.Equal(0L, await db.ScalarAsync<long>($"SELECT count(*) FROM \"PriorityCategoryMappings\" WHERE \"DepartmentSubCategoryId\" = '{freeSub}'"));
     }
 }

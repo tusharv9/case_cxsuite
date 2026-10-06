@@ -19,8 +19,12 @@ public interface ISlaRoutingService
     Task<EscalationLevelConfigDto?> UpdateEscalationLevelAsync(Guid id, UpdateEscalationLevelDto dto, Guid actingUserId, CancellationToken ct = default);
     Task<bool> DeleteEscalationLevelAsync(Guid id, Guid actingUserId, CancellationToken ct = default);
 
-    Task<string> ResolveEffectivePriorityAsync(string? requestedSeverity, string? categoryName, CancellationToken ct = default);
+    Task<PriorityResolution> ResolveEffectivePriorityAsync(Guid? departmentId, string? subCategoryName, string? requestedPriority, CancellationToken ct = default);
+    Task<PriorityResolutionDto> PreviewPriorityAsync(Guid? departmentId, string? subCategoryName, CancellationToken ct = default);
     Task<PrioritySlaRule> GetActivePrioritySlaRuleAsync(string priority, CancellationToken ct = default);
     Task<CaseEscalationStatusDto?> GetCaseEscalationStatusAsync(Guid caseId, CancellationToken ct = default);
     Task<User?> ResolveNextEscalationTargetAsync(Case c, int targetLevel, CancellationToken ct = default);
 }
+
+/// <summary>The priority a case gets and why: the sub-category's configured mapping wins; otherwise the requested one.</summary>
+public sealed record PriorityResolution(string Priority, string Source, Guid? SubCategoryId);

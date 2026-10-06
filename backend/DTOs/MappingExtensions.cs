@@ -95,6 +95,10 @@ public static class MappingExtensions
             FirstResponseStatus = c.FirstResponseStatus,
             EscalationLevel = c.EscalationLevel,
             Description = c.Description,
+            CustomAttributes = c.CustomAttributes
+                .OrderBy(a => a.FieldKey)
+                .Select(a => new CustomerCustomAttributeDto { FieldKey = a.FieldKey, FieldValue = a.FieldValue })
+                .ToList(),
             Disposition = c.Disposition,
             ResolutionNote = c.ResolutionNote,
             Customer = c.Customer != null ? new CustomerSummaryDto
@@ -272,7 +276,9 @@ public static class MappingExtensions
             DepartmentId = u.DepartmentId,
             DepartmentName = u.Department != null ? u.Department.Name : string.Empty,
             Team = u.Team,
-            Queue = u.Queue
+            Queue = u.Queue,
+            ExternalUserId = u.ExternalUserId,
+            IsActive = u.IsActive
         });
     }
 

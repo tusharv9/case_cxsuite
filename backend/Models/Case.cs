@@ -12,7 +12,7 @@ public class Case : AuditableEntity
     public string Description { get; set; } = string.Empty;
     
     public CaseStatus Status { get; set; }
-    public string Severity { get; set; } = "Medium"; // Configurable: see LookupValues (CASE_SEVERITY) / SlaConfigurations
+    public string Severity { get; set; } = string.Empty; // Name of a configured priority (PrioritySlaRules); always set by case creation
     
     public string SourceChannel { get; set; } = "Voice";
     public string PreferredCommunicationChannel { get; set; } = "Phone";
@@ -64,6 +64,7 @@ public class Case : AuditableEntity
     public ICollection<CaseEvent> Events { get; set; } = new List<CaseEvent>();
     public ICollection<CaseParticipant> Participants { get; set; } = new List<CaseParticipant>();
     public ICollection<CaseAttachment> Attachments { get; set; } = new List<CaseAttachment>();
+    public ICollection<CaseCustomAttribute> CustomAttributes { get; set; } = new List<CaseCustomAttribute>();
     
     public ICollection<LinkedCase> LinkedCases { get; set; } = new List<LinkedCase>();
     public ICollection<LinkedCase> LinkedToCases { get; set; } = new List<LinkedCase>();

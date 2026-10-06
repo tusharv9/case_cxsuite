@@ -115,6 +115,9 @@ export function ConfigurableSettingsPage() {
   const [subCategories, setSubCategories] = useState([]);
   const [severities, setSeverities] = useState([]);
   const [channels, setChannels] = useState([]);
+  const [sourceChannels, setSourceChannels] = useState([]);
+  const [newSourceChannelInput, setNewSourceChannelInput] = useState('');
+  const [lookupTypes, setLookupTypes] = useState([]);
   const [quickActions, setQuickActions] = useState([]);
   const [dateRanges, setDateRanges] = useState([]);
   const [caseStatuses, setCaseStatuses] = useState([]);
@@ -583,7 +586,7 @@ export function ConfigurableSettingsPage() {
     const depts = await loadDepartments();
 
     try {
-      const [cts, subs, slaList, chns, qaList, drList, csList, ssList] = await Promise.all([
+      const [cts, subs, slaList, chns, qaList, drList, csList, ssList, srcList, lkTypes] = await Promise.all([
         configurableSettingsService.getCaseTypes(false),
         configurableSettingsService.getSubCategories(null, false),
         configurableSettingsService.getSeverities(),
@@ -592,11 +595,15 @@ export function ConfigurableSettingsPage() {
         configurableSettingsService.getLookupValues('DASHBOARD_DATE_RANGE', true, false),
         configurableSettingsService.getLookupValues('CASE_STATUS', true, false),
         configurableSettingsService.getLookupValues('SLA_STATUS', true, false),
+        configurableSettingsService.getLookupValues('SOURCE_CHANNEL', true, false),
+        configurableSettingsService.getLookupTypes().catch(() => []),
       ]);
       setCaseTypes(cts || []);
       setSubCategories(subs || []);
       setSeverities(slaList || []);
       setChannels(chns || []);
+      setSourceChannels(srcList || []);
+      setLookupTypes(lkTypes || []);
       setQuickActions(qaList || []);
       setDateRanges(drList || []);
       setCaseStatuses(csList || []);
@@ -746,6 +753,7 @@ export function ConfigurableSettingsPage() {
     if (typeCode === 'HOME_BRANCH') setBranches(updated || []);
     if (typeCode === 'ID_TYPE') setIdTypes(updated || []);
     if (typeCode === 'COMMUNICATION_CHANNEL') setChannels(updated || []);
+    if (typeCode === 'SOURCE_CHANNEL') setSourceChannels(updated || []);
     if (typeCode === 'DASHBOARD_QUICK_ACTION') setQuickActions(updated || []);
     if (typeCode === 'DASHBOARD_DATE_RANGE') setDateRanges(updated || []);
     if (typeCode === 'CASE_STATUS') setCaseStatuses(updated || []);
@@ -757,6 +765,7 @@ export function ConfigurableSettingsPage() {
     HOME_BRANCH: branches,
     ID_TYPE: idTypes,
     COMMUNICATION_CHANNEL: channels,
+    SOURCE_CHANNEL: sourceChannels,
     DASHBOARD_QUICK_ACTION: quickActions,
     DASHBOARD_DATE_RANGE: dateRanges,
     CASE_STATUS: caseStatuses,
@@ -1347,7 +1356,9 @@ export function ConfigurableSettingsPage() {
                   <input
                     type="checkbox"
                     className="checkbox-custom"
-                    checked={f.isRequired}
+                    checked={f.isRequired || f.isSystemRequired}
+                    disabled={f.isSystemRequired}
+                    title={f.isSystemRequired ? 'Required by the system: a case or customer cannot be created without it' : undefined}
                     onChange={(e) => handleFieldChange(i, 'isRequired', e.target.checked)}
                   />
                 </td>
@@ -2097,6 +2108,22 @@ export function ConfigurableSettingsPage() {
                   showVisibility: true,
                 })}
 
+                {/* SOURCE CHANNELS */}
+                {renderLookupCard({
+                  title: 'Source Channels',
+                  desc: 'Where a case came from (e.g. Voice, Email). Used by Create Case and the channel filter.',
+                  typeCode: 'SOURCE_CHANNEL',
+                  items: sourceChannels,
+                  input: newSourceChannelInput,
+                  setInput: setNewSourceChannelInput,
+                  placeholder: 'Add source channel (e.g. Walk-in)',
+                  addLabel: 'Add Source',
+                  itemLabel: 'Source channel',
+                  emptyText: 'No source channels configured yet.',
+                  showDelete: false,
+                  showVisibility: true,
+                })}
+
                 {/* SEVERITY MANAGEMENT */}
                 <div className="master-card">
                   <div>
@@ -2420,6 +2447,7 @@ export function ConfigurableSettingsPage() {
         editingField={editingField}
         sectionKey={currentSectionKey}
         existingCount={fields.length}
+        lookupTypes={lookupTypes}
       />
 
       {/* SHARED CONFIRMATION DIALOG (never a browser confirm) */}

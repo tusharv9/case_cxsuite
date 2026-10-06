@@ -9,13 +9,12 @@ import { Loader } from '../../components/common/Loader/Loader.jsx';
 import { customerService } from '../../services/customerService.js';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
 import { formatDate } from '../../utils/dateUtils.js';
-import { createFieldMasker } from '../../utils/maskUtils.js';
 import { CreateCustomerDrawer } from '../../components/drawer/CreateCustomerDrawer/CreateCustomerDrawer.jsx';
 import { ExistingCustomerDrawer } from '../../components/drawer/ExistingCustomerDrawer/ExistingCustomerDrawer.jsx';
 import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import './CustomerDirectoryPage.css';
 
-function CustomerCard({ customer, onClick, mask }) {
+function CustomerCard({ customer, onClick }) {
   const rawIdType = customer.idType ||
     (Array.isArray(customer.customAttributes)
       ? customer.customAttributes.find((a) => a.fieldKey?.toLowerCase() === 'idtype')?.fieldValue
@@ -33,14 +32,14 @@ function CustomerCard({ customer, onClick, mask }) {
     rawIdVal = customer.accountNumber || customer.idValue || '';
   }
 
-  const maskedId = mask ? (mask('idValue', rawIdVal) || mask('nric', rawIdVal) || rawIdVal) : (rawIdVal || '—');
-  const maskedName = mask ? (mask('fullName', customer.fullName) || customer.fullName) : customer.fullName;
-  const maskedPhone = mask ? (mask('phoneNumber', customer.phoneNumber) || customer.phoneNumber) : customer.phoneNumber;
-  const maskedDob = customer.dateOfBirth
-    ? (mask ? mask('dateOfBirth', formatDate(customer.dateOfBirth)) : formatDate(customer.dateOfBirth))
-    : null;
-  const maskedBranch = mask ? (mask('branch', customer.branch) || customer.branch) : customer.branch;
-  const maskedLanguage = mask ? (mask('preferredLanguage', customer.preferredLanguage) || customer.preferredLanguage) : customer.preferredLanguage;
+  // Sensitive values arrive already masked by the server (per the field configuration and the
+  // caller's permissions); this component only displays them.
+  const displayId = rawIdVal || '—';
+  const displayName = customer.fullName;
+  const displayPhone = customer.phoneNumber;
+  const displayDob = customer.dateOfBirth ? formatDate(customer.dateOfBirth) : null;
+  const displayBranch = customer.branch;
+  const displayLanguage = customer.preferredLanguage;
 
   return (
     <div
@@ -53,8 +52,8 @@ function CustomerCard({ customer, onClick, mask }) {
       <div className="customer-card__top">
         <Avatar name={customer.fullName} size="md" />
         <div className="customer-card__name-block">
-          <p className="customer-card__name">{maskedName}</p>
-          <p className="customer-card__nric">{`${idLabel}: ${maskedId}`}</p>
+          <p className="customer-card__name">{displayName}</p>
+          <p className="customer-card__nric">{`${idLabel}: ${displayId}`}</p>
         </div>
         <span className="customer-card__badge">Active</span>
       </div>
@@ -65,25 +64,25 @@ function CustomerCard({ customer, onClick, mask }) {
         {customer.dateOfBirth && (
           <div className="customer-card__detail-row">
             <span className="customer-card__detail-label">DOB</span>
-            <span>{maskedDob}</span>
+            <span>{displayDob}</span>
           </div>
         )}
         {customer.phoneNumber && (
           <div className="customer-card__detail-row">
             <span className="customer-card__detail-label">Phone</span>
-            <span>{maskedPhone}</span>
+            <span>{displayPhone}</span>
           </div>
         )}
         {customer.branch && (
           <div className="customer-card__detail-row">
             <span className="customer-card__detail-label">Branch</span>
-            <span>{maskedBranch}</span>
+            <span>{displayBranch}</span>
           </div>
         )}
         {customer.preferredLanguage && (
           <div className="customer-card__detail-row">
             <span className="customer-card__detail-label">Language</span>
-            <span>{maskedLanguage}</span>
+            <span>{displayLanguage}</span>
           </div>
         )}
         {!customer.phoneNumber && !customer.branch && !customer.preferredLanguage && (
@@ -165,8 +164,6 @@ export function CustomerDirectoryPage() {
 
   const [dbLanguages, setDbLanguages] = useState([]);
   const [dbBranches, setDbBranches] = useState([]);
-  // Sensitive/masking configuration for the values rendered on each customer card
-  const [maskFn, setMaskFn] = useState(() => null);
 
   useEffect(() => {
     async function fetchLookups() {
@@ -181,13 +178,6 @@ export function CustomerDirectoryPage() {
         console.error('Failed to load database filter lookups:', e);
       }
 
-      try {
-        const fields = await configurableSettingsService.getFields('Customer360', null, true);
-        const fn = createFieldMasker(fields || []);
-        setMaskFn(() => fn);
-      } catch (e) {
-        console.error('Failed to load masking configuration:', e);
-      }
     }
     fetchLookups();
   }, []);
@@ -418,7 +408,7 @@ export function CustomerDirectoryPage() {
         ) : (
           <div className="customer-dir-grid">
             {customers.map((c) => (
-              <CustomerCard key={c.id} customer={c} onClick={handleCustomerClick} mask={maskFn} />
+              <CustomerCard key={c.id} customer={c} onClick={handleCustomerClick} />
             ))}
           </div>
         )}

@@ -3,45 +3,37 @@ namespace CaseManagement.Api.Validators;
 using CaseManagement.Api.DTOs;
 using FluentValidation;
 
+/// <summary>
+/// STRUCTURAL checks only — things that are true of an identity document regardless of configuration (an NRIC has
+/// a valid embedded date, a passport is alphanumeric…), applied when a value is present. Whether a field is
+/// required, which dropdown values are valid, lengths and patterns are the administrator's configuration, applied by
+/// the validation engine, not hard-coded here.
+/// </summary>
 public class CreateCustomerDtoValidator : AbstractValidator<CreateCustomerDto>
 {
+    /// <summary>ID types the customer record can currently store (it has a column for each).</summary>
+    public static readonly string[] SupportedIdTypes = { "NRIC Number", "Passport Number", "Account Number" };
+
     public CreateCustomerDtoValidator()
     {
-        RuleFor(x => x.FullName)
-            .NotEmpty().WithMessage("This field is required")
-            .MaximumLength(100);
+        RuleFor(x => x.FullName).MaximumLength(100);
 
         RuleFor(x => x.IdType)
-            .NotEmpty().WithMessage("This field is required")
-            .Must(t => t == "NRIC Number" || t == "Passport Number" || t == "Account Number")
-            .WithMessage("Only NRIC Number, Passport Number, and Account Number are supported.");
+            .Must(t => string.IsNullOrWhiteSpace(t) || SupportedIdTypes.Contains(t.Trim(), StringComparer.OrdinalIgnoreCase))
+            .WithMessage(x => $"ID type '{x.IdType}' is not supported. Supported: {string.Join(", ", SupportedIdTypes)}.");
 
         RuleFor(x => x)
             .Must(HaveValidIdValue)
+            .When(x => !string.IsNullOrWhiteSpace(GetEffectiveIdValue(x)))
             .WithMessage(x => GetIdValidationErrorMessage(x.IdType, GetEffectiveIdValue(x)));
 
         RuleFor(x => x)
             .Must(MatchDateOfBirthWithNric)
             .WithMessage("Date of Birth does not match the date in the NRIC number.");
 
-        RuleFor(x => x.PhoneNumber)
-            .NotEmpty().WithMessage("This field is required")
-            .Must(BeValidMalaysiaPhoneNumber)
-            .WithMessage("Phone number must have 10 digits after the +60 Malaysian country code.");
-
-        RuleFor(x => x.Email)
-            .NotEmpty().WithMessage("This field is required")
-            .EmailAddress().WithMessage("Please enter a valid email address.");
-
         RuleFor(x => x.DateOfBirth)
-            .NotNull().WithMessage("This field is required")
-            .LessThan(DateTime.UtcNow).WithMessage("Date of Birth must be in the past.");
-
-        RuleFor(x => x.Branch)
-            .NotEmpty().WithMessage("This field is required");
-
-        RuleFor(x => x.PreferredLanguage)
-            .NotEmpty().WithMessage("This field is required");
+            .LessThan(DateTime.UtcNow).WithMessage("Date of Birth must be in the past.")
+            .When(x => x.DateOfBirth.HasValue);
     }
 
     private static string GetEffectiveIdValue(CreateCustomerDto dto)
@@ -68,7 +60,7 @@ public class CreateCustomerDtoValidator : AbstractValidator<CreateCustomerDto>
 
     private static bool MatchDateOfBirthWithNric(CreateCustomerDto dto)
     {
-        if (dto.IdType != "NRIC Number" && !dto.IdType.Contains("NRIC")) return true;
+        if (string.IsNullOrWhiteSpace(dto.IdType) || !dto.IdType.Contains("NRIC", StringComparison.OrdinalIgnoreCase)) return true;
         if (!dto.DateOfBirth.HasValue) return true;
 
         var id = GetEffectiveIdValue(dto);
@@ -170,15 +162,17 @@ public class CreateCustomerDtoValidator : AbstractValidator<CreateCustomerDto>
     }
 }
 
+/// <summary>
+/// Sanity limits only. Whether a case field is REQUIRED, how long it may be and what it must match are the
+/// administrator's decisions (field configuration), applied by the validation engine — not fixed here.
+/// </summary>
 public class CreateCaseDtoValidator : AbstractValidator<CreateCaseDto>
 {
     public CreateCaseDtoValidator()
     {
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Description).NotEmpty().MaximumLength(2000);
-        RuleFor(x => x.CustomerId).NotEmpty();
-        // DepartmentId is optional on intake: automatically assigned by RoutingEngine if empty
-        RuleFor(x => x.Severity).NotEmpty().MaximumLength(50);
+        RuleFor(x => x.Title).MaximumLength(500);
+        RuleFor(x => x.Description).MaximumLength(20000);
+        RuleFor(x => x.Severity).MaximumLength(50);
     }
 }
 

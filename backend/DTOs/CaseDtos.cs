@@ -3,7 +3,7 @@ namespace CaseManagement.Api.DTOs;
 public class CreateCustomerDto
 {
     public string FullName { get; set; } = string.Empty;
-    public string IdType { get; set; } = "NRIC Number";
+    public string IdType { get; set; } = string.Empty;
     public string? IdValue { get; set; }
     public string? NRIC { get; set; }
     public string? Passport { get; set; }
@@ -12,7 +12,7 @@ public class CreateCustomerDto
     public string Email { get; set; } = string.Empty;
     public string Branch { get; set; } = string.Empty;
     public string? CustomerSegment { get; set; }
-    public string PreferredLanguage { get; set; } = "Bahasa Malaysia";
+    public string PreferredLanguage { get; set; } = string.Empty;
     public DateTime? DateOfBirth { get; set; }
     public Dictionary<string, string>? CustomAttributes { get; set; }
 }
@@ -24,14 +24,19 @@ public class CreateCaseDto
     public Guid CustomerId { get; set; }
     public Guid DepartmentId { get; set; }
     public string Severity { get; set; } = string.Empty;
-    public int SlaTargetHours { get; set; } = 12;
 
-    public string CaseType { get; set; } = "Complaint";
+    /// <summary>Ignored: SLA targets come from the priority's configured rule, never from the client.</summary>
+    public int SlaTargetHours { get; set; }
+
+    public string CaseType { get; set; } = string.Empty;
     public string? Subcategory { get; set; }
     public string? PreferredLanguage { get; set; }
     public string? SourceChannel { get; set; }
     public string? PreferredCommunicationChannel { get; set; }
     public string? CommunicationChannel { get; set; }
+
+    /// <summary>Values of administrator-defined custom fields on the Create Case form, keyed by field key.</summary>
+    public Dictionary<string, string>? CustomAttributes { get; set; }
 }
 
 public class UpdateCaseStatusDto

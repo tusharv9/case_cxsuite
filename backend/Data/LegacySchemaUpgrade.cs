@@ -485,9 +485,9 @@ public static class LegacySchemaUpgrade
               AND NOT EXISTS (SELECT 1 FROM ""DepartmentSubCategories"" s WHERE s.""Id"" = ""PriorityCategoryMappings"".""DepartmentSubCategoryId"")",
         @"DO $$
         BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_PriorityCategoryMappings_DepartmentSubCategories_DepartmentSubCategoryId') THEN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_PriorityCategoryMappings_DepartmentSubCategories_Department~') THEN
                 ALTER TABLE ""PriorityCategoryMappings""
-                    ADD CONSTRAINT ""FK_PriorityCategoryMappings_DepartmentSubCategories_DepartmentSubCategoryId""
+                    ADD CONSTRAINT ""FK_PriorityCategoryMappings_DepartmentSubCategories_Department~""
                     FOREIGN KEY (""DepartmentSubCategoryId"") REFERENCES ""DepartmentSubCategories"" (""Id"") ON DELETE SET NULL;
             END IF;
         END $$",

@@ -46,6 +46,9 @@ public static class DbSeeder
         new("bootstrap.case-management-settings.v1", SeedKind.Bootstrap, SeedCaseManagementSettings),
         new("bootstrap.case-channels-and-statuses.v1", SeedKind.Bootstrap, EnsureCaseChannelsAndStatuses),
         new("bootstrap.sla-business-hours-escalation.v1", SeedKind.Bootstrap, EnsureSlaAndEscalationMatrix),
+        new("bootstrap.field-metadata.v1", SeedKind.Bootstrap,
+            // ExecuteSqlRaw treats { } as format placeholders; the SQL contains a regex quantifier like {10}.
+            ctx => ctx.Database.ExecuteSqlRaw(FieldMetadataDefaults.ApplySql.Replace("{", "{{").Replace("}", "}}"))),
 
         new("development.users-and-departments.v1", SeedKind.Development, SeedDevUsers),
         new("development.sample-customers.v1", SeedKind.Development, ctx => { SeedPassportCustomer(ctx); SeedAccountNumberCustomer(ctx); }),
@@ -124,6 +127,9 @@ public static class DbSeeder
                 continue;                       // not due in this mode; deliberately NOT recorded
             }
 
+            if (step.Kind == SeedKind.Development)
+                LinkSampleUsersToHostIdentity(context);
+
             context.SeedHistory.Add(new SeedHistoryEntry { Key = step.Key, AppliedAt = DateTime.UtcNow });
             context.SaveChanges();
             context.ChangeTracker.Clear();
@@ -131,6 +137,14 @@ public static class DbSeeder
 
         return report;
     }
+
+    /// <summary>
+    /// Sample users are created without a Host identity. In standalone mode a user is identified by the
+    /// development header, which is matched against <c>ExternalUserId</c>, so each sample user's own id
+    /// becomes their external id. Only touches users that have none.
+    /// </summary>
+    private static void LinkSampleUsersToHostIdentity(AppDbContext context) =>
+        context.Database.ExecuteSqlRaw("UPDATE \"Users\" SET \"ExternalUserId\" = \"Id\"::text WHERE \"ExternalUserId\" IS NULL");
 
     private static void SeedDevUsers(AppDbContext context)
     {
@@ -474,87 +488,7 @@ public static class DbSeeder
                 context.SaveChanges();
             }
 
-            // 3. Seed SlaConfigurations if empty
-            if (!context.SlaConfigurations.Any())
-            {
-                context.SlaConfigurations.AddRange(
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Critical", InternalHours = 2, ExternalHours = 4, FirstResponseMinutes = 30, IsActive = true, CreatedAt = now },
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "High", InternalHours = 6, ExternalHours = 8, FirstResponseMinutes = 60, IsActive = true, CreatedAt = now },
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Medium", InternalHours = 10, ExternalHours = 12, FirstResponseMinutes = 240, IsActive = true, CreatedAt = now },
-                    new SlaConfiguration { Id = Guid.NewGuid(), Severity = "Low", InternalHours = 22, ExternalHours = 24, FirstResponseMinutes = 480, IsActive = true, CreatedAt = now }
-                );
-                context.SaveChanges();
-            }
-
-            // 4. Seed the CASE_SEVERITY master list from the SLA rows, so the severities the
-            //    administrator sees are real configuration rather than a hardcoded array.
-            var severityType = context.LookupTypes.FirstOrDefault(lt => lt.Code == "CASE_SEVERITY");
-            if (severityType == null)
-            {
-                severityType = new LookupType
-                {
-                    Id = Guid.NewGuid(),
-                    Code = "CASE_SEVERITY",
-                    Name = "Case Severity",
-                    Description = "Configurable case severity levels driving SLA Configuration and the Create Case form",
-                    CreatedAt = now
-                };
-                context.LookupTypes.Add(severityType);
-                context.SaveChanges();
-            }
-
-            var defaultSeverities = new[] { "Critical", "High", "Medium", "Low" };
-            var existingSeverities = context.LookupValues
-                .Where(v => v.TypeCode == "CASE_SEVERITY")
-                .Select(v => v.Value)
-                .ToList();
-
-            var missingSeverities = defaultSeverities
-                .Where(sev => !existingSeverities.Contains(sev))
-                .Select((sev, i) => new LookupValue
-                {
-                    Id = Guid.NewGuid(),
-                    LookupTypeId = severityType.Id,
-                    TypeCode = "CASE_SEVERITY",
-                    Value = sev,
-                    Label = sev,
-                    DisplayOrder = Array.IndexOf(defaultSeverities, sev) + 1,
-                    IsActive = true,
-                    CreatedAt = now
-                })
-                .ToList();
-
-            if (missingSeverities.Count > 0)
-            {
-                context.LookupValues.AddRange(missingSeverities);
-                context.SaveChanges();
-                existingSeverities.AddRange(missingSeverities.Select(v => v.Value));
-            }
-
-            // Reconcile: an SLA row without a matching master value would be invisible (and so
-            // unmanageable) on the Severity screen, so it is promoted into the master list.
-            var orphanSlaSeverities = context.SlaConfigurations
-                .Select(x => x.Severity)
-                .ToList()
-                .Where(sev => !existingSeverities.Contains(sev, StringComparer.OrdinalIgnoreCase))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (orphanSlaSeverities.Count > 0)
-            {
-                context.LookupValues.AddRange(orphanSlaSeverities.Select((sev, i) => new LookupValue
-                {
-                    Id = Guid.NewGuid(),
-                    LookupTypeId = severityType.Id,
-                    TypeCode = "CASE_SEVERITY",
-                    Value = sev,
-                    Label = sev,
-                    DisplayOrder = defaultSeverities.Length + i + 1,
-                    IsActive = true,
-                    CreatedAt = now
-                }));
-                context.SaveChanges();
-            }
+            // (Priorities and their SLA targets are seeded as PrioritySlaRules by EnsureSlaAndEscalationMatrix.)
 
             // 5. Seed CaseManagement FieldConfigurations if missing
             var existingCaseFields = context.FieldConfigurations.Where(f => f.ModuleKey == "CaseManagement").ToList();
@@ -761,6 +695,30 @@ public static class DbSeeder
                 context.SaveChanges();
             }
 
+            // 1b. SOURCE_CHANNEL: the channels cases ARRIVE through (distinct from the customer's PREFERRED channel).
+            var sourceType = context.LookupTypes.FirstOrDefault(lt => lt.Code == "SOURCE_CHANNEL");
+            if (sourceType == null)
+            {
+                sourceType = new LookupType
+                {
+                    Id = Guid.NewGuid(),
+                    Code = "SOURCE_CHANNEL",
+                    Name = "Source Channel",
+                    Description = "Channels through which cases arrive (Create Case form and filters)",
+                    CreatedAt = now
+                };
+                context.LookupTypes.Add(sourceType);
+                context.SaveChanges();
+
+                var sourceChannels = new[] { "Voice", "Email", "WhatsApp", "SMS", "Branch", "Web Chat", "Social" };
+                context.LookupValues.AddRange(sourceChannels.Select((ch, i) => new LookupValue
+                {
+                    Id = Guid.NewGuid(), LookupTypeId = sourceType.Id, TypeCode = "SOURCE_CHANNEL",
+                    Value = ch, Label = ch, DisplayOrder = i + 1, IsActive = true, CreatedAt = now
+                }));
+                context.SaveChanges();
+            }
+
             // 2. Ensure LookupValues for CASE_STATUS has Waiting on Customer
             var statusType = context.LookupTypes.FirstOrDefault(lt => lt.Code == "CASE_STATUS");
             if (statusType != null)
@@ -813,9 +771,15 @@ public static class DbSeeder
                         VisibleChars = 4,
                         DisplayOrder = 9,
                         FieldType = "Dropdown",
-                        LookupTypeCode = "COMMUNICATION_CHANNEL",
+                        LookupTypeCode = "SOURCE_CHANNEL",
                         CreatedAt = now
                     });
+                }
+                // Both channel fields are real dropdowns backed by their own configured lists.
+                foreach (var f in existingCreateCaseFields)
+                {
+                    if (f.ApiField == "preferredCommunicationChannel") { f.FieldType = "Dropdown"; f.LookupTypeCode = "COMMUNICATION_CHANNEL"; }
+                    if (f.ApiField == "sourceChannel") { f.FieldType = "Dropdown"; f.LookupTypeCode = "SOURCE_CHANNEL"; }
                 }
                 context.SaveChanges();
             }
@@ -831,28 +795,6 @@ public static class DbSeeder
         try
         {
             var now = DateTime.UtcNow;
-
-            // 1. Backfill SlaConfigurations with FirstResponseMinutes (Critical: 30m, High: 60m, Medium: 240m, Low: 480m)
-            var slaConfigs = context.SlaConfigurations.ToList();
-            bool slasUpdated = false;
-            foreach (var sla in slaConfigs)
-            {
-                int expectedFrMinutes = sla.Severity.ToLower() switch
-                {
-                    "critical" => 30,
-                    "high" => 60,
-                    "medium" => 240,
-                    "low" => 480,
-                    _ => 240
-                };
-
-                if (sla.FirstResponseMinutes <= 0)
-                {
-                    sla.FirstResponseMinutes = expectedFrMinutes;
-                    slasUpdated = true;
-                }
-            }
-            if (slasUpdated) context.SaveChanges();
 
             // 2. Only cases that never had a first-response due date get one. Existing SLA data
             //    (targets, actual response times, statuses) is never rewritten.
@@ -883,6 +825,7 @@ public static class DbSeeder
                 {
                     Id = Guid.NewGuid(),
                     Priority = "Critical",
+                    DisplayOrder = 1,
                     FirstResponseValue = 30,
                     FirstResponseUnit = "Minutes",
                     FirstResponseMinutes = 30,
@@ -900,6 +843,7 @@ public static class DbSeeder
                 {
                     Id = Guid.NewGuid(),
                     Priority = "High",
+                    DisplayOrder = 2,
                     FirstResponseValue = 1,
                     FirstResponseUnit = "Hours",
                     FirstResponseMinutes = 60,
@@ -917,6 +861,7 @@ public static class DbSeeder
                 {
                     Id = Guid.NewGuid(),
                     Priority = "Medium",
+                    DisplayOrder = 3,
                     FirstResponseValue = 4,
                     FirstResponseUnit = "Hours",
                     FirstResponseMinutes = 240,
@@ -934,6 +879,7 @@ public static class DbSeeder
                 {
                     Id = Guid.NewGuid(),
                     Priority = "Low",
+                    DisplayOrder = 4,
                     FirstResponseValue = 8,
                     FirstResponseUnit = "Hours",
                     FirstResponseMinutes = 480,
@@ -1135,19 +1081,16 @@ public static class DbSeeder
             foreach (var (cat, r) in categoryMappings)
             {
                 if (r == null) continue;
-                if (!context.PriorityCategoryMappings.Any(m => m.CategoryName == cat))
+                var subCategory = context.DepartmentSubCategories.FirstOrDefault(s => s.Name == cat);
+                if (subCategory == null || context.PriorityCategoryMappings.Any(m => m.DepartmentSubCategoryId == subCategory.Id)) continue;
+
+                context.PriorityCategoryMappings.Add(new PriorityCategoryMapping
                 {
-                    var subCat = context.DepartmentSubCategories.FirstOrDefault(s => s.Name == cat);
-                    context.PriorityCategoryMappings.Add(new PriorityCategoryMapping
-                    {
-                        Id = Guid.NewGuid(),
-                        PrioritySlaRuleId = r.Id,
-                        Priority = r.Priority,
-                        CategoryName = cat,
-                        DepartmentSubCategoryId = subCat?.Id,
-                        CreatedAt = now
-                    });
-                }
+                    Id = Guid.NewGuid(),
+                    PrioritySlaRuleId = r.Id,
+                    DepartmentSubCategoryId = subCategory.Id,
+                    CreatedAt = now
+                });
             }
             context.SaveChanges();
         }

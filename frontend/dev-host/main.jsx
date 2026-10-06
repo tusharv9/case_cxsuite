@@ -1,13 +1,16 @@
 // Minimal stand-in for the real Host App. Its only job is to prove that Case Management can be
 // loaded through Module Federation and mounted under a Host-owned router with Host-provided
-// props. It owns NO users or login — the "user" below is a fixed fake handed to the Remote the
-// same way the real Host will.
+// identity. It owns NO users or login: the "session" is just a token pasted into localStorage,
+// handed to the Remote through getAccessToken() exactly the way the real Host will.
+//
+//   localStorage['dev-host-token']  the bearer token to present (see HOST_INTEGRATION.md)
+//   localStorage['dev-host-api']    backend base URL (optional)
 
 import { useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 
-const fakeHostUser = { id: 'host-user-1', name: 'Dev Host User', email: 'dev@host.local', roles: ['Supervisor'] };
+const read = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
 
 // This is the entire Host-side integration: a div, and a call to the Remote's mount().
 function CaseManagementHost() {
@@ -21,9 +24,9 @@ function CaseManagementHost() {
       if (cancelled) return;
       handle = mount(containerRef.current, {
         basename: '/cases',
-        currentUser: fakeHostUser,
-        permissions: ['cases.read', 'cases.write'],
-        getAccessToken: () => 'dev-host-token',
+        getAccessToken: () => read('dev-host-token'),
+        onUnauthorized: () => console.warn('[dev-host] Case Management reported 401 — the Host would refresh the token or sign out here.'),
+        apiBaseUrl: read('dev-host-api') || undefined,
         locale: 'en-MY',
         timezone: 'Asia/Kuala_Lumpur',
       });

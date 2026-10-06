@@ -1,11 +1,13 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/team-monitoring")]
+[RequirePermission(Permissions.MonitoringView)]
 public class TeamMonitoringController : BaseApiController
 {
     private readonly ITeamMonitoringService _monitoringService;
@@ -44,6 +46,7 @@ public class TeamMonitoringController : BaseApiController
     }
 
     [HttpPost("nudge/{agentId:guid}")]
+    [RequirePermission(Permissions.MonitoringNudge)]
     public async Task<IActionResult> NudgeAgent(Guid agentId, [FromBody] NudgeAgentDto? dto, CancellationToken ct)
     {
         await _monitoringService.NudgeAgentAsync(agentId, dto?.Reason, CurrentUserId, ct);

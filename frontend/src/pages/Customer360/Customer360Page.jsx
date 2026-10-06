@@ -13,7 +13,6 @@ import { Skeleton } from '../../components/common/Skeleton/Skeleton.jsx';
 import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import { useCustomer } from '../../hooks/useCustomer.js';
 import { formatDate } from '../../utils/dateUtils.js';
-import { createFieldMasker } from '../../utils/maskUtils.js';
 import { customerService } from '../../services/customerService.js';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
 import { ProductHoldingCards } from '../../components/customer360/ProductHoldingCards/ProductHoldingCards.jsx';
@@ -37,38 +36,8 @@ function OverviewTab({ customer }) {
   );
 }
 
-/**
- * Masks customer values according to the Sensitive / Masking Rule / Visible Chars settings
- * configured for the Customer 360 "Existing Customer" section. Falls back to raw value when
- * nothing is configured.
- */
-function useCustomerFieldMasker() {
-  const [masker, setMasker] = useState(() => (apiField, val) => (val === null || val === undefined ? '' : String(val)));
-
-  useEffect(() => {
-    let active = true;
-    configurableSettingsService
-      .getFields('Customer360', null, true)
-      .then((fields) => {
-        if (!active) return;
-        const fn = createFieldMasker(fields || []);
-        setMasker(() => fn);
-      })
-      .catch(() => {
-        /* fallback to raw value */
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return masker;
-}
-
 // ---- Customer Profile Panel ----
 function ProfilePanel({ customer }) {
-  const mask = useCustomerFieldMasker();
-
   const rawIdType = customer?.idType ||
     (Array.isArray(customer?.customAttributes)
       ? customer.customAttributes.find((a) => a.fieldKey?.toLowerCase() === 'idtype')?.fieldValue
@@ -86,14 +55,15 @@ function ProfilePanel({ customer }) {
     rawIdVal = customer?.accountNumber || customer?.idValue || '';
   }
 
-  const maskedId = mask('idValue', rawIdVal) || mask('nric', rawIdVal) || rawIdVal || '—';
-  const maskedPhone = mask('phoneNumber', customer?.phoneNumber) || customer?.phoneNumber || '—';
-  const maskedEmail = mask('email', customer?.email) || customer?.email || '—';
-  const maskedBranch = mask('branch', customer?.branch) || customer?.branch || '—';
-  const maskedLanguage = mask('preferredLanguage', customer?.preferredLanguage) || customer?.preferredLanguage || '—';
+  // Sensitive values arrive already masked by the server; this page only displays them.
+  const maskedId = rawIdVal || '—';
+  const maskedPhone = customer?.phoneNumber || '—';
+  const maskedEmail = customer?.email || '—';
+  const maskedBranch = customer?.branch || '—';
+  const maskedLanguage = customer?.preferredLanguage || '—';
 
   const formattedDob = customer?.dateOfBirth ? formatDate(customer.dateOfBirth) : '—';
-  const maskedDob = customer?.dateOfBirth ? mask('dateOfBirth', formattedDob) : '—';
+  const maskedDob = customer?.dateOfBirth ? formattedDob : '—';
 
   const formatAttributeLabel = (key) => {
     if (!key) return '';
@@ -108,7 +78,7 @@ function ProfilePanel({ customer }) {
         <div className="profile-card__top">
           <Avatar name={customer?.fullName || 'Customer'} size="xl" />
           <div>
-            <p className="profile-card__name">{mask('fullName', customer?.fullName) || customer?.fullName}</p>
+            <p className="profile-card__name">{customer?.fullName}</p>
             <p className="profile-card__nric">{idLabel}: {maskedId}</p>
           </div>
         </div>
@@ -142,7 +112,7 @@ function ProfilePanel({ customer }) {
                 .map((attr) => (
                   <div key={attr.fieldKey || attr.id} className="profile-info-row">
                     <span className="profile-info-row__label">{formatAttributeLabel(attr.fieldKey)}</span>
-                    <span className="profile-info-row__value">{mask(attr.fieldKey, attr.fieldValue) || attr.fieldValue}</span>
+                    <span className="profile-info-row__value">{attr.fieldValue}</span>
                   </div>
                 ))
             : customer?.customAttributes &&
@@ -151,7 +121,7 @@ function ProfilePanel({ customer }) {
                 .map(([key, val]) => (
                   <div key={key} className="profile-info-row">
                     <span className="profile-info-row__label">{formatAttributeLabel(key)}</span>
-                    <span className="profile-info-row__value">{mask(key, val) || val}</span>
+                    <span className="profile-info-row__value">{val}</span>
                   </div>
                 ))}
         </div>

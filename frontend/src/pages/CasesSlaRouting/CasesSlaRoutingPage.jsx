@@ -234,21 +234,24 @@ export function CasesSlaRoutingPage() {
   }, [pristineState, priorityRules, businessHours, escalationLevels]);
 
   // Validation: Check category collisions across priorities
+  const categoryLabel = (id) => {
+    const c = availableCategories.find((x) => x.id === id);
+    return c ? `${c.name} (${c.departmentName || 'General'})` : String(id);
+  };
+
+  const allApplied = useMemo(() => new Set(priorityRules.flatMap(r => r.appliedSubCategoryIds || [])), [priorityRules]);
+
   const categoryCollisions = useMemo(() => {
-    const seen = new Map();
+    const seen = new Set();
     const duplicates = new Set();
     priorityRules.forEach(rule => {
-      (rule.appliedCategories || []).forEach(cat => {
-        const lower = cat.toLowerCase();
-        if (seen.has(lower)) {
-          duplicates.add(cat);
-        } else {
-          seen.set(lower, rule.priority);
-        }
+      (rule.appliedSubCategoryIds || []).forEach(id => {
+        if (seen.has(id)) duplicates.add(id);
+        else seen.add(id);
       });
     });
-    return Array.from(duplicates);
-  }, [priorityRules]);
+    return Array.from(duplicates).map(categoryLabel);
+  }, [priorityRules, availableCategories]);
 
   // Business Hours Validation (Check start time < end time for enabled days)
   const businessHoursError = useMemo(() => {
@@ -293,6 +296,7 @@ export function CasesSlaRoutingPage() {
 
     const payload = {
       priorityRules: priorityRules.map(r => ({
+        id: r.id,
         priority: r.priority,
         firstResponseValue: parseInt(r.firstResponseValue, 10) || 1,
         firstResponseUnit: r.firstResponseUnit || 'Hours',
@@ -300,7 +304,7 @@ export function CasesSlaRoutingPage() {
         internalResolutionUnit: r.internalResolutionUnit || 'Hours',
         externalResolutionValue: parseInt(r.externalResolutionValue, 10) || 1,
         externalResolutionUnit: r.externalResolutionUnit || 'Hours',
-        appliedCategories: r.appliedCategories || []
+        appliedSubCategoryIds: r.appliedSubCategoryIds || []
       })),
       businessHours: businessHours.map(b => ({
         dayOfWeek: b.dayOfWeek,
@@ -357,25 +361,25 @@ export function CasesSlaRoutingPage() {
     }));
   }
 
-  function handleAddCategoryToPriority(priority, categoryName) {
-    if (!categoryName) return;
+  function handleAddCategoryToPriority(priority, categoryId) {
+    if (!categoryId) return;
     setPriorityRules(prev => prev.map(r => {
       if (r.priority === priority) {
-        const existing = r.appliedCategories || [];
-        if (!existing.includes(categoryName)) {
-          return { ...r, appliedCategories: [...existing, categoryName] };
+        const existing = r.appliedSubCategoryIds || [];
+        if (!existing.includes(categoryId)) {
+          return { ...r, appliedSubCategoryIds: [...existing, categoryId] };
         }
       }
       return r;
     }));
   }
 
-  function handleRemoveCategoryFromPriority(priority, categoryName) {
+  function handleRemoveCategoryFromPriority(priority, categoryId) {
     setPriorityRules(prev => prev.map(r => {
       if (r.priority === priority) {
         return {
           ...r,
-          appliedCategories: (r.appliedCategories || []).filter(c => c !== categoryName)
+          appliedSubCategoryIds: (r.appliedSubCategoryIds || []).filter(c => c !== categoryId)
         };
       }
       return r;
@@ -828,13 +832,14 @@ export function CasesSlaRoutingPage() {
                 </thead>
                 <tbody>
                   {priorityRules.map(rule => {
-                    const badgeClass = `sla-priority-badge--${rule.priority.toLowerCase()}`;
+                    const slug = String(rule.priority).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+                    const badgeClass = `sla-priority-badge--${slug}`;
                     const unassignedCategories = availableCategories.filter(
-                      c => !(rule.appliedCategories || []).includes(c.name)
+                      c => c.isActive !== false && !allApplied.has(c.id)
                     );
 
                     return (
-                      <tr key={rule.priority} className="sla-matrix-row">
+                      <tr key={rule.id || rule.priority} className="sla-matrix-row">
                         <td>
                           <div className={`sla-priority-badge ${badgeClass}`}>
                             <span>{rule.priority}</span>
@@ -847,12 +852,12 @@ export function CasesSlaRoutingPage() {
                             <input
                               type="number"
                               min="1"
-                              id={`input-fr-val-${rule.priority.toLowerCase()}`}
+                              id={`input-fr-val-${slug}`}
                               value={rule.firstResponseValue}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'firstResponseValue', e.target.value)}
                             />
                             <select
-                              id={`select-fr-unit-${rule.priority.toLowerCase()}`}
+                              id={`select-fr-unit-${slug}`}
                               value={rule.firstResponseUnit}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'firstResponseUnit', e.target.value)}
                             >
@@ -868,12 +873,12 @@ export function CasesSlaRoutingPage() {
                             <input
                               type="number"
                               min="1"
-                              id={`input-int-val-${rule.priority.toLowerCase()}`}
+                              id={`input-int-val-${slug}`}
                               value={rule.internalResolutionValue}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'internalResolutionValue', e.target.value)}
                             />
                             <select
-                              id={`select-int-unit-${rule.priority.toLowerCase()}`}
+                              id={`select-int-unit-${slug}`}
                               value={rule.internalResolutionUnit}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'internalResolutionUnit', e.target.value)}
                             >
@@ -889,12 +894,12 @@ export function CasesSlaRoutingPage() {
                             <input
                               type="number"
                               min="1"
-                              id={`input-ext-val-${rule.priority.toLowerCase()}`}
+                              id={`input-ext-val-${slug}`}
                               value={rule.externalResolutionValue}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'externalResolutionValue', e.target.value)}
                             />
                             <select
-                              id={`select-ext-unit-${rule.priority.toLowerCase()}`}
+                              id={`select-ext-unit-${slug}`}
                               value={rule.externalResolutionUnit}
                               onChange={(e) => handlePriorityFieldChange(rule.priority, 'externalResolutionUnit', e.target.value)}
                             >
@@ -907,14 +912,14 @@ export function CasesSlaRoutingPage() {
                         {/* Applied Categories */}
                         <td className="sla-categories-cell">
                           <div className="sla-category-tags">
-                            {(rule.appliedCategories || []).map(catName => (
-                              <span key={catName} className="sla-cat-pill">
-                                <span>{catName}</span>
+                            {(rule.appliedSubCategoryIds || []).map(catId => (
+                              <span key={catId} className="sla-cat-pill">
+                                <span>{categoryLabel(catId)}</span>
                                 <button
                                   type="button"
                                   className="sla-cat-pill__remove"
-                                  onClick={() => handleRemoveCategoryFromPriority(rule.priority, catName)}
-                                  title={`Remove ${catName}`}
+                                  onClick={() => handleRemoveCategoryFromPriority(rule.priority, catId)}
+                                  title={`Remove ${categoryLabel(catId)}`}
                                 >
                                   <X size={12} />
                                 </button>
@@ -932,7 +937,7 @@ export function CasesSlaRoutingPage() {
                             >
                               <option value="" disabled>+ Add Category…</option>
                               {unassignedCategories.map(cat => (
-                                <option key={cat.id || cat.name} value={cat.name}>
+                                <option key={cat.id} value={cat.id}>
                                   {cat.name} ({cat.departmentName || 'General'})
                                 </option>
                               ))}

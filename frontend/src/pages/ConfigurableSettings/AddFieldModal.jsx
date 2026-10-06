@@ -17,6 +17,8 @@ export function AddFieldModal({
   existingCount = 0,
   /** When supplied the drawer edits this field instead of creating a new one. */
   editingField = null,
+  /** Configured lists a dropdown field can be bound to: [{ code, name }]. */
+  lookupTypes = [],
 }) {
   const isEditMode = Boolean(editingField);
 
@@ -34,6 +36,10 @@ export function AddFieldModal({
             visibleChars: editingField.visibleChars ?? 4,
             displayOrder: editingField.displayOrder ?? 0,
             lookupTypeCode: editingField.lookupTypeCode || '',
+            validationRegex: editingField.validationRegex || '',
+            validationMessage: editingField.validationMessage || '',
+            minLength: editingField.minLength ?? '',
+            maxLength: editingField.maxLength ?? '',
           }
         : {
             displayLabel: '',
@@ -46,6 +52,10 @@ export function AddFieldModal({
             visibleChars: 4,
             displayOrder: existingCount ? existingCount + 1 : 10,
             lookupTypeCode: '',
+            validationRegex: '',
+            validationMessage: '',
+            minLength: '',
+            maxLength: '',
           },
     [editingField, existingCount]
   );
@@ -100,6 +110,15 @@ export function AddFieldModal({
     const chars = Number(form.visibleChars);
     if (Number.isNaN(chars) || chars < 0) nextErrors.visibleChars = 'Visible characters must be 0 or greater.';
 
+    const minL = form.minLength === '' ? null : Number(form.minLength);
+    const maxL = form.maxLength === '' ? null : Number(form.maxLength);
+    if (minL !== null && (Number.isNaN(minL) || minL < 0)) nextErrors.minLength = 'Minimum length must be 0 or greater.';
+    if (maxL !== null && (Number.isNaN(maxL) || maxL < 1)) nextErrors.maxLength = 'Maximum length must be 1 or greater.';
+    if (minL !== null && maxL !== null && minL > maxL) nextErrors.maxLength = 'Maximum length cannot be below the minimum.';
+    if (form.validationRegex.trim()) {
+      try { new RegExp(form.validationRegex.trim()); } catch { nextErrors.validationRegex = 'This is not a valid regular expression.'; }
+    }
+
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
       return;
@@ -117,6 +136,10 @@ export function AddFieldModal({
       visibleChars: chars,
       displayOrder: order,
       lookupTypeCode: form.fieldType === 'Dropdown' ? form.lookupTypeCode || null : null,
+      validationRegex: form.validationRegex.trim() || null,
+      validationMessage: form.validationMessage.trim() || null,
+      minLength: minL,
+      maxLength: maxL,
     };
 
     const handler = onAdd || onSave;
@@ -186,10 +209,9 @@ export function AddFieldModal({
           {form.fieldType === 'Dropdown' && (
             <Select label="Master Lookup Code (Optional)" value={form.lookupTypeCode} onChange={set('lookupTypeCode')}>
               <option value="">-- Select Master Lookup --</option>
-              <option value="PREFERRED_LANGUAGE">PREFERRED_LANGUAGE</option>
-              <option value="HOME_BRANCH">HOME_BRANCH</option>
-              <option value="ID_TYPE">ID_TYPE</option>
-              <option value="COMMUNICATION_CHANNEL">COMMUNICATION_CHANNEL</option>
+              {lookupTypes.map((t) => (
+                <option key={t.code} value={t.code}>{t.name || t.code} ({t.code})</option>
+              ))}
             </Select>
           )}
 
@@ -220,6 +242,25 @@ export function AddFieldModal({
             disabled={form.maskingRule === 'None'}
           />
 
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <Input label="Minimum Length" type="number" min={0} value={form.minLength} onChange={set('minLength')} error={errors.minLength} />
+            <Input label="Maximum Length" type="number" min={1} value={form.maxLength} onChange={set('maxLength')} error={errors.maxLength} />
+          </div>
+
+          <Input
+            label="Validation Pattern (regular expression, optional)"
+            placeholder="e.g. ^[A-Z]{2}\d{6}$"
+            value={form.validationRegex}
+            onChange={set('validationRegex')}
+            error={errors.validationRegex}
+          />
+          <Input
+            label="Message shown when the pattern does not match"
+            placeholder="e.g. Use two letters followed by six digits"
+            value={form.validationMessage}
+            onChange={set('validationMessage')}
+          />
+
           <div className="drawer-field-options-group">
             <label className="form-label" style={{ marginBottom: 8, display: 'block' }}>Field Permissions &amp; Visibility</label>
             <div className="drawer-checkbox-grid">
@@ -229,8 +270,9 @@ export function AddFieldModal({
                 onChange={set('isVisible')}
               />
               <Checkbox
-                label="Required"
-                checked={form.isRequired}
+                label={editingField?.isSystemRequired ? 'Required (system)' : 'Required'}
+                disabled={Boolean(editingField?.isSystemRequired)}
+                checked={form.isRequired || Boolean(editingField?.isSystemRequired)}
                 onChange={set('isRequired')}
               />
               <Checkbox

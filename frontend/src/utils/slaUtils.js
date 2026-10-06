@@ -1,26 +1,13 @@
 // ===== SLA UTILS =====
 
-import { SEVERITY_SLA_MAPPING } from '../constants/index.js';
-
 /**
- * Get SLA configuration based on severity
+ * SLA targets of a case. The target is the snapshot the server took from the priority's configured rule when the
+ * case was created (case.slaTargetHours); nothing here is hard-coded per priority. (Internal-target modelling moves
+ * server-side with the SLA engine phase.)
  */
-export function getSlaConfig(severity, customExternalHours) {
-  // Prioritize server-provided SLA target hours if present
-  if (customExternalHours !== undefined && customExternalHours !== null && Number(customExternalHours) > 0) {
-    const hours = Number(customExternalHours);
-    return { externalHours: hours, internalHours: Math.max(1, hours - 2) };
-  }
-
-  const normalized = severity ? (severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase()) : 'Low';
-  const mapping = SEVERITY_SLA_MAPPING[normalized] || SEVERITY_SLA_MAPPING[severity];
-
-  if (!mapping) {
-    const externalHours = customExternalHours > 0 ? customExternalHours : (SEVERITY_SLA_MAPPING.Low?.external || 24);
-    return { externalHours, internalHours: Math.max(1, externalHours - 2) };
-  }
-
-  return { externalHours: mapping.external, internalHours: mapping.internal };
+export function getSlaConfig(_severity, targetHours) {
+  const externalHours = Number(targetHours) > 0 ? Number(targetHours) : 0;
+  return { externalHours, internalHours: externalHours > 0 ? Math.max(1, externalHours - 2) : 0 };
 }
 
 /**

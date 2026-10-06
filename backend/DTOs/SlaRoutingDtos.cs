@@ -6,7 +6,9 @@ using System.Collections.Generic;
 public class PrioritySlaRuleDto
 {
     public Guid Id { get; set; }
-    public string Priority { get; set; } = string.Empty; // "Critical" | "High" | "Medium" | "Low"
+    public string Priority { get; set; } = string.Empty; // administrator-defined name
+    public int DisplayOrder { get; set; }
+    public bool IsActive { get; set; } = true;
 
     public int FirstResponseValue { get; set; }
     public string FirstResponseUnit { get; set; } = "Minutes"; // "Minutes" | "Hours"
@@ -20,7 +22,8 @@ public class PrioritySlaRuleDto
     public string ExternalResolutionUnit { get; set; } = "Hours"; // "Minutes" | "Hours"
     public int ExternalResolutionMinutes { get; set; }
 
-    public List<string> AppliedCategories { get; set; } = new();
+    /// <summary>Sub-categories (by id) whose cases get this priority.</summary>
+    public List<Guid> AppliedSubCategoryIds { get; set; } = new();
 }
 
 public class BusinessHourDto
@@ -96,7 +99,21 @@ public class CategoryOptionDto
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public Guid DepartmentId { get; set; }
     public string DepartmentName { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>What priority a new case in a department/sub-category would get, for the Create Case form.</summary>
+public class PriorityResolutionDto
+{
+    /// <summary>True when the sub-category has a configured priority (the user cannot override it).</summary>
+    public bool IsMapped { get; set; }
+    public string? Priority { get; set; }
+    public Guid? SubCategoryId { get; set; }
+    public int? InternalHours { get; set; }
+    public int? ExternalHours { get; set; }
+    public int? FirstResponseMinutes { get; set; }
 }
 
 public class UserOptionDto

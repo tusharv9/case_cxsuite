@@ -14,9 +14,8 @@ public enum CaseStatus
     Cancelled
 }
 
-// Case severity is no longer a compiled-in enum: it is administrator-configurable master data
-// (LookupValues with TypeCode CASE_SEVERITY, paired with a row in SlaConfigurations), so
-// Case.Severity is stored as the configured name.
+// Case priority ("severity") is not an enum: it is administrator-configured master data (PrioritySlaRules),
+// and Case.Severity stores the configured name.
 
 public enum EventType
 {

@@ -10,11 +10,10 @@ import { useCases } from '../../hooks/useCases.js';
 import { useCaseListPage } from '../../hooks/useCaseListPage.js';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue.js';
 import { ErrorState, Loader } from '../../components/common/Loader/Loader.jsx';
+import { configurableSettingsService } from '../../services/configurableSettingsService.js';
 import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import {
   STATUS_FILTER_OPTIONS,
-  PRIORITY_FILTER_OPTIONS,
-  CHANNEL_FILTER_OPTIONS,
   CASE_LIST_DEFAULT_PAGE_SIZE,
   CASE_LIST_PAGE_SIZE_OPTIONS,
 } from '../../constants/index.js';
@@ -94,6 +93,26 @@ export function CaseManagementPage() {
 
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'board'
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+
+  // Priority and channel filter options come from configuration (never a hard-coded list).
+  const [priorityOptions, setPriorityOptions] = useState([{ value: 'all', label: 'All priorities' }]);
+  const [channelOptions, setChannelOptions] = useState([{ value: 'all', label: 'All channels' }]);
+  useEffect(() => {
+    let live = true;
+    configurableSettingsService.getSeverities()
+      .then((list) => live && setPriorityOptions([
+        { value: 'all', label: 'All priorities' },
+        ...[...(list || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)).map((p) => ({ value: p.name, label: p.name })),
+      ]))
+      .catch(() => {});
+    configurableSettingsService.getLookupValues('SOURCE_CHANNEL')
+      .then((list) => live && setChannelOptions([
+        { value: 'all', label: 'All channels' },
+        ...(list || []).map((c) => ({ value: c.value, label: c.label || c.value })),
+      ]))
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -261,7 +280,7 @@ export function CaseManagementPage() {
           <FilterDropdown
             label="All priorities"
             value={selectedPriorityFilter}
-            options={PRIORITY_FILTER_OPTIONS}
+            options={priorityOptions}
             onChange={setSelectedPriorityFilter}
           />
 
@@ -269,7 +288,7 @@ export function CaseManagementPage() {
           <FilterDropdown
             label="All channels"
             value={selectedChannelFilter}
-            options={CHANNEL_FILTER_OPTIONS}
+            options={channelOptions}
             onChange={setSelectedChannelFilter}
           />
 

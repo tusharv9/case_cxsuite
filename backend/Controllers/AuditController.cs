@@ -1,10 +1,12 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/[controller]")]
+[RequirePermission(Permissions.AuditView)]
 public class AuditController : BaseApiController
 {
     private readonly ICaseService _caseService;

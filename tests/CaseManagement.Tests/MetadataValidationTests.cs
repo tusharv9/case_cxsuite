@@ -15,6 +15,10 @@ namespace CaseManagement.Tests;
 
 public class MetadataValidationTests
 {
+    private static IFieldValidationEngine NewEngine(AppDbContext db) =>
+        new FieldValidationEngine(db, new ConfigCache(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions())),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<FieldValidationEngine>.Instance);
+
     private AppDbContext CreateInMemoryDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -47,6 +51,7 @@ public class MetadataValidationTests
         };
         db.Customers.Add(cust);
         db.Departments.Add(dept);
+        db.CaseTypeConfigs.Add(new CaseTypeConfig { Id = Guid.NewGuid(), Code = "Inquiry", Name = "Inquiry", Prefix = "I-", IsActive = true, CreatedAt = DateTime.UtcNow });
         db.DepartmentSubCategories.Add(subcat);
         await db.SaveChangesAsync();
         return (cust, dept, subcat.Name);
@@ -78,7 +83,8 @@ public class MetadataValidationTests
             new Mock<INotificationService>().Object,
             new Mock<IConfigurableSettingsService>().Object,
             db,
-            mockEnv.Object
+            mockEnv.Object,
+            fieldValidation: NewEngine(db)
         );
 
         var dto = new CreateCaseDto
@@ -94,7 +100,7 @@ public class MetadataValidationTests
             Description = "" // Empty description when required
         };
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
+        var ex = await Assert.ThrowsAnyAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
         Assert.Contains("Description is required", ex.Message);
     }
 
@@ -125,7 +131,8 @@ public class MetadataValidationTests
             new Mock<INotificationService>().Object,
             new Mock<IConfigurableSettingsService>().Object,
             db,
-            mockEnv.Object
+            mockEnv.Object,
+            fieldValidation: NewEngine(db)
         );
 
         var dto = new CreateCaseDto
@@ -141,7 +148,7 @@ public class MetadataValidationTests
             Description = "A valid description for this test case."
         };
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
+        var ex = await Assert.ThrowsAnyAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
         Assert.Contains("must be at least 10 characters", ex.Message);
     }
 
@@ -171,7 +178,8 @@ public class MetadataValidationTests
             new Mock<INotificationService>().Object,
             new Mock<IConfigurableSettingsService>().Object,
             db,
-            mockEnv.Object
+            mockEnv.Object,
+            fieldValidation: NewEngine(db)
         );
 
         var dto = new CreateCaseDto
@@ -187,7 +195,7 @@ public class MetadataValidationTests
             Description = "Valid description here."
         };
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
+        var ex = await Assert.ThrowsAnyAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
         Assert.Contains("format is invalid", ex.Message);
     }
 
@@ -203,7 +211,8 @@ public class MetadataValidationTests
             new Mock<INotificationService>().Object,
             new Mock<IConfigurableSettingsService>().Object,
             db,
-            mockEnv.Object
+            mockEnv.Object,
+            fieldValidation: NewEngine(db)
         );
 
         var dto = new CreateCaseDto
@@ -214,7 +223,7 @@ public class MetadataValidationTests
             Description = "Valid Description"
         };
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
+        var ex = await Assert.ThrowsAnyAsync<ArgumentException>(() => service.ValidateCreateCaseMetadataAsync(dto));
         Assert.Contains("customer", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

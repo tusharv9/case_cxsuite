@@ -1,5 +1,6 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.Models;
 using CaseManagement.Api.Data;
 using CaseManagement.Api.Services;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 [ApiController]
 [Route("api/[controller]")]
+[RequirePermission(null, Permissions.ConfigManage)]
 public class DepartmentsController : BaseApiController
 {
     private readonly IDepartmentService _departmentService;

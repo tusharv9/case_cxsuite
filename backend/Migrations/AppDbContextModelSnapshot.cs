@@ -419,6 +419,37 @@ namespace CaseManagement.Api.Migrations
                     b.ToTable("CaseCollaborationActivities");
                 });
 
+            modelBuilder.Entity("CaseManagement.Api.Models.CaseCustomAttribute", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FieldKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FieldValue")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CaseId", "FieldKey")
+                        .IsUnique();
+
+                    b.ToTable("CaseCustomAttributes");
+                });
+
             modelBuilder.Entity("CaseManagement.Api.Models.CaseEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -822,6 +853,9 @@ namespace CaseManagement.Api.Migrations
                     b.Property<bool>("IsSensitive")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsSystemRequired")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsVisible")
                         .HasColumnType("boolean");
 
@@ -848,6 +882,9 @@ namespace CaseManagement.Api.Migrations
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ValidationMessage")
+                        .HasColumnType("text");
 
                     b.Property<string>("ValidationRegex")
                         .HasColumnType("text");
@@ -1017,19 +1054,11 @@ namespace CaseManagement.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("CategoryName")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid?>("DepartmentSubCategoryId")
+                    b.Property<Guid>("DepartmentSubCategoryId")
                         .HasColumnType("uuid");
-
-                    b.Property<string>("Priority")
-                        .IsRequired()
-                        .HasColumnType("text");
 
                     b.Property<Guid>("PrioritySlaRuleId")
                         .HasColumnType("uuid");
@@ -1039,10 +1068,8 @@ namespace CaseManagement.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CategoryName")
+                    b.HasIndex("DepartmentSubCategoryId")
                         .IsUnique();
-
-                    b.HasIndex("DepartmentSubCategoryId");
 
                     b.HasIndex("PrioritySlaRuleId");
 
@@ -1057,6 +1084,9 @@ namespace CaseManagement.Api.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
 
                     b.Property<int>("ExternalResolutionMinutes")
                         .HasColumnType("integer");
@@ -1087,6 +1117,9 @@ namespace CaseManagement.Api.Migrations
 
                     b.Property<int>("InternalResolutionValue")
                         .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Priority")
                         .IsRequired()
@@ -1199,42 +1232,6 @@ namespace CaseManagement.Api.Migrations
                     b.ToTable("SeedHistory", (string)null);
                 });
 
-            modelBuilder.Entity("CaseManagement.Api.Models.SlaConfiguration", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("ExternalHours")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("FirstResponseMinutes")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("InternalHours")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Severity")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Severity")
-                        .IsUnique();
-
-                    b.ToTable("SlaConfigurations");
-                });
-
             modelBuilder.Entity("CaseManagement.Api.Models.TeamAssignmentPointer", b =>
                 {
                     b.Property<Guid>("DepartmentId")
@@ -1304,12 +1301,21 @@ namespace CaseManagement.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("DepartmentId")
+                    b.Property<Guid?>("DepartmentId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("ExternalUserId")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastSyncedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1338,6 +1344,10 @@ namespace CaseManagement.Api.Migrations
 
                     b.HasIndex("Email")
                         .IsUnique();
+
+                    b.HasIndex("ExternalUserId")
+                        .IsUnique()
+                        .HasFilter("\"ExternalUserId\" IS NOT NULL");
 
                     b.ToTable("Users");
                 });
@@ -1475,6 +1485,17 @@ namespace CaseManagement.Api.Migrations
                     b.Navigation("TargetUser");
                 });
 
+            modelBuilder.Entity("CaseManagement.Api.Models.CaseCustomAttribute", b =>
+                {
+                    b.HasOne("CaseManagement.Api.Models.Case", "Case")
+                        .WithMany("CustomAttributes")
+                        .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Case");
+                });
+
             modelBuilder.Entity("CaseManagement.Api.Models.CaseEvent", b =>
                 {
                     b.HasOne("CaseManagement.Api.Models.Case", "Case")
@@ -1600,7 +1621,8 @@ namespace CaseManagement.Api.Migrations
                     b.HasOne("CaseManagement.Api.Models.DepartmentSubCategory", "DepartmentSubCategory")
                         .WithMany()
                         .HasForeignKey("DepartmentSubCategoryId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.HasOne("CaseManagement.Api.Models.PrioritySlaRule", "PrioritySlaRule")
                         .WithMany("CategoryMappings")
@@ -1666,9 +1688,7 @@ namespace CaseManagement.Api.Migrations
                 {
                     b.HasOne("CaseManagement.Api.Models.Department", "Department")
                         .WithMany("Users")
-                        .HasForeignKey("DepartmentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .HasForeignKey("DepartmentId");
 
                     b.Navigation("Department");
                 });
@@ -1678,6 +1698,8 @@ namespace CaseManagement.Api.Migrations
                     b.Navigation("Attachments");
 
                     b.Navigation("ChildRelations");
+
+                    b.Navigation("CustomAttributes");
 
                     b.Navigation("Events");
 

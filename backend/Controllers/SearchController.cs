@@ -1,5 +1,6 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.Configuration;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Services;
@@ -12,6 +13,7 @@ using Microsoft.Extensions.Options;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
+[RequirePermission(Permissions.CasesRead)]
 public class SearchController : BaseApiController
 {
     private readonly ICustomerService _customerService;

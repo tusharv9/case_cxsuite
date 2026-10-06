@@ -100,6 +100,8 @@ public sealed class DatabaseInitializer : IHostedService
                 {
                     _logger.LogWarning("Existing database created before EF migrations detected; adopting it (additive upgrade, no data is dropped).");
                     await LegacySchemaAdopter.AdoptAsync(db, ct);
+                    // Adoption records only the Baseline; apply any migrations added after it.
+                    await db.Database.MigrateAsync(ct);
                 }
                 else
                 {

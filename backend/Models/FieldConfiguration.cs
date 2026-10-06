@@ -12,6 +12,13 @@ public class FieldConfiguration : AuditableEntity
     
     public bool IsVisible { get; set; } = true;
     public bool IsRequired { get; set; } = false;
+
+    /// <summary>
+    /// True for the few fields the application cannot function without (e.g. the customer of a case, a
+    /// customer's name and ID). Their "Required" setting is always on and cannot be switched off — every other
+    /// field's Required flag is honoured exactly as configured, by the backend as well as the UI.
+    /// </summary>
+    public bool IsSystemRequired { get; set; } = false;
     public bool IsEditable { get; set; } = true;
     public bool IsSensitive { get; set; } = false;
     
@@ -21,6 +28,9 @@ public class FieldConfiguration : AuditableEntity
     
     public string FieldType { get; set; } = "Text"; // Text, Number, Date, Email, Phone, Dropdown, Checkbox
     public string? ValidationRegex { get; set; }
+
+    /// <summary>Shown to the user when <see cref="ValidationRegex"/> fails (instead of a generic "format is invalid").</summary>
+    public string? ValidationMessage { get; set; }
     public int? MinLength { get; set; }
     public int? MaxLength { get; set; }
     

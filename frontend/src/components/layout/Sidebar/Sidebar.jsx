@@ -9,15 +9,15 @@ const NAV_ITEMS = [
   { to: '/customer360', label: 'Customer 360', icon: User },
   { to: '/case-management', label: 'Case Management', icon: Briefcase, showBoardCount: true },
   { to: '/teams', label: 'Teams', icon: Users },
-  { to: '/team-monitoring', label: 'Team Monitor', icon: Activity },
-  { to: '/cases-sla-routing', label: 'Cases SLA & Routing', icon: Sliders },
-  { to: '/case-audit', label: 'Audit Logs', icon: ShieldCheck },
-  { to: '/configurable-settings', label: 'Configurable Settings', icon: Settings },
+  { to: '/team-monitoring', label: 'Team Monitor', icon: Activity, permission: 'monitoring.view' },
+  { to: '/cases-sla-routing', label: 'Cases SLA & Routing', icon: Sliders, permission: 'config.manage' },
+  { to: '/case-audit', label: 'Audit Logs', icon: ShieldCheck, permission: 'audit.view' },
+  { to: '/configurable-settings', label: 'Configurable Settings', icon: Settings, permission: 'config.manage' },
 ];
 
 export function Sidebar() {
   const { caseStats } = useCase();
-  const { isSidebarOpen, dispatch } = useApp();
+  const { isSidebarOpen, dispatch, can } = useApp();
   const openCount = caseStats?.openCount || null;
 
   if (!isSidebarOpen) return null;
@@ -42,7 +42,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="sidebar__nav">
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.filter((item) => can(item.permission)).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

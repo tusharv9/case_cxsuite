@@ -44,23 +44,25 @@ public class UpdatePublicHolidayDtoValidator : AbstractValidator<UpdatePublicHol
 
 public class UpdateSlaRoutingConfigRequestDtoValidator : AbstractValidator<UpdateSlaRoutingConfigRequestDto>
 {
-    private static readonly string[] AllowedPriorities = { "Critical", "High", "Medium", "Low" };
     private static readonly string[] AllowedUnits = { "Minutes", "Hours" };
 
     public UpdateSlaRoutingConfigRequestDtoValidator()
     {
         RuleFor(x => x.PriorityRules)
-            .NotEmpty().WithMessage("Priority SLA rules are required.")
-            .Must(rules => rules.Count == 4).WithMessage("SLA Matrix must contain exactly 4 fixed priorities (Critical, High, Medium, Low).")
-            .Must(rules => rules.All(r => AllowedPriorities.Contains(r.Priority, StringComparer.OrdinalIgnoreCase)))
-            .WithMessage("SLA Matrix priorities must be strictly: Critical, High, Medium, Low.")
+            .NotEmpty().WithMessage("At least one priority SLA rule is required.")
+            .Must(rules => rules.All(r => !string.IsNullOrWhiteSpace(r.Priority)))
+            .WithMessage("Every priority needs a name.")
             .Must(rules =>
             {
-                var allCategories = rules.SelectMany(r => r.AppliedCategories ?? new List<string>())
-                                         .Select(c => c.Trim().ToLowerInvariant())
-                                         .ToList();
-                return allCategories.Count == allCategories.Distinct().Count();
-            }).WithMessage("A case category cannot be assigned to multiple conflicting priorities.");
+                var names = rules.Select(r => r.Priority.Trim().ToLowerInvariant()).ToList();
+                return names.Count == names.Distinct().Count();
+            }).WithMessage("Priority names must be unique.")
+            .Must(rules =>
+            {
+                // One priority per sub-category (also enforced, with names, by the service).
+                var ids = rules.SelectMany(r => r.AppliedSubCategoryIds ?? new List<Guid>()).ToList();
+                return ids.Count == ids.Distinct().Count();
+            }).WithMessage("A sub-category can have only one priority.");
 
         RuleForEach(x => x.PriorityRules).ChildRules(rule =>
         {

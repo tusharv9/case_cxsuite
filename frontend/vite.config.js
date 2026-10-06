@@ -53,6 +53,9 @@ export default defineConfig(({ command }) => ({
         changeOrigin: true,
         secure: false,
       },
+      // The startup gate polls the backend's readiness endpoint.
+      '/ready': { target: 'http://localhost:5110', changeOrigin: true, secure: false },
+      '/health': { target: 'http://localhost:5110', changeOrigin: true, secure: false },
     },
   },
 

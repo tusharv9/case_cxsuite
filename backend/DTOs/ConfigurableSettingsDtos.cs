@@ -9,6 +9,9 @@ public class FieldConfigurationDto
     public string DisplayLabel { get; set; } = string.Empty;
     public bool IsVisible { get; set; } = true;
     public bool IsRequired { get; set; } = false;
+
+    /// <summary>Read-only: the field is mandatory for the system to work, so "Required" cannot be turned off.</summary>
+    public bool IsSystemRequired { get; set; } = false;
     public bool IsEditable { get; set; } = true;
     public bool IsSensitive { get; set; } = false;
     public string MaskingRule { get; set; } = "None";
@@ -16,10 +19,35 @@ public class FieldConfigurationDto
     public int DisplayOrder { get; set; } = 0;
     public string FieldType { get; set; } = "Text";
     public string? ValidationRegex { get; set; }
+    public string? ValidationMessage { get; set; }
     public int? MinLength { get; set; }
     public int? MaxLength { get; set; }
     public string? LookupTypeCode { get; set; }
     public bool IsCustomField { get; set; } = false;
+
+    public static FieldConfigurationDto From(CaseManagement.Api.Models.FieldConfiguration entity) => new()
+    {
+        Id = entity.Id,
+        ModuleKey = entity.ModuleKey,
+        SectionKey = entity.SectionKey,
+        ApiField = entity.ApiField,
+        DisplayLabel = entity.DisplayLabel,
+        IsVisible = entity.IsVisible || entity.IsSystemRequired,
+        IsRequired = entity.IsRequired || entity.IsSystemRequired,
+        IsSystemRequired = entity.IsSystemRequired,
+        IsEditable = entity.IsEditable,
+        IsSensitive = entity.IsSensitive,
+        MaskingRule = entity.MaskingRule,
+        VisibleChars = entity.VisibleChars,
+        DisplayOrder = entity.DisplayOrder,
+        FieldType = entity.FieldType,
+        ValidationRegex = entity.ValidationRegex,
+        ValidationMessage = entity.ValidationMessage,
+        MinLength = entity.MinLength,
+        MaxLength = entity.MaxLength,
+        LookupTypeCode = entity.LookupTypeCode,
+        IsCustomField = entity.IsCustomField
+    };
 }
 
 public class UpdateFieldConfigurationsRequest
@@ -44,6 +72,17 @@ public class CreateCustomFieldDto
     public int VisibleChars { get; set; } = 4;
     public int DisplayOrder { get; set; } = 0;
     public string? LookupTypeCode { get; set; }
+    public string? ValidationRegex { get; set; }
+    public string? ValidationMessage { get; set; }
+    public int? MinLength { get; set; }
+    public int? MaxLength { get; set; }
+}
+
+public class LookupTypeDto
+{
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
 }
 
 public class LookupValueDto
@@ -125,11 +164,15 @@ public class UpdateFieldConfigurationDto
     public int VisibleChars { get; set; } = 4;
     public int DisplayOrder { get; set; } = 0;
     public string? LookupTypeCode { get; set; }
+    public string? ValidationRegex { get; set; }
+    public string? ValidationMessage { get; set; }
+    public int? MinLength { get; set; }
+    public int? MaxLength { get; set; }
 }
 
 /// <summary>
-/// A severity is master data (a CASE_SEVERITY lookup value) plus its SLA row, so both are
-/// created/updated/removed together and the two never drift apart.
+/// A priority ("severity") as shown on the Settings screen. It is a view over one PrioritySlaRule row — the same
+/// row the Cases SLA & Routing screen edits — so the two screens can never disagree.
 /// </summary>
 public class SeverityDto
 {

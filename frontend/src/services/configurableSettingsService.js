@@ -64,6 +64,12 @@ export const configurableSettingsService = {
     return response.data;
   },
 
+  /** The configured lists (e.g. to choose the options of a custom dropdown field). */
+  async getLookupTypes() {
+    const response = await api.get('/api/ConfigurableSettings/lookups');
+    return response.data;
+  },
+
   /**
    * Get master lookup values by type code (e.g. PREFERRED_LANGUAGE, HOME_BRANCH, ID_TYPE)
    */

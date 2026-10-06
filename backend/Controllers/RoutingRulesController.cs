@@ -1,11 +1,13 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/routing-rules")]
+[RequirePermission(Permissions.ConfigManage)]
 public class RoutingRulesController : BaseApiController
 {
     private readonly IRoutingEngineService _routingEngine;

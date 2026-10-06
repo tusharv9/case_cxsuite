@@ -1,11 +1,13 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/[controller]")]
+[RequirePermission(null, Permissions.ConfigManage)]
 public class ConfigurableSettingsController : BaseApiController
 {
     private readonly IConfigurableSettingsService _settingsService;
@@ -65,6 +67,11 @@ public class ConfigurableSettingsController : BaseApiController
         if (!success) return NotFound(new { message = "Field configuration not found." });
         return Ok(new { message = "Field deleted successfully." });
     }
+
+    /// <summary>The configured lists (lookup types), e.g. for choosing the options of a custom dropdown field.</summary>
+    [HttpGet("lookups")]
+    public async Task<IActionResult> GetLookupTypes(CancellationToken ct = default)
+        => Ok(await _settingsService.GetLookupTypesAsync(ct));
 
     [HttpGet("lookups/{typeCode}")]
     public async Task<IActionResult> GetLookupValues(string typeCode, [FromQuery] bool activeOnly = true, CancellationToken ct = default)

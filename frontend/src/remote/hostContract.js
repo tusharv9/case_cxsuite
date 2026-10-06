@@ -22,6 +22,7 @@
 // @property {string}   [locale]           e.g. "en-MY".
 // @property {string}   [timezone]         IANA zone, e.g. "Asia/Kuala_Lumpur".
 // @property {(path: string) => void} [onNavigate]  Lets the Host observe/handle navigation requests.
+// @property {() => void} [onUnauthorized]  Called when the backend rejects the Host token (401), so the Host can refresh it or sign the user out.
 
 /** Values used when no Host is present (standalone / local development). */
 export const STANDALONE_DEFAULTS = Object.freeze({
@@ -33,6 +34,7 @@ export const STANDALONE_DEFAULTS = Object.freeze({
   locale: 'en-MY',
   timezone: undefined,
   onNavigate: null,
+  onUnauthorized: null,
 });
 
 /** Merges whatever the Host passed over the standalone defaults, ignoring unknown props. */

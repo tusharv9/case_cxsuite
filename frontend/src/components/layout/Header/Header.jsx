@@ -201,6 +201,7 @@ export function Header() {
       case 'Available': return { bg: '#f0fdf4', border: '#bbf7d0', dot: '#16a34a', text: '#15803d' };
       case 'Busy':      return { bg: '#fef2f2', border: '#fecaca', dot: '#dc2626', text: '#b91c1c' };
       case 'Away':      return { bg: '#fffbeb', border: '#fde68a', dot: '#d97706', text: '#b45309' };
+      case 'Offline':   return { bg: '#f8fafc', border: '#e2e8f0', dot: '#94a3b8', text: '#64748b' };
       default:          return { bg: '#f0fdf4', border: '#bbf7d0', dot: '#16a34a', text: '#15803d' };
     }
   };
@@ -317,7 +318,7 @@ export function Header() {
 
           {showStatusDropdown && (
             <div className="header__status-dropdown">
-              {['Available', 'Busy', 'Away'].map((status) => {
+              {['Available', 'Busy', 'Away', 'Offline'].map((status) => {
                 const colors = getStatusColor(status);
                 return (
                   <div 

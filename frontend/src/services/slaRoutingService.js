@@ -18,6 +18,16 @@ export const slaRoutingService = {
   },
 
   /**
+   * The priority a new case in this department/sub-category would get (and its SLA hours).
+   * Returns { isMapped, priority, subCategoryId, internalHours, externalHours, firstResponseMinutes }.
+   */
+  async resolvePriority(departmentId, subcategory) {
+    if (!departmentId || !subcategory) return { isMapped: false };
+    const response = await api.get('/api/sla-routing/resolve-priority', { params: { departmentId, subcategory } });
+    return response.data;
+  },
+
+  /**
    * Save entire SLA and Escalation configuration atomically
    */
   async updateConfiguration(payload) {

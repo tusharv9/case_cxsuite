@@ -44,9 +44,11 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
                 target.DisplayOrder = updated.DisplayOrder;
                 target.FieldType = updated.FieldType;
                 target.ValidationRegex = updated.ValidationRegex;
+                target.ValidationMessage = updated.ValidationMessage;
                 target.MinLength = updated.MinLength;
                 target.MaxLength = updated.MaxLength;
                 target.LookupTypeCode = updated.LookupTypeCode;
+                ApplySystemLock(target);
                 target.UpdatedAt = DateTime.UtcNow;
             }
             else
@@ -55,12 +57,24 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
                 updated.ModuleKey = moduleKey;
                 updated.SectionKey = sectionKey;
                 updated.CreatedAt = DateTime.UtcNow;
+                updated.IsSystemRequired = false;   // only the system defines these; a client cannot create a locked field
                 _context.FieldConfigurations.Add(updated);
             }
         }
 
         await _context.SaveChangesAsync(ct);
     }
+
+    /// <summary>A system-required field is always required and visible, whatever a client sent.</summary>
+    private static void ApplySystemLock(FieldConfiguration field)
+    {
+        if (!field.IsSystemRequired) return;
+        field.IsRequired = true;
+        field.IsVisible = true;
+    }
+
+    public async Task<FieldConfiguration?> GetFieldConfigurationAsync(Guid id, CancellationToken ct = default) =>
+        await _context.FieldConfigurations.AsNoTracking().FirstOrDefaultAsync(f => f.Id == id, ct);
 
     public async Task<FieldConfiguration> AddFieldConfigurationAsync(FieldConfiguration field, CancellationToken ct = default)
     {
@@ -86,6 +100,11 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
         target.VisibleChars = updated.VisibleChars;
         target.DisplayOrder = updated.DisplayOrder;
         target.LookupTypeCode = updated.LookupTypeCode;
+        target.ValidationRegex = updated.ValidationRegex;       // previously dropped by this path
+        target.ValidationMessage = updated.ValidationMessage;
+        target.MinLength = updated.MinLength;
+        target.MaxLength = updated.MaxLength;
+        ApplySystemLock(target);
         target.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(ct);
@@ -295,63 +314,7 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
 
         _context.DepartmentSubCategories.Remove(target);
 
-        // Priority mappings are matched to sub-categories by NAME, so deleting the last
-        // sub-category with this name would leave a mapping pointing at nothing. Remove it in the
-        // same save. (Another department's sub-category of the same name keeps the mapping alive.)
-        var nameStillExists = await _context.DepartmentSubCategories
-            .AnyAsync(s => s.Id != id && s.Name == target.Name, ct);
-        var orphanedMappings = await _context.PriorityCategoryMappings
-            .Where(m => m.DepartmentSubCategoryId == id || (!nameStillExists && m.CategoryName == target.Name))
-            .ToListAsync(ct);
-        _context.PriorityCategoryMappings.RemoveRange(orphanedMappings);
-
-        await _context.SaveChangesAsync(ct);
-        return true;
-    }
-
-    public async Task<IEnumerable<SlaConfiguration>> GetSlaConfigurationsAsync(CancellationToken ct = default)
-    {
-        return await _context.SlaConfigurations.AsNoTracking().Where(s => s.IsActive).ToListAsync(ct);
-    }
-
-    public async Task<SlaConfiguration> SaveSlaConfigurationAsync(SlaConfiguration sla, CancellationToken ct = default)
-    {
-        var existing = await _context.SlaConfigurations.FirstOrDefaultAsync(s => s.Severity.ToLower() == sla.Severity.ToLower(), ct);
-        if (existing != null)
-        {
-            existing.InternalHours = sla.InternalHours;
-            existing.ExternalHours = sla.ExternalHours;
-            existing.FirstResponseMinutes = sla.FirstResponseMinutes;
-            existing.IsActive = sla.IsActive;
-            existing.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync(ct);
-            return existing;
-        }
-
-        sla.Id = Guid.NewGuid();
-        sla.CreatedAt = DateTime.UtcNow;
-        _context.SlaConfigurations.Add(sla);
-        await _context.SaveChangesAsync(ct);
-        return sla;
-    }
-
-    public async Task<bool> DeleteSlaConfigurationBySeverityAsync(string severity, CancellationToken ct = default)
-    {
-        var target = await _context.SlaConfigurations.FirstOrDefaultAsync(s => s.Severity.ToLower() == severity.ToLower(), ct);
-        if (target == null) return false;
-
-        _context.SlaConfigurations.Remove(target);
-        await _context.SaveChangesAsync(ct);
-        return true;
-    }
-
-    public async Task<bool> RenameSlaConfigurationAsync(string oldSeverity, string newSeverity, CancellationToken ct = default)
-    {
-        var target = await _context.SlaConfigurations.FirstOrDefaultAsync(s => s.Severity.ToLower() == oldSeverity.ToLower(), ct);
-        if (target == null) return false;
-
-        target.Severity = newSeverity;
-        target.UpdatedAt = DateTime.UtcNow;
+        // The sub-category's priority mapping is removed with it (database cascade).
         await _context.SaveChangesAsync(ct);
         return true;
     }

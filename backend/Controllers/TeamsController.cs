@@ -1,11 +1,13 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/[controller]")]
+[RequirePermission(null, Permissions.TeamsManage)]
 public class TeamsController : BaseApiController
 {
     private readonly ITeamService _teamService;

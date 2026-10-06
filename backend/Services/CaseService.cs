@@ -22,6 +22,7 @@ public class CaseService : ICaseService
     private readonly IBusinessTimeService? _businessTimeService;
     private readonly ISlaRoutingService? _slaRoutingService;
     private readonly IRoutingEngineService? _routingEngine;
+    private readonly IFieldValidationEngine? _fieldValidation;
 
     public CaseService(
         ICaseRepository caseRepository,
@@ -33,7 +34,8 @@ public class CaseService : ICaseService
         IPiiMaskingService? piiMasking = null,
         IBusinessTimeService? businessTimeService = null,
         ISlaRoutingService? slaRoutingService = null,
-        IRoutingEngineService? routingEngine = null)
+        IRoutingEngineService? routingEngine = null,
+        IFieldValidationEngine? fieldValidation = null)
     {
         _caseRepository = caseRepository;
         _notificationService = notificationService;
@@ -45,6 +47,7 @@ public class CaseService : ICaseService
         _businessTimeService = businessTimeService;
         _slaRoutingService = slaRoutingService;
         _routingEngine = routingEngine;
+        _fieldValidation = fieldValidation;
     }
 
     /// <summary>
@@ -93,72 +96,30 @@ public class CaseService : ICaseService
 
     public async Task<Case> CreateCaseAsync(CreateCaseDto dto, Guid createdByUserId)
     {
-        await ValidateCreateCaseMetadataAsync(dto);
+        // Everything the form submitted is checked against the administrator's configuration first; what comes
+        // back is canonical (configured spelling, resolved records), so nothing downstream guesses or defaults.
+        var validated = await ValidateCreateCaseAsync(dto);
 
-        // 1. Resolve Effective Priority: Category mapping takes authoritative precedence
-        var effectivePriority = _slaRoutingService != null
-            ? await _slaRoutingService.ResolveEffectivePriorityAsync(dto.Severity, dto.Subcategory)
-            : await ResolveSeverityAsync(dto.Severity);
+        // 1. Resolve the priority: the sub-category's configured priority is authoritative; otherwise the
+        //    requested one, which must be a configured priority. Never silently defaulted.
+        var slaRouting = _slaRoutingService ?? throw new InvalidOperationException("SLA & routing configuration is not available.");
+        var resolution = await slaRouting.ResolveEffectivePriorityAsync(validated.Department.Id, validated.SubCategory.Name, dto.Severity);
+        var effectivePriority = resolution.Priority;
 
-        string caseTypeInput = dto.CaseType?.Trim() ?? "";
-        string prefix = "C-";
-        string canonicalCaseType = string.IsNullOrWhiteSpace(caseTypeInput) ? "Complaint" : caseTypeInput;
-
-        try
-        {
-            var caseTypes = await _settingsService.GetCaseTypesAsync();
-            var matchedConfig = caseTypes.FirstOrDefault(c =>
-                c.Code.Equals(caseTypeInput, StringComparison.OrdinalIgnoreCase) ||
-                c.Name.Equals(caseTypeInput, StringComparison.OrdinalIgnoreCase));
-
-            if (matchedConfig != null)
-            {
-                prefix = matchedConfig.Prefix;
-                canonicalCaseType = matchedConfig.Name;
-            }
-            else
-            {
-                if (caseTypeInput.Equals("Service", StringComparison.OrdinalIgnoreCase))
-                {
-                    prefix = "S-";
-                    canonicalCaseType = "Service";
-                }
-                else if (caseTypeInput.Equals("Enquiry", StringComparison.OrdinalIgnoreCase) || caseTypeInput.Equals("Inquiry", StringComparison.OrdinalIgnoreCase))
-                {
-                    prefix = "I-";
-                    canonicalCaseType = "Inquiry";
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[CaseService CaseTypeLookup Error] {ex.Message}");
-        }
+        // The case type's configuration supplies the case-number prefix.
+        string canonicalCaseType = validated.CaseType.Name;
+        string prefix = validated.CaseType.Prefix;
 
         int seq = await _caseRepository.GetNextCaseSequenceAsync();
         string caseNumber = $"{prefix}{seq:D5}";
 
-        // 2. Resolve Active SLA Matrix Targets & Version
-        int frMinutes = 30;
-        int intMinutes = 120;
-        int extMinutes = 240;
-        int configVersion = 1;
-
-        if (_slaRoutingService != null)
-        {
-            var slaRule = await _slaRoutingService.GetActivePrioritySlaRuleAsync(effectivePriority);
-            frMinutes = slaRule.FirstResponseMinutes;
-            intMinutes = slaRule.InternalResolutionMinutes;
-            extMinutes = slaRule.ExternalResolutionMinutes;
-            configVersion = slaRule.Version;
-        }
-        else
-        {
-            int extHours = await GetSlaTargetHoursAsync(effectivePriority);
-            frMinutes = await GetFirstResponseTargetMinutesAsync(effectivePriority);
-            extMinutes = extHours * 60;
-            intMinutes = Math.Max(60, extMinutes - 120);
-        }
+        // 2. SLA targets & version come from the priority's rule and are snapshotted onto the case, so later
+        //    configuration changes never rewrite history. A missing rule is a configuration error, not a default.
+        var slaRule = await slaRouting.GetActivePrioritySlaRuleAsync(effectivePriority);
+        int frMinutes = slaRule.FirstResponseMinutes;
+        int intMinutes = slaRule.InternalResolutionMinutes;
+        int extMinutes = slaRule.ExternalResolutionMinutes;
+        int configVersion = slaRule.Version;
 
         // 3. Calculate SLA Deadlines using configured Business Hours and Public Holidays
         DateTime now = DateTime.UtcNow;
@@ -174,29 +135,25 @@ public class CaseService : ICaseService
             ? await _businessTimeService.AddBusinessMinutesAsync(now, extMinutes)
             : now.AddMinutes(extMinutes);
 
-        string sourceChannel = !string.IsNullOrWhiteSpace(dto.SourceChannel)
-            ? dto.SourceChannel
-            : (!string.IsNullOrWhiteSpace(dto.CommunicationChannel) ? dto.CommunicationChannel : "Voice");
-
-        string preferredChannel = !string.IsNullOrWhiteSpace(dto.PreferredCommunicationChannel)
-            ? dto.PreferredCommunicationChannel
-            : "Phone";
+        // Configured values only: a field the administrator made optional and the user left blank stays blank.
+        string sourceChannel = validated.Value("sourceChannel");
+        string preferredChannel = validated.Value("preferredCommunicationChannel");
 
         var newCase = new Case
         {
             CaseNumber = caseNumber,
             CaseType = canonicalCaseType,
-            Title = dto.Title,
-            Description = dto.Description,
+            Title = dto.Title.Trim(),
+            Description = dto.Description?.Trim() ?? string.Empty,
             CustomerId = dto.CustomerId,
-            DepartmentId = dto.DepartmentId,
+            DepartmentId = validated.Department.Id,
             OwnerId = createdByUserId,
             Severity = effectivePriority,
             Status = CaseStatus.Open,
             SourceChannel = sourceChannel,
             PreferredCommunicationChannel = preferredChannel,
             CommunicationChannel = sourceChannel,
-            Subcategory = string.IsNullOrWhiteSpace(dto.Subcategory) ? "General Inquiry" : dto.Subcategory,
+            Subcategory = validated.SubCategory.Name,
             SlaStartTime = now,
             SlaTargetHours = (int)Math.Ceiling(extMinutes / 60.0),
             SlaTotalPausedMinutes = 0,
@@ -212,6 +169,18 @@ public class CaseService : ICaseService
             SlaConfigVersion = configVersion,
             EscalationLevel = 1,
         };
+
+        foreach (var (key, value) in validated.CustomAttributes)
+        {
+            newCase.CustomAttributes.Add(new CaseCustomAttribute
+            {
+                Id = Guid.NewGuid(),
+                CaseId = newCase.Id,
+                FieldKey = key,
+                FieldValue = value,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
 
         // 4. Case Routing & Automatic Agent Assignment Engine
         RoutingDecisionResult? routingDecision = null;
@@ -496,7 +465,10 @@ public class CaseService : ICaseService
             throw new ArgumentException("Assigned user not found.");
 
         existingCase.OwnerId = dto.OwnerId;
-        existingCase.SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity);
+        var severityLower = existingCase.Severity.ToLower();
+        var currentRule = await _context.PrioritySlaRules.AsNoTracking().FirstOrDefaultAsync(r => r.Priority.ToLower() == severityLower);
+        if (currentRule != null)
+            existingCase.SlaTargetHours = (int)Math.Ceiling(currentRule.ExternalResolutionMinutes / 60.0);
         
         // Reset SLA timer
         existingCase.SlaStartTime = DateTime.UtcNow;
@@ -1428,13 +1400,12 @@ public class CaseService : ICaseService
             });
         }
 
-        // 4. Increase case attention / severity if not already Critical
-        if (!string.Equals(existingCase.Severity, "Critical", StringComparison.OrdinalIgnoreCase))
+        // 4. Raise the case's priority one step towards the most urgent configured priority (if it can go higher).
+        var moreUrgent = await GetNextMoreUrgentPriorityAsync(existingCase.Severity);
+        if (moreUrgent != null)
         {
-            existingCase.Severity = string.Equals(existingCase.Severity, "High", StringComparison.OrdinalIgnoreCase)
-                ? "Critical"
-                : "High";
-            existingCase.SlaTargetHours = await GetSlaTargetHoursAsync(existingCase.Severity);
+            existingCase.Severity = moreUrgent.Priority;
+            existingCase.SlaTargetHours = (int)Math.Ceiling(moreUrgent.ExternalResolutionMinutes / 60.0);
         }
 
         await _context.SaveChangesAsync();
@@ -1610,88 +1581,25 @@ public class CaseService : ICaseService
         return (bytes, contentType, attachment.FileName);
     }
 
-    /// <summary>
-    /// Severities are administrator-configurable (Configurable Settings -> Case Management ->
-    /// Master Data), so an incoming value is matched against the configured master list instead
-    /// of a compiled-in enum. Matching is case-insensitive and returns the canonical casing so
-    /// stored values stay consistent with the configuration.
-    /// </summary>
-    private async Task<string> ResolveSeverityAsync(string? requested)
+    /// <summary>External SLA hours of a configured priority. A priority with no rule is a configuration error.</summary>
+    private async Task<int> GetSlaTargetHoursAsync(string priority)
     {
-        var input = requested?.Trim();
-        if (string.IsNullOrWhiteSpace(input))
-            throw new InvalidOperationException("Severity is required.");
-
-        try
-        {
-            var configured = (await _settingsService.GetSeveritiesAsync()).ToList();
-            if (configured.Count > 0)
-            {
-                var match = configured.FirstOrDefault(v => v.Equals(input, StringComparison.OrdinalIgnoreCase));
-                if (match != null) return match;
-
-                throw new InvalidOperationException(
-                    $"'{input}' is not a configured severity. Configured severities: {string.Join(", ", configured)}.");
-            }
-        }
-        catch (InvalidOperationException) { throw; }
-        catch (Exception ex)
-        {
-            // A configuration read failure must not block case creation.
-            Console.WriteLine($"[CaseService SeverityLookup Error] {ex.Message}");
-        }
-
-        return input;
+        var lowered = priority.ToLower();
+        var rule = await _context.PrioritySlaRules.AsNoTracking().FirstOrDefaultAsync(r => r.Priority.ToLower() == lowered)
+            ?? throw new InvalidOperationException($"No SLA rule is configured for priority '{priority}'. Configure it under Cases SLA & Routing.");
+        return (int)Math.Ceiling(rule.ExternalResolutionMinutes / 60.0);
     }
 
-    /// <summary>
-    /// External (customer-facing) SLA hours for a severity, read from SLA Configuration.
-    /// Falls back to the historical defaults when no row is configured for that severity.
-    /// </summary>
-    private async Task<int> GetSlaTargetHoursAsync(string severity)
+    /// <summary>The active priority immediately more urgent than <paramref name="currentPriority"/> (null if it is already the most urgent).</summary>
+    private async Task<PrioritySlaRule?> GetNextMoreUrgentPriorityAsync(string currentPriority)
     {
-        try
-        {
-            var slaConfigs = await _settingsService.GetSlaConfigurationsAsync();
-            var matched = slaConfigs.FirstOrDefault(s => s.Severity.Equals(severity, StringComparison.OrdinalIgnoreCase));
-            if (matched != null && matched.ExternalHours > 0) return matched.ExternalHours;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[CaseService SlaLookup Error] {ex.Message}");
-        }
+        var lowered = currentPriority.ToLower();
+        var rules = await _context.PrioritySlaRules.AsNoTracking().Where(r => r.IsActive).OrderBy(r => r.DisplayOrder).ToListAsync();
+        var current = rules.FirstOrDefault(r => r.Priority.ToLower() == lowered);
 
-        return severity.ToLowerInvariant() switch
-        {
-            "critical" => 4,
-            "high" => 8,
-            "medium" => 12,
-            "low" => 24,
-            _ => 24
-        };
-    }
-
-    private async Task<int> GetFirstResponseTargetMinutesAsync(string severity)
-    {
-        try
-        {
-            var slaConfigs = await _settingsService.GetSlaConfigurationsAsync();
-            var matched = slaConfigs.FirstOrDefault(s => s.Severity.Equals(severity, StringComparison.OrdinalIgnoreCase));
-            if (matched != null && matched.FirstResponseMinutes > 0) return matched.FirstResponseMinutes;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[CaseService FirstResponseLookup Error] {ex.Message}");
-        }
-
-        return severity.ToLowerInvariant() switch
-        {
-            "critical" => 30,
-            "high" => 60,
-            "medium" => 240,
-            "low" => 480,
-            _ => 240
-        };
+        // A priority that is no longer active/known is treated as the least urgent.
+        var currentOrder = current?.DisplayOrder ?? int.MaxValue;
+        return rules.LastOrDefault(r => r.DisplayOrder < currentOrder);
     }
 
     private async Task<User?> ResolveEscalationTargetAsync(Case c, int targetLevel)
@@ -2290,11 +2198,30 @@ public class CaseService : ICaseService
             EscalatedCases = statusCounts.FirstOrDefault(s => s.Status == CaseStatus.Escalated)?.Count ?? 0,
             ResolvedCases = statusCounts.FirstOrDefault(s => s.Status == CaseStatus.Resolved)?.Count ?? 0,
             UnassignedCases = unassignedCount,
-            CriticalCases = severityCounts.FirstOrDefault(s => s.Severity == "Critical")?.Count ?? 0,
-            HighCases = severityCounts.FirstOrDefault(s => s.Severity == "High")?.Count ?? 0,
-            MediumCases = severityCounts.FirstOrDefault(s => s.Severity == "Medium")?.Count ?? 0,
-            LowCases = severityCounts.FirstOrDefault(s => s.Severity == "Low")?.Count ?? 0,
         };
+
+        // Priority breakdown in the configured order. Every configured priority is listed (even with 0 cases),
+        // and a priority that has since been removed but still has cases is listed after them.
+        var priorityOrder = await _context.PrioritySlaRules.AsNoTracking()
+            .Where(r => r.IsActive)
+            .OrderBy(r => r.DisplayOrder)
+            .Select(r => new { r.Priority, r.DisplayOrder })
+            .ToListAsync(ct);
+        var countsByName = severityCounts.ToDictionary(c => c.Severity.ToLowerInvariant(), c => c.Count);
+        foreach (var p in priorityOrder)
+        {
+            result.CasesBySeverity.Add(new SeverityCaseCount
+            {
+                Severity = p.Priority,
+                DisplayOrder = p.DisplayOrder,
+                Count = countsByName.GetValueOrDefault(p.Priority.ToLowerInvariant())
+            });
+        }
+        var known = priorityOrder.Select(p => p.Priority.ToLowerInvariant()).ToHashSet();
+        var extra = severityCounts.Where(c => !known.Contains(c.Severity.ToLowerInvariant())).OrderBy(c => c.Severity);
+        var nextOrder = (priorityOrder.Count == 0 ? 0 : priorityOrder.Max(p => p.DisplayOrder)) + 1;
+        foreach (var c in extra)
+            result.CasesBySeverity.Add(new SeverityCaseCount { Severity = c.Severity, Count = c.Count, DisplayOrder = nextOrder++ });
 
         // SLA calculations: fetch only lightweight scalar columns without joins
         var slaRows = await query.Select(c => new
@@ -2408,8 +2335,10 @@ public class CaseService : ICaseService
         // Attention cases: SLA breached, at-risk, critical/high, unassigned — top 20 direct from DB
         result.AttentionCases = await query
             .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled)
-            .OrderByDescending(c => c.Severity == "Critical")
-            .ThenByDescending(c => c.Severity == "High")
+            .OrderBy(c => _context.PrioritySlaRules
+                .Where(r => r.Priority == c.Severity)
+                .Select(r => (int?)r.DisplayOrder)
+                .FirstOrDefault() ?? int.MaxValue)
             .ThenBy(c => c.SlaStartTime)
             .Take(20)
             .Select(c => new AttentionCaseSummary
@@ -2517,129 +2446,115 @@ public class CaseService : ICaseService
         };
     }
 
+    /// <summary>Validates a create-case request without creating anything.</summary>
     public async Task ValidateCreateCaseMetadataAsync(CreateCaseDto dto, CancellationToken ct = default)
+        => await ValidateCreateCaseAsync(dto, ct);
+
+    /// <summary>A create-case request after validation: resolved records and canonical values.</summary>
+    private sealed record ValidatedCase(
+        Department Department,
+        CaseTypeConfig CaseType,
+        DepartmentSubCategory SubCategory,
+        IReadOnlyDictionary<string, string> Values,
+        IReadOnlyDictionary<string, string> CustomAttributes)
     {
-        // 1. Mandatory customer validation
+        public string Value(string field) => Values.TryGetValue(field, out var v) ? v : string.Empty;
+    }
+
+    private async Task<ValidatedCase> ValidateCreateCaseAsync(CreateCaseDto dto, CancellationToken ct = default)
+    {
+        var engine = _fieldValidation ?? throw new InvalidOperationException("Field validation is not available.");
+        var errors = new List<FieldError>();
+
+        // 1. Structural checks: the records the case points at must exist and be usable.
+        // A case cannot exist without these, whatever the field configuration says (they are system-required).
+        Guid? customerId = null;
         if (dto.CustomerId == Guid.Empty)
-            throw new ArgumentException("A valid customer must be selected.");
+            errors.Add(new FieldError("selectCustomer", "A valid customer must be selected."));
+        else if (await _context.Customers.AnyAsync(c => c.Id == dto.CustomerId, ct)) customerId = dto.CustomerId;
+        else errors.Add(new FieldError("selectCustomer", "Selected customer does not exist."));
 
-        var customerExists = await _context.Customers.AnyAsync(c => c.Id == dto.CustomerId, ct);
-        if (!customerExists)
-            throw new ArgumentException("Selected customer does not exist.");
-
-        // 2. Mandatory department validation
+        Department? department = null;
         if (dto.DepartmentId == Guid.Empty)
-            throw new ArgumentException("Department is required.");
-
-        var department = await _context.Departments.FirstOrDefaultAsync(d => d.Id == dto.DepartmentId, ct);
-        if (department == null || !department.IsActive)
-            throw new ArgumentException("Selected department is invalid or inactive.");
-
-        // 3. Mandatory CaseType validation: exactly Inquiry, Complaint, Service
-        var validCaseTypes = new[] { "Inquiry", "Complaint", "Service" };
-        if (string.IsNullOrWhiteSpace(dto.CaseType) || !validCaseTypes.Contains(dto.CaseType.Trim(), StringComparer.OrdinalIgnoreCase))
-            throw new ArgumentException("Case Type must be one of: Inquiry, Complaint, Service.");
-
-        // 4. Mandatory Subcategory validation & hierarchy check (Department -> Sub-Category)
-        if (string.IsNullOrWhiteSpace(dto.Subcategory))
-            throw new ArgumentException("Sub-category is required.");
-
-        var validSubcategory = await _context.DepartmentSubCategories
-            .AnyAsync(s => s.DepartmentId == dto.DepartmentId && s.Name.ToLower() == dto.Subcategory.Trim().ToLower() && s.IsActive, ct);
-        if (!validSubcategory)
-            throw new ArgumentException($"Sub-category '{dto.Subcategory}' is invalid for department '{department.Name}'.");
-
-        // 5. Mandatory Channel validations
-        var validSourceChannels = new[] { "Voice", "Email", "WhatsApp" };
-        var sourceChan = !string.IsNullOrWhiteSpace(dto.SourceChannel) 
-            ? dto.SourceChannel.Trim() 
-            : (!string.IsNullOrWhiteSpace(dto.CommunicationChannel) ? dto.CommunicationChannel.Trim() : "");
-        if (string.IsNullOrWhiteSpace(sourceChan) || !validSourceChannels.Contains(sourceChan, StringComparer.OrdinalIgnoreCase))
-            throw new ArgumentException("Source Channel must be one of: Voice, Email, WhatsApp.");
-
-        var validPreferredChannels = new[] { "Phone", "Email", "WhatsApp" };
-        var prefChan = !string.IsNullOrWhiteSpace(dto.PreferredCommunicationChannel) ? dto.PreferredCommunicationChannel.Trim() : "Phone";
-        if (!validPreferredChannels.Contains(prefChan, StringComparer.OrdinalIgnoreCase))
-            throw new ArgumentException("Preferred Communication Channel must be one of: Phone, Email, WhatsApp.");
-
-        // 6. Mandatory Title & Description
-        if (string.IsNullOrWhiteSpace(dto.Title))
-            throw new ArgumentException("Case Title is required.");
-        if (string.IsNullOrWhiteSpace(dto.Description))
-            throw new ArgumentException("Description is required.");
-
-        // 7. Mandatory Severity check
-        var validSeverities = new[] { "Critical", "High", "Medium", "Low" };
-        if (!string.IsNullOrWhiteSpace(dto.Severity) && !validSeverities.Contains(dto.Severity.Trim(), StringComparer.OrdinalIgnoreCase))
-            throw new ArgumentException("Severity must be one of: Critical, High, Medium, Low.");
-
-        // 8. FieldConfigurations dynamic checks
-        var configs = await _context.FieldConfigurations
-            .AsNoTracking()
-            .Where(f => f.ModuleKey == "CaseManagement" && f.SectionKey == "CreateCase")
-            .ToListAsync(ct);
-
-        if (!configs.Any()) return;
-
-        foreach (var cfg in configs)
         {
-            if (!cfg.IsVisible) continue; // Skip hidden fields
-
-            string? val = cfg.ApiField.ToLowerInvariant() switch
+            errors.Add(new FieldError("departmentId", "Department is required."));
+        }
+        else
+        {
+            department = await _context.Departments.AsNoTracking().FirstOrDefaultAsync(d => d.Id == dto.DepartmentId, ct);
+            if (department == null || !department.IsActive)
             {
-                "casetype" => dto.CaseType,
-                "title" => dto.Title,
-                "description" => dto.Description,
-                "subcategory" => dto.Subcategory,
-                "preferredlanguage" => dto.PreferredLanguage,
-                "communicationchannel" => dto.CommunicationChannel,
-                "preferredcommunicationchannel" => dto.PreferredCommunicationChannel,
-                "sourcechannel" => dto.SourceChannel,
-                "severity" => dto.Severity,
-                "selectcustomer" => dto.CustomerId != Guid.Empty ? dto.CustomerId.ToString() : null,
-                "departmentid" => dto.DepartmentId != Guid.Empty ? dto.DepartmentId.ToString() : null,
-                _ => null
-            };
-
-            var strVal = val?.Trim();
-
-            // 1. Mandatory check
-            if (cfg.IsRequired && string.IsNullOrEmpty(strVal))
-            {
-                throw new ArgumentException($"{cfg.DisplayLabel} is required.");
-            }
-
-            if (!string.IsNullOrEmpty(strVal))
-            {
-                // 2. MinLength check
-                if (cfg.MinLength.HasValue && strVal.Length < cfg.MinLength.Value)
-                {
-                    throw new ArgumentException($"{cfg.DisplayLabel} must be at least {cfg.MinLength.Value} characters.");
-                }
-
-                // 3. MaxLength check
-                if (cfg.MaxLength.HasValue && strVal.Length > cfg.MaxLength.Value)
-                {
-                    throw new ArgumentException($"{cfg.DisplayLabel} cannot exceed {cfg.MaxLength.Value} characters.");
-                }
-
-                // 4. Regex check
-                if (!string.IsNullOrWhiteSpace(cfg.ValidationRegex))
-                {
-                    try
-                    {
-                        var regex = new System.Text.RegularExpressions.Regex(cfg.ValidationRegex);
-                        if (!regex.IsMatch(strVal))
-                        {
-                            throw new ArgumentException($"{cfg.DisplayLabel} format is invalid.");
-                        }
-                    }
-                    catch (System.Text.RegularExpressions.RegexParseException)
-                    {
-                        // Ignore invalid regex in configuration
-                    }
-                }
+                errors.Add(new FieldError("departmentId", "Selected department is invalid or inactive."));
+                department = null;
             }
         }
+
+        CaseTypeConfig? caseType = null;
+        var caseTypeInput = dto.CaseType?.Trim() ?? string.Empty;
+        if (caseTypeInput.Length == 0)
+        {
+            errors.Add(new FieldError("caseType", "Case type is required."));
+        }
+        else
+        {
+            var lowered = caseTypeInput.ToLower();
+            caseType = await _context.CaseTypeConfigs.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.IsActive && (c.Code.ToLower() == lowered || c.Name.ToLower() == lowered), ct);
+            if (caseType == null)
+                errors.Add(new FieldError("caseType", $"Case type '{caseTypeInput}' is not configured or is inactive."));
+        }
+
+        DepartmentSubCategory? subCategory = null;
+        var subCategoryInput = dto.Subcategory?.Trim() ?? string.Empty;
+        if (subCategoryInput.Length == 0)
+        {
+            errors.Add(new FieldError("subCategory", "Sub-category is required."));
+        }
+        else if (department != null)
+        {
+            var lowered = subCategoryInput.ToLower();
+            subCategory = await _context.DepartmentSubCategories.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.DepartmentId == department.Id && s.IsActive && s.Name.ToLower() == lowered, ct);
+            if (subCategory == null)
+                errors.Add(new FieldError("subCategory", $"Sub-category '{subCategoryInput}' is invalid for department '{department.Name}'."));
+        }
+
+        // 2. Configuration-driven checks: required, lengths, patterns, field types, dropdown options, custom fields.
+        var preferred = dto.PreferredCommunicationChannel;
+        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["caseType"] = caseType?.Name,
+            ["title"] = dto.Title,
+            ["description"] = dto.Description,
+            ["selectCustomer"] = customerId?.ToString(),
+            ["departmentId"] = department?.Id.ToString(),
+            ["subCategory"] = subCategory?.Name,
+            ["preferredLanguage"] = dto.PreferredLanguage,
+            ["preferredCommunicationChannel"] = preferred,
+            ["communicationChannel"] = preferred,                                   // legacy key for the same field
+            ["sourceChannel"] = !string.IsNullOrWhiteSpace(dto.SourceChannel) ? dto.SourceChannel : dto.CommunicationChannel,
+            ["severity"] = dto.Severity,
+        };
+        foreach (var (key, value) in dto.CustomAttributes ?? new Dictionary<string, string>())
+            values[key] = value;
+
+        // Fields whose problem was already reported structurally are not reported a second time as "required".
+        var alreadyFailed = errors.Select(e => e.Field).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var result = await engine.ValidateAsync(
+            "CaseManagement", "CreateCase", values,
+            customFieldKeys: dto.CustomAttributes?.Keys,
+            // The priority is mandatory only when the sub-category has no configured one; the priority resolver
+            // owns that rule (and its error message).
+            requirednessHandledElsewhere: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "severity" },
+            ct);
+        errors.AddRange(result.Errors.Where(e => !alreadyFailed.Contains(e.Field)));
+
+        if (errors.Count > 0) throw new FieldValidationException(errors);
+
+        var custom = result.Normalized
+            .Where(kv => (dto.CustomAttributes?.ContainsKey(kv.Key) ?? false) && kv.Value.Length > 0)
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+        return new ValidatedCase(department!, caseType!, subCategory!, result.Normalized, custom);
     }
 }

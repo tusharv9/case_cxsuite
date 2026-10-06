@@ -11,6 +11,7 @@ public interface IConfigurableSettingsService
     Task<FieldConfigurationDto?> UpdateFieldConfigurationAsync(Guid id, UpdateFieldConfigurationDto dto, CancellationToken ct = default);
     Task<bool> DeleteFieldConfigurationAsync(Guid id, CancellationToken ct = default);
 
+    Task<IEnumerable<LookupTypeDto>> GetLookupTypesAsync(CancellationToken ct = default);
     Task<IEnumerable<LookupValueDto>> GetLookupValuesAsync(string typeCode, bool activeOnly = true, CancellationToken ct = default);
     Task<LookupValueDto> AddLookupValueAsync(CreateLookupValueDto dto, CancellationToken ct = default);
     Task<LookupValueDto?> UpdateLookupValueAsync(Guid id, UpdateLookupValueDto dto, CancellationToken ct = default);
@@ -27,10 +28,8 @@ public interface IConfigurableSettingsService
     Task<DepartmentSubCategoryDto?> UpdateSubCategoryAsync(Guid id, UpdateDepartmentSubCategoryDto dto, CancellationToken ct = default);
     Task<bool> DeleteSubCategoryAsync(Guid id, CancellationToken ct = default);
 
-    Task<IEnumerable<SlaConfigurationDto>> GetSlaConfigurationsAsync(CancellationToken ct = default);
-
-    // Severity master data — kept in step with SLA Configuration and with stored cases.
-    Task<IEnumerable<string>> GetSeveritiesAsync(CancellationToken ct = default);
+    // Priority ("severity") master data. Priorities live in PrioritySlaRules — the same rows the
+    // Cases SLA & Routing screen edits — so there is exactly one list and one set of SLA targets.
     Task<IEnumerable<SeverityDto>> GetSeverityConfigurationsAsync(CancellationToken ct = default);
     Task<SeverityDto> AddSeverityAsync(CreateSeverityDto dto, CancellationToken ct = default);
     Task<SeverityDto?> UpdateSeverityAsync(Guid id, UpdateSeverityDto dto, CancellationToken ct = default);

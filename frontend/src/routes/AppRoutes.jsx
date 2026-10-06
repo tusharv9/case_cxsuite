@@ -4,6 +4,8 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout/AppLayout.jsx';
 import { Loader } from '../components/common/Loader/Loader.jsx';
+import { IdentityGate } from '../components/layout/IdentityGate/IdentityGate.jsx';
+import { RequirePermission } from '../components/common/RequirePermission/RequirePermission.jsx';
 
 const DashboardPage        = lazy(() => import('../pages/Dashboard/DashboardPage.jsx').then(m => ({ default: m.DashboardPage })));
 const CustomerDirectoryPage = lazy(() => import('../pages/CustomerDirectory/CustomerDirectoryPage.jsx').then(m => ({ default: m.CustomerDirectoryPage })));
@@ -25,6 +27,7 @@ function PageLoader() {
 
 export function AppRoutes() {
   return (
+    <IdentityGate>
     <AppLayout>
       <Suspense fallback={<PageLoader />}>
         <Routes>
@@ -42,27 +45,28 @@ export function AppRoutes() {
           <Route path="/case-management/:caseId" element={<CaseManagementPage />} />
 
           {/* Cases SLA & Routing Configuration */}
-          <Route path="/cases-sla-routing" element={<CasesSlaRoutingPage />} />
+          <Route path="/cases-sla-routing" element={<RequirePermission permission="config.manage"><CasesSlaRoutingPage /></RequirePermission>} />
 
           {/* Teams Management */}
           <Route path="/teams" element={<TeamsPage />} />
 
           {/* Team Operational Monitoring */}
-          <Route path="/team-monitoring" element={<TeamMonitoringPage />} />
-          <Route path="/team-monitor" element={<TeamMonitoringPage />} />
+          <Route path="/team-monitoring" element={<RequirePermission permission="monitoring.view"><TeamMonitoringPage /></RequirePermission>} />
+          <Route path="/team-monitor" element={<RequirePermission permission="monitoring.view"><TeamMonitoringPage /></RequirePermission>} />
 
           {/* Case Audit Trail */}
-          <Route path="/case-audit" element={<CaseAuditTrailPage />} />
-          <Route path="/audit-logs" element={<CaseAuditTrailPage />} />
+          <Route path="/case-audit" element={<RequirePermission permission="audit.view"><CaseAuditTrailPage /></RequirePermission>} />
+          <Route path="/audit-logs" element={<RequirePermission permission="audit.view"><CaseAuditTrailPage /></RequirePermission>} />
 
           {/* Configurable Settings */}
-          <Route path="/configurable-settings" element={<ConfigurableSettingsPage />} />
-          <Route path="/field-settings" element={<ConfigurableSettingsPage />} />
+          <Route path="/configurable-settings" element={<RequirePermission permission="config.manage"><ConfigurableSettingsPage /></RequirePermission>} />
+          <Route path="/field-settings" element={<RequirePermission permission="config.manage"><ConfigurableSettingsPage /></RequirePermission>} />
 
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </AppLayout>
+    </IdentityGate>
   );
 }

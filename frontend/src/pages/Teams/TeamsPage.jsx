@@ -6,10 +6,13 @@ import { Loader } from '../../components/common/Loader/Loader.jsx';
 import { CreateTeamDrawer } from '../../components/drawer/CreateTeamDrawer/CreateTeamDrawer.jsx';
 import { teamService } from '../../services/teamService.js';
 import { useToast } from '../../hooks/useToast.js';
+import { useApp } from '../../contexts/AppContext.jsx';
 import './TeamsPage.css';
 
 export function TeamsPage() {
   const toast = useToast();
+  const { can } = useApp();
+  const canManage = can('teams.manage'); // server enforces this too; the UI just doesn't offer what would be refused
   const [teams, setTeams] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -110,14 +113,16 @@ export function TeamsPage() {
           </p>
         </div>
         <div className="teams-page__header-actions">
-          <Button
-            variant="primary"
-            icon={<Plus size={16} />}
-            onClick={() => setIsDrawerOpen(true)}
-            id="btn-create-team"
-          >
-            Create Team
-          </Button>
+          {canManage && (
+            <Button
+              variant="primary"
+              icon={<Plus size={16} />}
+              onClick={() => setIsDrawerOpen(true)}
+              id="btn-create-team"
+            >
+              Create Team
+            </Button>
+          )}
         </div>
       </header>
 
@@ -132,9 +137,11 @@ export function TeamsPage() {
             <Users size={48} className="teams-page__empty-icon" />
             <h3>No Teams Configured</h3>
             <p>Create your first operational squad to begin managing cases and agent queues.</p>
-            <Button variant="primary" icon={<Plus size={16} />} onClick={() => setIsDrawerOpen(true)}>
-              Create Team
-            </Button>
+            {canManage && (
+              <Button variant="primary" icon={<Plus size={16} />} onClick={() => setIsDrawerOpen(true)}>
+                Create Team
+              </Button>
+            )}
           </div>
         ) : (
           <div className="teams-grid">
@@ -164,7 +171,8 @@ export function TeamsPage() {
                         type="button"
                         className={`team-toggle-switch ${isActive ? 'team-toggle-switch--on' : 'team-toggle-switch--off'}`}
                         onClick={() => handleToggleTeam(team)}
-                        title={`Click to set team ${isActive ? 'Inactive' : 'Active'}`}
+                        disabled={!canManage}
+                        title={canManage ? `Click to set team ${isActive ? 'Inactive' : 'Active'}` : 'You do not have permission to change teams'}
                         aria-label={`Toggle ${team.name} status`}
                       >
                         <span className="team-toggle-slider" />
@@ -198,7 +206,7 @@ export function TeamsPage() {
                               )}
                             </div>
                             {/* Remove Member Button */}
-                            {!isLead && (
+                            {!isLead && canManage && (
                               <button
                                 type="button"
                                 className="team-card__member-remove-btn"

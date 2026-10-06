@@ -7,10 +7,13 @@ import { Loader } from '../../components/common/Loader/Loader.jsx';
 import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import { teamMonitoringService } from '../../services/teamMonitoringService.js';
 import { useToast } from '../../hooks/useToast.js';
+import { useApp } from '../../contexts/AppContext.jsx';
 import './TeamMonitoringPage.css';
 
 export function TeamMonitoringPage() {
   const toast = useToast();
+  const { can } = useApp();
+  const canNudge = can('monitoring.nudge');
 
   const [summary, setSummary] = useState(null);
   const [agents, setAgents] = useState([]);
@@ -263,8 +266,8 @@ export function TeamMonitoringPage() {
                           <button
                             className="btn-nudge"
                             onClick={() => handleNudge(agent)}
-                            disabled={nudgingAgentId === agent.userId}
-                            title={`Send nudge to ${agent.name}`}
+                            disabled={!canNudge || nudgingAgentId === agent.userId}
+                            title={canNudge ? `Send nudge to ${agent.name}` : 'You do not have permission to nudge agents'}
                           >
                             {nudgingAgentId === agent.userId ? 'Nudging…' : 'Nudge'}
                           </button>

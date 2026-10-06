@@ -1,5 +1,6 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -9,6 +10,7 @@ using System.Threading.Tasks;
 
 [ApiController]
 [Route("api/sla-routing")]
+[RequirePermission(null, Permissions.ConfigManage)]
 public class CasesSlaRoutingController : BaseApiController
 {
     private readonly ISlaRoutingService _slaRoutingService;
@@ -23,6 +25,17 @@ public class CasesSlaRoutingController : BaseApiController
     {
         var config = await _slaRoutingService.GetFullConfigurationAsync(ct);
         return Ok(config);
+    }
+
+    /// <summary>
+    /// The priority a new case in this department/sub-category would get (and its SLA hours), so the Create
+    /// Case form can show it without downloading the whole SLA configuration.
+    /// </summary>
+    [HttpGet("resolve-priority")]
+    public async Task<IActionResult> ResolvePriority([FromQuery] Guid? departmentId, [FromQuery] string? subcategory, CancellationToken ct = default)
+    {
+        var resolution = await _slaRoutingService.PreviewPriorityAsync(departmentId, subcategory, ct);
+        return Ok(resolution);
     }
 
     [HttpPut("configuration")]

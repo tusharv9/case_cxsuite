@@ -1,11 +1,13 @@
 namespace CaseManagement.Api.Controllers;
 
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
 [Route("api/[controller]")]
+[RequirePermission(Permissions.CustomersRead, Permissions.CustomersWrite)]
 public class CustomersController : BaseApiController
 {
     private readonly ICustomerService _customerService;
@@ -26,19 +28,12 @@ public class CustomersController : BaseApiController
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        // Server-side pagination / search / filter when parameters are present
-        if (!string.IsNullOrWhiteSpace(search) ||
-            !string.IsNullOrWhiteSpace(preferredLanguage) ||
-            !string.IsNullOrWhiteSpace(branch) ||
-            page > 1 || pageSize < 1000)
-        {
-            var paged = await _customerService.GetPaginatedCustomersAsync(search, preferredLanguage, branch, page, pageSize, ct);
-            return Ok(paged);
-        }
-
-        // Legacy: return all (for backward compatibility)
-        var customers = await _customerService.GetAllCustomersAsync();
-        return Ok(customers);
+        // Always paginated (and masked per row by the service). The former "return every customer"
+        // branch handed out raw entities for large page sizes, so it is gone; page size is capped.
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var paged = await _customerService.GetPaginatedCustomersAsync(search, preferredLanguage, branch, page, pageSize, ct);
+        return Ok(paged);
     }
 
     [HttpGet("{id:guid}/360")]
@@ -70,7 +65,11 @@ public class CustomersController : BaseApiController
         try
         {
             var newCustomer = await _customerService.CreateCustomerAsync(dto, CurrentUserId);
-            return CreatedAtAction(nameof(GetCustomer360), new { id = newCustomer.Id }, newCustomer);
+
+            // Respond with the same masked view everyone gets, never the stored entity.
+            var detail = await _customerService.GetCustomer360Async(newCustomer.Id);
+            if (detail != null) await _piiMasking.MaskCustomerDetailAsync(detail);
+            return CreatedAtAction(nameof(GetCustomer360), new { id = newCustomer.Id }, detail);
         }
         catch (InvalidOperationException ex)
         {
@@ -79,6 +78,7 @@ public class CustomersController : BaseApiController
     }
 
     [HttpPost("search")]
+    [RequirePermission(Permissions.CustomersRead)] // a read, even though it is a POST
     public async Task<IActionResult> SearchCustomer([FromBody] CustomerSearchDto dto, CancellationToken ct)
     {
         var customer = await _customerService.SearchCustomerAsync(dto, ct);

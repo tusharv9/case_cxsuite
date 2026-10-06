@@ -25,8 +25,8 @@ import { useApp } from '../../contexts/AppContext.jsx';
 import { caseService } from '../../services/caseService.js';
 import { departmentService } from '../../services/departmentService.js';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
+import { ErrorState } from '../../components/common/Loader/Loader.jsx';
 import { DeptBadge } from '../../components/common/Badge/Badge.jsx';
-import { getSlaConfig } from '../../utils/slaUtils.js';
 import { useNow } from '../../hooks/useNow.js';
 import { EmptyState } from '../../components/common/Loader/Loader.jsx';
 import { Skeleton } from '../../components/common/Skeleton/Skeleton.jsx';
@@ -74,6 +74,7 @@ export function DashboardPage() {
   const [summaryData, setSummaryData] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   // Configurable master data states
   const [quickActionsConfig, setQuickActionsConfig] = useState([]);
@@ -151,9 +152,14 @@ export function DashboardPage() {
     }
     if (myCasesOnly) params.myCasesOnly = true;
 
+    setLoadError(null);
     caseService.getDashboardSummary(params)
       .then((data) => setSummaryData(data))
-      .catch((err) => console.error('Failed to load dashboard summary:', err))
+      .catch((err) => {
+        // Show the failure. Rendering zeros and "100 % SLA" for a failed load looks like real data.
+        console.error('Failed to load dashboard summary:', err);
+        setLoadError(err?.message || 'The dashboard data could not be loaded.');
+      })
       .finally(() => setIsLoading(false));
   }, [deptFilter, caseTypeFilter, statusFilter, severityFilter, dateRange, customStartDate, customEndDate, myCasesOnly]);
 
@@ -219,12 +225,14 @@ export function DashboardPage() {
   const severityChartData = useMemo(() => {
     if (!summaryData) return [];
     const total = summaryData.totalCases || 1;
-    return [
-      { name: 'Critical', count: summaryData.criticalCases, color: '#ef4444', pct: Math.round((summaryData.criticalCases / total) * 100) },
-      { name: 'High', count: summaryData.highCases, color: '#f97316', pct: Math.round((summaryData.highCases / total) * 100) },
-      { name: 'Medium', count: summaryData.mediumCases, color: '#f59e0b', pct: Math.round((summaryData.mediumCases / total) * 100) },
-      { name: 'Low', count: summaryData.lowCases, color: '#10b981', pct: Math.round((summaryData.lowCases / total) * 100) },
-    ];
+    // Priorities are administrator-defined; colour is by urgency rank (the list arrives most-urgent first).
+    const palette = ['#ef4444', '#f97316', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#64748b'];
+    return (summaryData.casesBySeverity || []).map((row, i) => ({
+      name: row.severity,
+      count: row.count,
+      color: palette[Math.min(i, palette.length - 1)],
+      pct: Math.round((row.count / total) * 100),
+    }));
   }, [summaryData]);
 
   // Analytics: Cases Resolved Over Time (Smooth Line Chart Data)
@@ -367,12 +375,7 @@ export function DashboardPage() {
   }, [caseTypesConfig]);
 
   const severitiesList = useMemo(() => {
-    const raw = severityConfig.length > 0 ? severityConfig : [
-      { id: 'sv-1', name: 'Critical', isActive: true },
-      { id: 'sv-2', name: 'High', isActive: true },
-      { id: 'sv-3', name: 'Medium', isActive: true },
-      { id: 'sv-4', name: 'Low', isActive: true },
-    ];
+    const raw = severityConfig;
     return raw.filter((sv) => sv.isActive !== false);
   }, [severityConfig]);
 
@@ -413,6 +416,18 @@ export function DashboardPage() {
             ))}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (loadError && !summaryData) {
+    return (
+      <div className="dashboard-page">
+        <ErrorState
+          title="Couldn't load the dashboard"
+          message={loadError}
+          onRetry={fetchDashboardData}
+        />
       </div>
     );
   }

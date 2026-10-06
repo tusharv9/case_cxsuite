@@ -7,11 +7,14 @@ using CaseManagement.Api.Models;
 using CaseManagement.Api.Services;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
+using CaseManagement.Api.HostIntegration;
 
 namespace CaseManagement.Tests;
 
 public class PiiMaskingTests
 {
+    private static IConfigCache NewCache() => new ConfigCache(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()));
+
     private AppDbContext CreateInMemoryDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -24,7 +27,7 @@ public class PiiMaskingTests
     public void Mask_FullMask_ReturnsAllAsterisks()
     {
         using var db = CreateInMemoryDbContext();
-        var service = new PiiMaskingService(db);
+        var service = new PiiMaskingService(db, NewCache());
 
         var result = service.Mask("900101-14-5555", "FullMask");
 
@@ -35,7 +38,7 @@ public class PiiMaskingTests
     public void Mask_HideMiddle_PreservesPrefixAndSuffix()
     {
         using var db = CreateInMemoryDbContext();
-        var service = new PiiMaskingService(db);
+        var service = new PiiMaskingService(db, NewCache());
 
         // "0123456789", visibleChars = 2 -> prefix "01", middle "***", suffix "89"
         var result = service.Mask("0123456789", "HideMiddle", 2);
@@ -47,7 +50,7 @@ public class PiiMaskingTests
     public void Mask_HideFirstShowLast_HidesPrefixShowsSuffix()
     {
         using var db = CreateInMemoryDbContext();
-        var service = new PiiMaskingService(db);
+        var service = new PiiMaskingService(db, NewCache());
 
         var result = service.Mask("+60123456789", "HideFirstShowLast", 4);
 
@@ -58,7 +61,7 @@ public class PiiMaskingTests
     public void Mask_None_ReturnsOriginalValue()
     {
         using var db = CreateInMemoryDbContext();
-        var service = new PiiMaskingService(db);
+        var service = new PiiMaskingService(db, NewCache());
 
         var result = service.Mask("normal text", "None");
 
@@ -110,7 +113,7 @@ public class PiiMaskingTests
         );
         await db.SaveChangesAsync();
 
-        var service = new PiiMaskingService(db);
+        var service = new PiiMaskingService(db, NewCache());
 
         var summary = new CustomerSummaryDto
         {
@@ -129,5 +132,185 @@ public class PiiMaskingTests
         Assert.Contains("*", summary.NRIC);
         Assert.EndsWith("6789", summary.PhoneNumber);
         Assert.Null(summary.DateOfBirth);
+    }
+}
+
+public class PiiMaskingEngineTests
+{
+    private static IConfigCache NewCache() =>
+        new ConfigCache(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()));
+
+    private static AppDbContext NewDb() =>
+        new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+
+    private static FieldConfiguration Field(string apiField, string rule, int visible, string section = "AddNewCustomer", bool sensitive = true) => new()
+    {
+        Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = section, ApiField = apiField, DisplayLabel = apiField,
+        IsSensitive = sensitive, MaskingRule = rule, VisibleChars = visible, CreatedAt = DateTime.UtcNow
+    };
+
+    private static ICurrentUserAccessor User(params string[] permissions)
+    {
+        var mock = new Moq.Mock<ICurrentUserAccessor>();
+        mock.SetupGet(u => u.Permissions).Returns(new HashSet<string>(permissions));
+        return mock.Object;
+    }
+
+    private static CustomerDetailDto Customer() => new()
+    {
+        Id = Guid.NewGuid(), FullName = "Ahmad Razak", IdType = "Passport Number",
+        IdValue = "A98765432", NRIC = "900101-14-5555", Passport = "A98765432", AccountNumber = "ACC-1234567",
+        PhoneNumber = "+60123456789", Email = "ahmad@example.test", DateOfBirth = new DateTime(1990, 1, 1)
+    };
+
+    [Fact]
+    public async Task OneIdValueRule_CoversEveryIdentifierProperty_NotJustNric()
+    {
+        // The audit's leak: masking was keyed to a field name ("nric") that does not exist in the seeded
+        // configuration, and IdValue/Passport/AccountNumber were never masked at all.
+        using var db = NewDb();
+        db.FieldConfigurations.Add(Field("idValue", "HideFirstShowLast", 4));
+        await db.SaveChangesAsync();
+
+        var dto = Customer();
+        await new PiiMaskingService(db, NewCache(), User()).MaskAsync(dto);
+
+        Assert.Equal("*****5432", dto.IdValue);
+        Assert.EndsWith("5555", dto.NRIC);
+        Assert.DoesNotContain("900101", dto.NRIC);
+        Assert.EndsWith("5432", dto.Passport);
+        Assert.DoesNotContain("A9876", dto.Passport);
+        Assert.EndsWith("4567", dto.AccountNumber);
+        Assert.DoesNotContain("ACC-", dto.AccountNumber);
+    }
+
+    [Fact]
+    public async Task ASpecificFieldRule_OverridesTheGeneralOne_ForThatPropertyOnly()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.AddRange(Field("idValue", "HideFirstShowLast", 4), Field("passport", "FullMask", 0));
+        await db.SaveChangesAsync();
+
+        var dto = Customer();
+        await new PiiMaskingService(db, NewCache(), User()).MaskAsync(dto);
+
+        Assert.Equal(new string('*', 9), dto.Passport);   // specific rule wins
+        Assert.EndsWith("5432", dto.IdValue);             // general rule still applies elsewhere
+    }
+
+    [Fact]
+    public async Task Email_FullName_AndDate_AreMaskedWhenConfiguredSensitive()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.AddRange(Field("email", "HideMiddle", 2), Field("fullName", "HideFirstShowLast", 3), Field("dateOfBirth", "FullMask", 0));
+        await db.SaveChangesAsync();
+
+        var dto = Customer();
+        await new PiiMaskingService(db, NewCache(), User()).MaskAsync(dto);
+
+        Assert.StartsWith("ah", dto.Email);
+        Assert.Contains("*", dto.Email);
+        Assert.EndsWith("zak", dto.FullName);
+        Assert.DoesNotContain("Ahmad", dto.FullName);
+        Assert.Null(dto.DateOfBirth);
+    }
+
+    [Fact]
+    public async Task NothingIsMasked_WhenNothingIsConfiguredSensitive()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.Add(Field("phoneNumber", "FullMask", 0, sensitive: false));
+        await db.SaveChangesAsync();
+
+        var dto = Customer();
+        await new PiiMaskingService(db, NewCache(), User()).MaskAsync(dto);
+
+        Assert.Equal("+60123456789", dto.PhoneNumber);
+    }
+
+    [Fact]
+    public async Task WhenRowsDisagree_TheMostRestrictiveRuleWins()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.AddRange(
+            Field("phoneNumber", "HideFirstShowLast", 8, section: "AddNewCustomer"),
+            Field("phoneNumber", "HideFirstShowLast", 2, section: "ExistingCustomer"));
+        await db.SaveChangesAsync();
+
+        var dto = Customer();
+        await new PiiMaskingService(db, NewCache(), User()).MaskAsync(dto);
+
+        Assert.EndsWith("89", dto.PhoneNumber);
+        Assert.Equal(12, dto.PhoneNumber.Length);
+        Assert.DoesNotContain("6789", dto.PhoneNumber);   // only 2 characters visible, not 8
+    }
+
+    [Fact]
+    public async Task CustomAttributes_AreMaskedByTheirOwnKey()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.Add(Field("taxId", "FullMask", 0));
+        await db.SaveChangesAsync();
+
+        var dto = Customer();
+        dto.CustomAttributes = new List<CustomerCustomAttributeDto>
+        {
+            new() { FieldKey = "taxId", FieldValue = "TX-998877" },
+            new() { FieldKey = "favouriteColour", FieldValue = "blue" },
+        };
+        await new PiiMaskingService(db, NewCache(), User()).MaskAsync(dto);
+
+        Assert.Equal(new string('*', "TX-998877".Length), dto.CustomAttributes[0].FieldValue);
+        Assert.Equal("blue", dto.CustomAttributes[1].FieldValue);
+    }
+
+    [Fact]
+    public async Task Unmasking_NeedsTheExplicitPermission_TheWildcardIsNotEnough()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.Add(Field("phoneNumber", "FullMask", 0));
+        await db.SaveChangesAsync();
+
+        var wildcard = Customer();
+        await new PiiMaskingService(db, NewCache(), User("*")).MaskAsync(wildcard);
+        Assert.DoesNotContain("123456789", wildcard.PhoneNumber);
+
+        var granted = Customer();
+        await new PiiMaskingService(db, NewCache(), User("pii.unmask")).MaskAsync(granted);
+        Assert.Equal("+60123456789", granted.PhoneNumber);
+
+        var noCaller = Customer();   // e.g. background work: no accessor at all => masked
+        await new PiiMaskingService(db, NewCache(), null).MaskAsync(noCaller);
+        Assert.DoesNotContain("123456789", noCaller.PhoneNumber);
+    }
+
+    [Fact]
+    public async Task ChangingTheConfiguration_TakesEffectImmediately_ThroughTheCache()
+    {
+        using var db = NewDb();
+        var cache = NewCache();
+        var service = new PiiMaskingService(db, cache, User());
+
+        var before = Customer();
+        await service.MaskAsync(before);                       // nothing configured yet; result is cached
+        Assert.Equal("+60123456789", before.PhoneNumber);
+
+        db.FieldConfigurations.Add(Field("phoneNumber", "FullMask", 0));
+        await db.SaveChangesAsync();
+        cache.InvalidateAll();                                 // what ConfigChangeInterceptor does on save
+
+        var after = Customer();
+        await service.MaskAsync(after);
+        Assert.DoesNotContain("123456789", after.PhoneNumber);
+    }
+
+    [Fact]
+    public void HideMiddle_NeverRevealsAShortValue()
+    {
+        // The browser-side version returned short values UNMASKED; the single server implementation masks them fully.
+        using var db = NewDb();
+        var service = new PiiMaskingService(db, NewCache());
+        Assert.Equal("****", service.Mask("1234", "HideMiddle", 2));
+        Assert.Equal("******", service.Mask("123456", "HideMiddle", 3));
     }
 }

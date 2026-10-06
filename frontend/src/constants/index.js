@@ -2,11 +2,9 @@
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
-// Default logged-in user ID (first user from /api/users is used until auth is wired)
+// STANDALONE (development) only: the user picked in the dev user picker. Under a Host App identity
+// comes from the Host's token and this key is never read or written.
 export const LOGGED_IN_USER_ID_KEY = 'csm_logged_in_user_id';
-
-// Seeded fallback user ID (Siti Nurhaliza) — used as X-User-Id header on bootstrap
-export const DEFAULT_USER_ID = '89c65b43-8858-40b7-bfd4-1d7d56f085e0'; // Siti Nurhaliza
 
 // Case Status
 export const CASE_STATUS = {
@@ -25,37 +23,7 @@ export const CASE_STATUS_LABELS = {
   Resolved: 'Resolved',
 };
 
-// Severity (Strictly: Low, Medium, High, Critical)
-export const SEVERITY = {
-  LOW: 'Low',
-  MEDIUM: 'Medium',
-  HIGH: 'High',
-  CRITICAL: 'Critical',
-};
-
-export const SEVERITY_LABELS = {
-  Low: 'Low',
-  Medium: 'Medium',
-  High: 'High',
-  Critical: 'Critical',
-  // Backward compatibility fallback for legacy data
-  Ok: 'Low',
-  Info: 'Medium',
-  Warn: 'High',
-  Bad: 'Critical',
-};
-
-// SLA Configurations (Internal SLA is 2 hours less than External SLA)
-export const SEVERITY_SLA_MAPPING = {
-  Critical: { external: 4, internal: 2 },
-  High: { external: 8, internal: 6 },
-  Medium: { external: 12, internal: 10 },
-  Low: { external: 24, internal: 22 },
-  Bad: { external: 4, internal: 2 },
-  Warn: { external: 8, internal: 6 },
-  Info: { external: 12, internal: 10 },
-  Ok: { external: 24, internal: 22 },
-};
+// Priorities (severities), their SLA targets and display order are configuration: fetch them from the API.
 
 // Event types
 export const EVENT_TYPE_LABELS = {
@@ -101,33 +69,6 @@ export const STATUS_FILTER_OPTIONS = [
   { value: 'WaitingOnCustomer', label: 'Waiting on Customer' },
   { value: 'Escalated', label: 'Escalated' },
   { value: 'Resolved', label: 'Resolved' },
-];
-
-export const PRIORITY_FILTER_OPTIONS = [
-  { value: 'all', label: 'All priorities' },
-  { value: 'Critical', label: 'Critical' },
-  { value: 'High', label: 'High' },
-  { value: 'Medium', label: 'Medium' },
-  { value: 'Low', label: 'Low' },
-];
-
-export const CHANNEL_FILTER_OPTIONS = [
-  { value: 'all', label: 'All channels' },
-  { value: 'Voice', label: 'Voice' },
-  { value: 'Email', label: 'Email' },
-  { value: 'WhatsApp', label: 'WhatsApp' },
-];
-
-export const SOURCE_CHANNEL_OPTIONS = [
-  { value: 'Voice', label: 'Voice' },
-  { value: 'Email', label: 'Email' },
-  { value: 'WhatsApp', label: 'WhatsApp' },
-];
-
-export const PREFERRED_COMMUNICATION_CHANNEL_OPTIONS = [
-  { value: 'Phone', label: 'Phone' },
-  { value: 'Email', label: 'Email' },
-  { value: 'WhatsApp', label: 'WhatsApp' },
 ];
 
 // Resolve dispositions

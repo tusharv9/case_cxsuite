@@ -6,7 +6,18 @@ using Microsoft.EntityFrameworkCore;
 public class PrioritySlaRule : AuditableEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
-    public string Priority { get; set; } = string.Empty; // Fixed: Critical, High, Medium, Low
+    /// <summary>
+    /// The priority's name (unique, case-insensitive). This table is the SINGLE source of truth for
+    /// priorities: the name list, its SLA targets and which sub-categories map to it. Administrators can add,
+    /// rename and reorder priorities; nothing in code assumes Critical/High/Medium/Low.
+    /// </summary>
+    public string Priority { get; set; } = string.Empty;
+
+    /// <summary>Position in lists and charts (lowest first = most urgent).</summary>
+    public int DisplayOrder { get; set; }
+
+    /// <summary>Inactive priorities cannot be chosen for new cases; existing cases keep theirs.</summary>
+    public bool IsActive { get; set; } = true;
 
     // First Response SLA
     public int FirstResponseValue { get; set; } = 30;

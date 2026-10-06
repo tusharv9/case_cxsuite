@@ -33,13 +33,13 @@ import { useCase } from '../../../contexts/CaseContext.jsx';
 import { useUsers } from '../../../hooks/useUsers.js';
 import { useDepartments } from '../../../hooks/useDepartments.js';
 import { caseService } from '../../../services/caseService.js';
+import { metadataService } from '../../../services/metadataService.js';
 import { getSlaDisplay, getSlaConfig } from '../../../utils/slaUtils.js';
 import { SlaDisplay } from '../../common/SlaDisplay/SlaDisplay.jsx';
 import { ConfirmDialog } from '../../common/ConfirmDialog/ConfirmDialog.jsx';
 import { useToast } from '../../../hooks/useToast.js';
 import { formatFullDateTime, formatDate } from '../../../utils/dateUtils.js';
 import { PARTICIPANT_ROLE } from '../../../constants/index.js';
-import { createFieldMasker } from '../../../utils/maskUtils.js';
 import { configurableSettingsService } from '../../../services/configurableSettingsService.js';
 import { ChannelBadge } from '../../case/ChannelBadge/ChannelBadge.jsx';
 import './CaseDrawer.css';
@@ -103,22 +103,19 @@ function FirstResponseBadge({ caseItem }) {
 
 // ---- Details Tab ----
 function DetailsTab({ caseData, onOpen360 }) {
+  // Labels of administrator-defined case fields, so custom attributes read as configured.
+  const [customLabels, setCustomLabels] = useState({});
+  const hasCustom = (caseData.customAttributes || []).length > 0;
+  useEffect(() => {
+    if (!hasCustom) return;
+    let live = true;
+    metadataService.getCaseForm()
+      .then((m) => live && setCustomLabels(Object.fromEntries(m.fields.map((f) => [f.apiField, f.displayLabel]))))
+      .catch(() => {});
+    return () => { live = false; };
+  }, [hasCustom]);
   const childRelations = caseData.childRelations || [];
   const reopenRelations = childRelations.filter((cr) => cr.relationType?.toLowerCase() === 'reopen');
-
-  const [masker, setMasker] = useState(() => (apiField, val) => (val === null || val === undefined ? '' : String(val)));
-
-  useEffect(() => {
-    let active = true;
-    configurableSettingsService
-      .getFields('Customer360', null, true)
-      .then((fields) => {
-        if (!active) return;
-        setMasker(() => createFieldMasker(fields || []));
-      })
-      .catch(() => {});
-    return () => { active = false; };
-  }, []);
 
   return (
     <div className="drawer-details scrollbar-thin">
@@ -130,7 +127,7 @@ function DetailsTab({ caseData, onOpen360 }) {
           <div className="drawer-customer-info">
             <div className="drawer-customer-header-line">
               <p className="drawer-customer-name">
-                {masker('fullName', caseData.customer?.fullName) || caseData.customer?.fullName || caseData.customerName || '—'}
+                {caseData.customer?.fullName || caseData.customerName || '—'}
               </p>
               {/* Dynamic DB-calculated Open and Total Case counts */}
               <div className="drawer-customer-case-counts">
@@ -198,21 +195,21 @@ function DetailsTab({ caseData, onOpen360 }) {
             <div className="key-details-row">
               <span className="key-details-label" title="Source Channel">Source Channel</span>
               <div className="key-details-value">
-                <ChannelBadge channel={caseData.sourceChannel || caseData.communicationChannel || 'Email'} />
+                <ChannelBadge channel={caseData.sourceChannel || caseData.communicationChannel || '—'} />
               </div>
             </div>
 
             <div className="key-details-row">
               <span className="key-details-label" title="Preferred Communication">Pref. Comm</span>
-              <span className="key-details-value" title={caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Email'}>
-                {caseData.preferredCommunicationChannel || caseData.communicationChannel || 'Email'}
+              <span className="key-details-value" title={caseData.preferredCommunicationChannel || caseData.communicationChannel || '—'}>
+                {caseData.preferredCommunicationChannel || caseData.communicationChannel || '—'}
               </span>
             </div>
 
             <div className="key-details-row">
               <span className="key-details-label" title="Preferred Language">Language</span>
-              <span className="key-details-value" title={caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}>
-                {caseData.preferredLanguage || caseData.customer?.preferredLanguage || 'Bahasa Malaysia'}
+              <span className="key-details-value" title={caseData.preferredLanguage || caseData.customer?.preferredLanguage || '—'}>
+                {caseData.preferredLanguage || caseData.customer?.preferredLanguage || '—'}
               </span>
             </div>
 
@@ -222,6 +219,15 @@ function DetailsTab({ caseData, onOpen360 }) {
                 <FirstResponseBadge caseItem={caseData} />
               </div>
             </div>
+
+            {(caseData.customAttributes || []).map((attr) => (
+              <div className="key-details-row" key={attr.fieldKey}>
+                <span className="key-details-label" title={customLabels[attr.fieldKey] || attr.fieldKey}>
+                  {customLabels[attr.fieldKey] || attr.fieldKey}
+                </span>
+                <span className="key-details-value" title={attr.fieldValue}>{attr.fieldValue}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

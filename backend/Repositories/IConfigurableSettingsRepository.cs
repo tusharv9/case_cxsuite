@@ -6,6 +6,7 @@ public interface IConfigurableSettingsRepository
 {
     Task<IEnumerable<FieldConfiguration>> GetFieldConfigurationsAsync(string moduleKey, string? sectionKey = null, CancellationToken ct = default);
     Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfiguration> fields, CancellationToken ct = default);
+    Task<FieldConfiguration?> GetFieldConfigurationAsync(Guid id, CancellationToken ct = default);
     Task<FieldConfiguration> AddFieldConfigurationAsync(FieldConfiguration field, CancellationToken ct = default);
     Task<FieldConfiguration?> UpdateFieldConfigurationAsync(Guid id, FieldConfiguration field, CancellationToken ct = default);
     Task<bool> DeleteFieldConfigurationAsync(Guid id, CancellationToken ct = default);
@@ -33,10 +34,6 @@ public interface IConfigurableSettingsRepository
     Task<bool> SubCategoryExistsAsync(Guid departmentId, string name, Guid? excludeId = null, CancellationToken ct = default);
     Task<bool> DepartmentExistsAsync(Guid departmentId, CancellationToken ct = default);
 
-    Task<IEnumerable<SlaConfiguration>> GetSlaConfigurationsAsync(CancellationToken ct = default);
-    Task<SlaConfiguration> SaveSlaConfigurationAsync(SlaConfiguration sla, CancellationToken ct = default);
-    Task<bool> DeleteSlaConfigurationBySeverityAsync(string severity, CancellationToken ct = default);
-    Task<bool> RenameSlaConfigurationAsync(string oldSeverity, string newSeverity, CancellationToken ct = default);
     Task<int> CountCasesBySeverityAsync(string severity, CancellationToken ct = default);
     Task<int> CountCasesByCaseTypeAsync(string code, string name, CancellationToken ct = default);
     Task<int> CountCasesBySubCategoryAsync(Guid departmentId, string name, CancellationToken ct = default);

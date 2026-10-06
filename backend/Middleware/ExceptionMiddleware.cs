@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System;
+using CaseManagement.Api.Services;
+using System.Linq;
 
 public class ExceptionMiddleware
 {
@@ -25,6 +27,15 @@ public class ExceptionMiddleware
             context.Response.ContentType = "application/json";
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message }));
+        }
+        catch (FieldValidationException ex)
+        {
+            // Every failing field, so the UI can mark each one. "error" keeps the single-message contract
+            // existing clients read; "errors" follows the RFC 7807 shape the frontend already understands.
+            context.Response.ContentType = "application/json";
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            var errors = ex.Errors.GroupBy(e => e.Field).ToDictionary(g => g.Key, g => g.Select(e => e.Message).ToArray());
+            await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message, errors }));
         }
         catch (ArgumentException ex)
         {

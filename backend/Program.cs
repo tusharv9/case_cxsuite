@@ -1,19 +1,27 @@
 using CaseManagement.Api.Data;
 using CaseManagement.Api.Extensions;
+using CaseManagement.Api.HostIntegration;
 using CaseManagement.Api.Middleware;
 using CaseManagement.Api.Repositories;
 using CaseManagement.Api.Services;
 using CaseManagement.Api.Services.Strategies;
 using FluentValidation;
 using FluentValidation.AspNetCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // Enforces [RequirePermission] on the server for every endpoint.
+        options.Filters.Add<PermissionAuthorizationFilter>();
+    })
     .AddJsonOptions(options =>
     {
         // Global string sanitization (trimming) for incoming JSON requests
@@ -81,12 +89,97 @@ if (string.IsNullOrWhiteSpace(connectionString))
         "Ensure 'ConnectionStrings__DefaultConnection' is configured in your environment variables or appsettings.json.");
 }
 
-builder.Services.AddDbContextPool<AppDbContext>(options =>
-    options.UseNpgsql(connectionString, npgsqlOptions => 
+builder.Services.AddSingleton<IConfigCache, ConfigCache>();
+builder.Services.AddSingleton<ConfigChangeInterceptor>();
+
+builder.Services.AddDbContextPool<AppDbContext>((serviceProvider, options) =>
+    options
+        .UseNpgsql(connectionString, npgsqlOptions =>
+        {
+            npgsqlOptions.CommandTimeout(90);
+            npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorCodesToAdd: null);
+        })
+        // Any save of configuration data clears the configuration cache (see ConfigChangeInterceptor).
+        .AddInterceptors(serviceProvider.GetRequiredService<ConfigChangeInterceptor>()));
+
+// ---- Host App integration -------------------------------------------------------------------
+// The Host App owns login, tokens and users. Everything identity-related sits behind the ports in
+// HostIntegration/Ports.cs; the mode decides which implementation is used.
+var hostSection = builder.Configuration.GetSection(HostIntegrationOptions.SectionName);
+var hostOptions = hostSection.Get<HostIntegrationOptions>() ?? new HostIntegrationOptions();
+var hostMode = hostOptions.ResolveMode(builder.Environment.IsDevelopment());
+builder.Services.Configure<HostIntegrationOptions>(hostSection);
+builder.Services.AddScoped<ICurrentUserAccessor, CurrentUserAccessor>();
+builder.Services.AddScoped<IUserProjectionService, UserProjectionService>();
+builder.Services.AddScoped<IHostUserSynchronizer, HostUserSynchronizer>();
+
+if (hostMode == HostIntegrationMode.Standalone)
+{
+    if (!builder.Environment.IsDevelopment() && !hostOptions.AllowStandaloneInProduction)
+        throw new InvalidOperationException(
+            "HostIntegration:Mode is 'Standalone', which has NO real authentication (any caller can name themselves " +
+            "with a header). It is only allowed in Development. Set HostIntegration:Mode=Host, or — for a deliberate " +
+            "demo deployment — HostIntegration:AllowStandaloneInProduction=true.");
+
+    builder.Services.AddScoped<IHostIdentityResolver, StandaloneIdentityResolver>();
+    builder.Services.AddScoped<IPermissionProvider, StandalonePermissionProvider>();
+    builder.Services.AddScoped<IHostUserDirectory, LocalHostUserDirectory>();
+}
+else
+{
+    var jwt = hostOptions.Jwt;
+    if (string.IsNullOrWhiteSpace(jwt.Authority) && string.IsNullOrWhiteSpace(jwt.MetadataAddress) && string.IsNullOrWhiteSpace(jwt.SymmetricKey))
+        throw new InvalidOperationException("HostIntegration:Mode=Host needs a way to validate Host tokens: set HostIntegration:Jwt:Authority (or MetadataAddress), or SymmetricKey for local testing.");
+    if (string.IsNullOrWhiteSpace(jwt.Audience))
+        throw new InvalidOperationException("HostIntegration:Jwt:Audience is required in Host mode, so tokens issued for other applications are rejected.");
+    if (!string.IsNullOrWhiteSpace(jwt.SymmetricKey) && Encoding.UTF8.GetByteCount(jwt.SymmetricKey) < 32)
+        throw new InvalidOperationException("HostIntegration:Jwt:SymmetricKey must be at least 32 bytes.");
+
+    builder.Services
+        .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(o =>
+        {
+            o.MapInboundClaims = false; // keep claim names exactly as the Host issues them (configurable in Claims)
+            o.RequireHttpsMetadata = jwt.RequireHttpsMetadata;
+            if (!string.IsNullOrWhiteSpace(jwt.Authority)) o.Authority = jwt.Authority;
+            if (!string.IsNullOrWhiteSpace(jwt.MetadataAddress)) o.MetadataAddress = jwt.MetadataAddress;
+
+            o.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = !string.IsNullOrWhiteSpace(jwt.Issuer) || !string.IsNullOrWhiteSpace(jwt.Authority),
+                ValidIssuer = jwt.Issuer,
+                ValidateAudience = true,
+                ValidAudience = jwt.Audience,
+                ValidateLifetime = true,
+                RequireExpirationTime = true,
+                ValidateIssuerSigningKey = true,
+                ClockSkew = TimeSpan.FromSeconds(jwt.ClockSkewSeconds),
+                NameClaimType = hostOptions.Claims.Name,
+                RoleClaimType = hostOptions.Claims.Roles,
+                IssuerSigningKey = string.IsNullOrWhiteSpace(jwt.SymmetricKey)
+                    ? null
+                    : new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SymmetricKey))
+            };
+        });
+
+    builder.Services.AddScoped<IHostIdentityResolver, JwtIdentityResolver>();
+    builder.Services.AddScoped<IPermissionProvider, ConfiguredPermissionProvider>();
+
+    if (!string.IsNullOrWhiteSpace(hostOptions.Directory.BaseUrl))
     {
-        npgsqlOptions.CommandTimeout(90);
-        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorCodesToAdd: null);
-    }));
+        builder.Services.AddHttpClient<IHostUserDirectory, HttpHostUserDirectory>(c =>
+        {
+            c.BaseAddress = new Uri(hostOptions.Directory.BaseUrl!.TrimEnd('/') + "/");
+            c.Timeout = TimeSpan.FromSeconds(15);
+        });
+        if (hostOptions.Directory.SyncIntervalMinutes > 0)
+            builder.Services.AddHostedService<HostUserSyncWorker>();
+    }
+    else
+    {
+        builder.Services.AddScoped<IHostUserDirectory, NullHostUserDirectory>();
+    }
+}
 
 // Register Repositories
 builder.Services.AddScoped<ICaseRepository, CaseRepository>();
@@ -102,6 +195,8 @@ builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IConfigurableSettingsService, ConfigurableSettingsService>();
 builder.Services.AddScoped<IPiiMaskingService, PiiMaskingService>();
+builder.Services.AddScoped<IFieldValidationEngine, FieldValidationEngine>();
+builder.Services.AddScoped<IMetadataService, MetadataService>();
 builder.Services.AddScoped<IBusinessTimeService, BusinessTimeService>();
 builder.Services.AddScoped<ISlaRoutingService, SlaRoutingService>();
 builder.Services.AddScoped<ITeamService, TeamService>();
@@ -130,8 +225,6 @@ builder.Services.AddHttpContextAccessor();
 // Bind tunables so they are configurable per environment rather than compiled in
 builder.Services.Configure<CaseManagement.Api.Configuration.SearchOptions>(
     builder.Configuration.GetSection(CaseManagement.Api.Configuration.SearchOptions.SectionName));
-builder.Services.Configure<CaseManagement.Api.Configuration.UserAuthorizationOptions>(
-    builder.Configuration.GetSection(CaseManagement.Api.Configuration.UserAuthorizationOptions.SectionName));
 builder.Services.Configure<CaseManagement.Api.Configuration.LookupCacheOptions>(
     builder.Configuration.GetSection(CaseManagement.Api.Configuration.LookupCacheOptions.SectionName));
 builder.Services.Configure<CaseManagement.Api.Configuration.AttachmentOptions>(
@@ -196,7 +289,8 @@ app.UseCors("ReactPolicy");
 
 // Before anything that touches the database: API calls get a clean 503 until it is ready.
 app.UseMiddleware<DatabaseReadinessMiddleware>();
-app.UseMiddleware<UserAuthorizationMiddleware>();
+if (hostMode == HostIntegrationMode.Host) app.UseAuthentication();   // validates the Host-issued JWT
+app.UseMiddleware<HostIdentityMiddleware>();
 app.UseAuthorization();
 
 // Liveness: the process is up (answers immediately, even while the database is still being prepared).
@@ -214,3 +308,6 @@ app.MapControllers();
 app.Run();
 
 return 0;
+
+// Makes the entry point visible to WebApplicationFactory in integration tests.
+public partial class Program { }

@@ -59,6 +59,7 @@ public class CaseSummaryDto
 
 public class CaseDetailDto : CaseSummaryDto
 {
+    public List<CustomerCustomAttributeDto> CustomAttributes { get; set; } = new();
     public string Description { get; set; } = string.Empty;
     public string? Disposition { get; set; }
     public string? ResolutionNote { get; set; }
@@ -154,10 +155,12 @@ public class UserDto
     public string Email { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
-    public Guid DepartmentId { get; set; }
+    public Guid? DepartmentId { get; set; }
     public string DepartmentName { get; set; } = string.Empty;
     public string? Team { get; set; }
     public string? Queue { get; set; }
+    public string? ExternalUserId { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 
@@ -189,16 +192,6 @@ public class DepartmentSubCategoryDto
     public string Name { get; set; } = string.Empty;
     public string Code { get; set; } = string.Empty;
     public int DisplayOrder { get; set; } = 1;
-    public bool IsActive { get; set; } = true;
-}
-
-public class SlaConfigurationDto
-{
-    public Guid Id { get; set; }
-    public string Severity { get; set; } = string.Empty;
-    public int InternalHours { get; set; }
-    public int ExternalHours { get; set; }
-    public int FirstResponseMinutes { get; set; } = 240;
     public bool IsActive { get; set; } = true;
 }
 

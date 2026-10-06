@@ -24,20 +24,19 @@ public class SlaRoutingService : ISlaRoutingService
 
     public async Task<SlaRoutingConfigResponseDto> GetFullConfigurationAsync(CancellationToken ct = default)
     {
-        // 1. Priority SLA Rules & Mappings
-        var rulesRaw = await _context.PrioritySlaRules
+        // 1. Priority SLA Rules & Mappings (ordered by the administrator-defined display order)
+        var rules = await _context.PrioritySlaRules
             .Include(r => r.CategoryMappings)
             .AsNoTracking()
+            .OrderBy(r => r.DisplayOrder).ThenBy(r => r.Priority)
             .ToListAsync(ct);
-
-        var rules = rulesRaw
-            .OrderBy(r => GetPrioritySortOrder(r.Priority))
-            .ToList();
 
         var ruleDtos = rules.Select(r => new PrioritySlaRuleDto
         {
             Id = r.Id,
             Priority = r.Priority,
+            DisplayOrder = r.DisplayOrder,
+            IsActive = r.IsActive,
             FirstResponseValue = r.FirstResponseValue,
             FirstResponseUnit = r.FirstResponseUnit,
             FirstResponseMinutes = r.FirstResponseMinutes,
@@ -47,21 +46,24 @@ public class SlaRoutingService : ISlaRoutingService
             ExternalResolutionValue = r.ExternalResolutionValue,
             ExternalResolutionUnit = r.ExternalResolutionUnit,
             ExternalResolutionMinutes = r.ExternalResolutionMinutes,
-            AppliedCategories = r.CategoryMappings.Select(m => m.CategoryName).OrderBy(c => c).ToList()
+            AppliedSubCategoryIds = r.CategoryMappings.Select(m => m.DepartmentSubCategoryId).ToList()
         }).ToList();
 
-        // 2. Available Categories (from DepartmentSubCategories)
+        // 2. Sub-categories a priority can be applied to: every active one, plus any that is already
+        //    mapped (so a mapping never silently disappears from the screen).
+        var mappedIds = rules.SelectMany(r => r.CategoryMappings).Select(m => m.DepartmentSubCategoryId).ToHashSet();
         var categories = await _context.DepartmentSubCategories
-            .Include(s => s.Department)
             .AsNoTracking()
-            .Where(s => s.IsActive)
+            .Where(s => s.IsActive || mappedIds.Contains(s.Id))
             .OrderBy(s => s.Department.Name)
             .ThenBy(s => s.Name)
             .Select(s => new CategoryOptionDto
             {
                 Id = s.Id,
                 Name = s.Name,
-                DepartmentName = s.Department != null ? s.Department.Name : "General"
+                DepartmentId = s.DepartmentId,
+                DepartmentName = s.Department.Name,
+                IsActive = s.IsActive
             })
             .ToListAsync(ct);
 
@@ -168,81 +170,102 @@ public class SlaRoutingService : ISlaRoutingService
             {
                 var now = DateTime.UtcNow;
 
-                // 1. Update Priority SLA Rules & Category Mappings
-                var existingRules = await _context.PrioritySlaRules
-                    .Include(r => r.CategoryMappings)
-                    .ToListAsync(ct);
+                // 1. Update Priority SLA Rules & sub-category mappings
+                var existingRules = await _context.PrioritySlaRules.ToListAsync(ct);
+                var validUnits = new[] { "Minutes", "Hours" };
 
-                // Clear existing category mappings to rebuild cleanly
+                foreach (var input in request.PriorityRules)
+                {
+                    if (string.IsNullOrWhiteSpace(input.Priority))
+                        throw new InvalidOperationException("Every priority needs a name.");
+                    foreach (var (label, value, unit) in new[]
+                    {
+                        ("First response", input.FirstResponseValue, input.FirstResponseUnit),
+                        ("Internal resolution", input.InternalResolutionValue, input.InternalResolutionUnit),
+                        ("External resolution", input.ExternalResolutionValue, input.ExternalResolutionUnit),
+                    })
+                    {
+                        if (value < 1)
+                            throw new InvalidOperationException($"{label} for '{input.Priority}' must be at least 1.");
+                        if (!validUnits.Contains(unit, StringComparer.OrdinalIgnoreCase))
+                            throw new InvalidOperationException($"{label} unit for '{input.Priority}' must be Minutes or Hours.");
+                    }
+                }
+
+                // One priority per sub-category, and every referenced sub-category must exist.
+                var allIds = request.PriorityRules.SelectMany(r => r.AppliedSubCategoryIds ?? new()).ToList();
+                var duplicated = allIds.GroupBy(id => id).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+                if (duplicated.Count > 0)
+                {
+                    var names = await _context.DepartmentSubCategories
+                        .Where(s => duplicated.Contains(s.Id))
+                        .Select(s => s.Department.Name + " / " + s.Name)
+                        .ToListAsync(ct);
+                    throw new InvalidOperationException($"A sub-category can have only one priority. Assigned more than once: {string.Join(", ", names)}.");
+                }
+                var knownIds = (await _context.DepartmentSubCategories
+                    .Where(s => allIds.Contains(s.Id)).Select(s => s.Id).ToListAsync(ct)).ToHashSet();
+                var unknown = allIds.Where(id => !knownIds.Contains(id)).ToList();
+                if (unknown.Count > 0)
+                    throw new InvalidOperationException("One or more sub-categories no longer exist. Reload the page and try again.");
+
+                // Rebuild the mappings cleanly.
                 var allMappings = await _context.PriorityCategoryMappings.ToListAsync(ct);
                 _context.PriorityCategoryMappings.RemoveRange(allMappings);
                 await _context.SaveChangesAsync(ct);
 
                 foreach (var inputRule in request.PriorityRules)
                 {
-                    var rule = existingRules.FirstOrDefault(r => r.Priority.Equals(inputRule.Priority, StringComparison.OrdinalIgnoreCase));
-                    int frMinutes = inputRule.FirstResponseUnit.Equals("Hours", StringComparison.OrdinalIgnoreCase)
-                        ? inputRule.FirstResponseValue * 60
-                        : inputRule.FirstResponseValue;
+                    var rule = (inputRule.Id != Guid.Empty ? existingRules.FirstOrDefault(r => r.Id == inputRule.Id) : null)
+                               ?? existingRules.FirstOrDefault(r => r.Priority.Equals(inputRule.Priority, StringComparison.OrdinalIgnoreCase));
 
-                    int intMinutes = inputRule.InternalResolutionUnit.Equals("Hours", StringComparison.OrdinalIgnoreCase)
-                        ? inputRule.InternalResolutionValue * 60
-                        : inputRule.InternalResolutionValue;
-
-                    int extMinutes = inputRule.ExternalResolutionUnit.Equals("Hours", StringComparison.OrdinalIgnoreCase)
-                        ? inputRule.ExternalResolutionValue * 60
-                        : inputRule.ExternalResolutionValue;
+                    int Minutes(int value, string unit) => unit.Equals("Hours", StringComparison.OrdinalIgnoreCase) ? value * 60 : value;
+                    int frMinutes = Minutes(inputRule.FirstResponseValue, inputRule.FirstResponseUnit);
+                    int intMinutes = Minutes(inputRule.InternalResolutionValue, inputRule.InternalResolutionUnit);
+                    int extMinutes = Minutes(inputRule.ExternalResolutionValue, inputRule.ExternalResolutionUnit);
 
                     if (rule == null)
                     {
                         rule = new PrioritySlaRule
                         {
                             Id = Guid.NewGuid(),
-                            Priority = inputRule.Priority,
-                            FirstResponseValue = inputRule.FirstResponseValue,
-                            FirstResponseUnit = inputRule.FirstResponseUnit,
-                            FirstResponseMinutes = frMinutes,
-                            InternalResolutionValue = inputRule.InternalResolutionValue,
-                            InternalResolutionUnit = inputRule.InternalResolutionUnit,
-                            InternalResolutionMinutes = intMinutes,
-                            ExternalResolutionValue = inputRule.ExternalResolutionValue,
-                            ExternalResolutionUnit = inputRule.ExternalResolutionUnit,
-                            ExternalResolutionMinutes = extMinutes,
+                            Priority = inputRule.Priority.Trim(),
+                            DisplayOrder = existingRules.Count == 0 ? 1 : existingRules.Max(r => r.DisplayOrder) + 1,
+                            IsActive = true,
                             Version = 1,
                             CreatedAt = now
                         };
+                        existingRules.Add(rule);
                         _context.PrioritySlaRules.Add(rule);
                     }
                     else
                     {
-                        rule.FirstResponseValue = inputRule.FirstResponseValue;
-                        rule.FirstResponseUnit = inputRule.FirstResponseUnit;
-                        rule.FirstResponseMinutes = frMinutes;
-                        rule.InternalResolutionValue = inputRule.InternalResolutionValue;
-                        rule.InternalResolutionUnit = inputRule.InternalResolutionUnit;
-                        rule.InternalResolutionMinutes = intMinutes;
-                        rule.ExternalResolutionValue = inputRule.ExternalResolutionValue;
-                        rule.ExternalResolutionUnit = inputRule.ExternalResolutionUnit;
-                        rule.ExternalResolutionMinutes = extMinutes;
-                        rule.Version += 1;
-                        rule.UpdatedAt = now;
+                        // The SLA version is what cases snapshot, so it only moves when a target really changed.
+                        var changed = rule.FirstResponseMinutes != frMinutes
+                                      || rule.InternalResolutionMinutes != intMinutes
+                                      || rule.ExternalResolutionMinutes != extMinutes;
+                        if (changed) { rule.Version += 1; rule.UpdatedAt = now; }
                     }
 
-                    // Add Category Mappings
-                    if (inputRule.AppliedCategories != null)
+                    rule.FirstResponseValue = inputRule.FirstResponseValue;
+                    rule.FirstResponseUnit = inputRule.FirstResponseUnit;
+                    rule.FirstResponseMinutes = frMinutes;
+                    rule.InternalResolutionValue = inputRule.InternalResolutionValue;
+                    rule.InternalResolutionUnit = inputRule.InternalResolutionUnit;
+                    rule.InternalResolutionMinutes = intMinutes;
+                    rule.ExternalResolutionValue = inputRule.ExternalResolutionValue;
+                    rule.ExternalResolutionUnit = inputRule.ExternalResolutionUnit;
+                    rule.ExternalResolutionMinutes = extMinutes;
+
+                    foreach (var subCategoryId in (inputRule.AppliedSubCategoryIds ?? new()).Distinct())
                     {
-                        foreach (var catName in inputRule.AppliedCategories.Distinct(StringComparer.OrdinalIgnoreCase))
+                        _context.PriorityCategoryMappings.Add(new PriorityCategoryMapping
                         {
-                            if (string.IsNullOrWhiteSpace(catName)) continue;
-                            _context.PriorityCategoryMappings.Add(new PriorityCategoryMapping
-                            {
-                                Id = Guid.NewGuid(),
-                                PrioritySlaRuleId = rule.Id,
-                                Priority = rule.Priority,
-                                CategoryName = catName.Trim(),
-                                CreatedAt = now
-                            });
-                        }
+                            Id = Guid.NewGuid(),
+                            PrioritySlaRuleId = rule.Id,
+                            DepartmentSubCategoryId = subCategoryId,
+                            CreatedAt = now
+                        });
                     }
                 }
 
@@ -599,48 +622,87 @@ public class SlaRoutingService : ISlaRoutingService
         return true;
     }
 
-    public async Task<string> ResolveEffectivePriorityAsync(string? requestedSeverity, string? categoryName, CancellationToken ct = default)
+    /// <summary>
+    /// Finds the active sub-category (and the priority configured for it) a new case would belong to.
+    /// Both the match and the mapping are by ID — names only locate the sub-category within its department.
+    /// </summary>
+    private async Task<(Guid SubCategoryId, PrioritySlaRule? Rule)?> FindMappedRuleAsync(Guid? departmentId, string? subCategoryName, CancellationToken ct)
     {
-        // 1. Check if categoryName is mapped to an SLA priority rule (backend precedence enforcement)
-        if (!string.IsNullOrWhiteSpace(categoryName))
-        {
-            var trimmedCat = categoryName.Trim();
-            var mapping = await _context.PriorityCategoryMappings
-                .AsNoTracking()
-                .FirstOrDefaultAsync(m => EF.Functions.ILike(m.CategoryName, trimmedCat), ct);
+        if (!departmentId.HasValue || string.IsNullOrWhiteSpace(subCategoryName)) return null;
 
-            if (mapping != null && !string.IsNullOrWhiteSpace(mapping.Priority))
-            {
-                return CanonicalizePriority(mapping.Priority);
-            }
+        var lowered = subCategoryName.Trim().ToLower();
+        var subCategoryId = await _context.DepartmentSubCategories
+            .AsNoTracking()
+            .Where(s => s.DepartmentId == departmentId.Value && s.IsActive && s.Name.ToLower() == lowered)
+            .Select(s => (Guid?)s.Id)
+            .FirstOrDefaultAsync(ct);
+        if (subCategoryId == null) return null;
+
+        var rule = await _context.PriorityCategoryMappings
+            .AsNoTracking()
+            .Where(m => m.DepartmentSubCategoryId == subCategoryId.Value)
+            .Select(m => m.PrioritySlaRule)
+            .FirstOrDefaultAsync(ct);
+
+        return (subCategoryId.Value, rule);
+    }
+
+    public async Task<PriorityResolution> ResolveEffectivePriorityAsync(
+        Guid? departmentId, string? subCategoryName, string? requestedPriority, CancellationToken ct = default)
+    {
+        // 1. The sub-category's configured priority is authoritative.
+        var mapped = await FindMappedRuleAsync(departmentId, subCategoryName, ct);
+        if (mapped?.Rule is { IsActive: true } mappedRule)
+            return new PriorityResolution(mappedRule.Priority, "SubCategoryMapping", mapped.Value.SubCategoryId);
+
+        // 2. Otherwise the requested priority, which must be one of the configured, active ones.
+        if (!string.IsNullOrWhiteSpace(requestedPriority))
+        {
+            var lowered = requestedPriority.Trim().ToLower();
+            var rule = await _context.PrioritySlaRules.AsNoTracking()
+                .Where(r => r.IsActive && r.Priority.ToLower() == lowered)
+                .FirstOrDefaultAsync(ct);
+            if (rule != null)
+                return new PriorityResolution(rule.Priority, "Requested", mapped?.SubCategoryId);
+
+            var available = await _context.PrioritySlaRules.AsNoTracking()
+                .Where(r => r.IsActive).OrderBy(r => r.DisplayOrder).Select(r => r.Priority).ToListAsync(ct);
+            throw new InvalidOperationException(
+                $"'{requestedPriority.Trim()}' is not a configured priority. Configured priorities: {string.Join(", ", available)}.");
         }
 
-        // 2. Fallback to requested severity if valid, else default "Medium"
-        if (!string.IsNullOrWhiteSpace(requestedSeverity))
-        {
-            return CanonicalizePriority(requestedSeverity);
-        }
+        // 3. Never guess a default: an unmapped sub-category with no choice made is an input error.
+        throw new InvalidOperationException(
+            "A priority is required: this sub-category has no configured priority, so one must be selected.");
+    }
 
-        return "Medium";
+    public async Task<PriorityResolutionDto> PreviewPriorityAsync(Guid? departmentId, string? subCategoryName, CancellationToken ct = default)
+    {
+        var mapped = await FindMappedRuleAsync(departmentId, subCategoryName, ct);
+        if (mapped?.Rule is not { IsActive: true } rule)
+            return new PriorityResolutionDto { IsMapped = false, SubCategoryId = mapped?.SubCategoryId };
+
+        return new PriorityResolutionDto
+        {
+            IsMapped = true,
+            Priority = rule.Priority,
+            SubCategoryId = mapped!.Value.SubCategoryId,
+            InternalHours = (int)Math.Ceiling(rule.InternalResolutionMinutes / 60.0),
+            ExternalHours = (int)Math.Ceiling(rule.ExternalResolutionMinutes / 60.0),
+            FirstResponseMinutes = rule.FirstResponseMinutes
+        };
     }
 
     public async Task<PrioritySlaRule> GetActivePrioritySlaRuleAsync(string priority, CancellationToken ct = default)
     {
-        var canonical = CanonicalizePriority(priority);
+        var lowered = priority.Trim().ToLower();
         var rule = await _context.PrioritySlaRules
             .AsNoTracking()
-            .FirstOrDefaultAsync(r => EF.Functions.ILike(r.Priority, canonical), ct);
+            .FirstOrDefaultAsync(r => r.Priority.ToLower() == lowered, ct);
 
-        if (rule != null) return rule;
-
-        // Fallback defaults if table is empty
-        return canonical switch
-        {
-            "Critical" => new PrioritySlaRule { Priority = "Critical", FirstResponseMinutes = 30, InternalResolutionMinutes = 120, ExternalResolutionMinutes = 240 },
-            "High" => new PrioritySlaRule { Priority = "High", FirstResponseMinutes = 60, InternalResolutionMinutes = 360, ExternalResolutionMinutes = 480 },
-            "Medium" => new PrioritySlaRule { Priority = "Medium", FirstResponseMinutes = 240, InternalResolutionMinutes = 600, ExternalResolutionMinutes = 720 },
-            _ => new PrioritySlaRule { Priority = "Low", FirstResponseMinutes = 480, InternalResolutionMinutes = 1320, ExternalResolutionMinutes = 1440 },
-        };
+        // No built-in numbers to fall back on: a missing rule is a configuration error and must be loud.
+        return rule ?? throw new InvalidOperationException(
+            $"No SLA rule is configured for priority '{priority}'. Configure it under Cases SLA & Routing.");
     }
 
     public async Task<CaseEscalationStatusDto?> GetCaseEscalationStatusAsync(Guid caseId, CancellationToken ct = default)
@@ -756,31 +818,5 @@ public class SlaRoutingService : ISlaRoutingService
         }
 
         return allUsers.FirstOrDefault(u => u.Id != c.OwnerId) ?? allUsers.FirstOrDefault();
-    }
-
-    private static string CanonicalizePriority(string? priority)
-    {
-        if (string.IsNullOrWhiteSpace(priority)) return "Medium";
-        var lower = priority.Trim().ToLowerInvariant();
-        return lower switch
-        {
-            "critical" or "urgent" or "bad" => "Critical",
-            "high" or "warn" => "High",
-            "medium" or "info" => "Medium",
-            "low" or "ok" => "Low",
-            _ => "Medium"
-        };
-    }
-
-    private static int GetPrioritySortOrder(string priority)
-    {
-        return priority.ToLowerInvariant() switch
-        {
-            "critical" => 1,
-            "high" => 2,
-            "medium" => 3,
-            "low" => 4,
-            _ => 5
-        };
     }
 }
