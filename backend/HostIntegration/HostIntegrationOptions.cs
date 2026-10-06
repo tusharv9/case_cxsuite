@@ -54,7 +54,7 @@ public class HostIntegrationOptions
     public int ProvisionCacheSeconds { get; set; } = 60;
 
     public HostIntegrationMode ResolveMode(bool isDevelopment) =>
-        Mode ?? (isDevelopment ? HostIntegrationMode.Standalone : throw new InvalidOperationException(
+        Mode ?? (isDevelopment || AllowStandaloneInProduction ? HostIntegrationMode.Standalone : throw new InvalidOperationException(
             "HostIntegration:Mode must be set to 'Host' or 'Standalone' outside Development."));
 
     public class JwtSettings

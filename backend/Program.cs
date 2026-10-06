@@ -63,9 +63,11 @@ builder.Services.AddCors(options =>
                 var trimmed = origin.TrimEnd('/');
                 if (allowedOrigins.Any(ao => string.Equals(ao, trimmed, StringComparison.OrdinalIgnoreCase)))
                     return true;
-                if (allowLocalhostOrigins && Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
                 {
-                    if (uri.Host == "localhost" || uri.Host == "127.0.0.1")
+                    if (uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                    if (allowLocalhostOrigins && (uri.Host == "localhost" || uri.Host == "127.0.0.1"))
                         return true;
                 }
                 return false;
@@ -274,18 +276,21 @@ if (args.Contains("--migrate-only"))
 }
 
 // Forward headers from reverse proxies (Render, load balancers)
-app.UseForwardedHeaders(new ForwardedHeadersOptions
+var forwardedHeadersOptions = new ForwardedHeadersOptions
 {
     ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
                        Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
-});
+};
+forwardedHeadersOptions.KnownIPNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
+app.UseCors("ReactPolicy");
 
 if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-
-app.UseCors("ReactPolicy");
 
 // Before anything that touches the database: API calls get a clean 503 until it is ready.
 app.UseMiddleware<DatabaseReadinessMiddleware>();
