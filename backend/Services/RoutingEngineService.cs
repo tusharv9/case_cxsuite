@@ -15,9 +15,11 @@ public class RoutingEngineService : IRoutingEngineService
     private readonly IEnumerable<IAssignmentStrategy> _strategies;
     private readonly IAgentPoolService _pool;
     private readonly ILogger<RoutingEngineService> _logger;
+    private readonly IConfigCache? _cache;
 
-    public RoutingEngineService(AppDbContext context, IEnumerable<IAssignmentStrategy> strategies, IAgentPoolService pool, ILogger<RoutingEngineService>? logger = null)
+    public RoutingEngineService(AppDbContext context, IEnumerable<IAssignmentStrategy> strategies, IAgentPoolService pool, ILogger<RoutingEngineService>? logger = null, IConfigCache? cache = null)
     {
+        _cache = cache;
         _context = context;
         _logger = logger ?? NullLogger<RoutingEngineService>.Instance;
         _strategies = strategies;
@@ -184,16 +186,22 @@ public class RoutingEngineService : IRoutingEngineService
 
     private async Task<AssignmentConfiguration> ResolveConfigAsync(Guid? departmentId, CancellationToken ct)
     {
+        // Settings change rarely and every new case reads them, so they come from the configuration cache (which is cleared the
+        // moment any setting is saved) rather than costing two database round trips per case.
+        var active = await Cached("routing:assignment-configs",
+            () => _context.AssignmentConfigurations.AsNoTracking().Where(c => c.IsActive).ToListAsync(ct));
+
         if (departmentId.HasValue)
         {
-            var own = await _context.AssignmentConfigurations.AsNoTracking()
-                .FirstOrDefaultAsync(c => c.DepartmentId == departmentId && c.IsActive, ct);
+            var own = active.FirstOrDefault(c => c.DepartmentId == departmentId);
             if (own != null) return own;
         }
 
-        return await _context.AssignmentConfigurations.AsNoTracking().FirstOrDefaultAsync(c => c.DepartmentId == null && c.IsActive, ct)
+        return active.FirstOrDefault(c => c.DepartmentId == null)
             ?? throw new InvalidOperationException("No assignment settings are configured. Set the assignment algorithm under Cases SLA & Routing.");
     }
+
+    private Task<T> Cached<T>(string key, Func<Task<T>> load) => _cache == null ? load() : _cache.GetOrCreateAsync(key, load);
 
     public async Task<AssignmentConfigDto> GetAssignmentConfigAsync(Guid? departmentId = null, CancellationToken ct = default)
     {
@@ -311,8 +319,8 @@ public class RoutingEngineService : IRoutingEngineService
         var result = new RoutingDecisionResult();
 
         // STAGE 1 — the first active rule (in order) that matches decides the team.
-        var departments = await _context.Departments.AsNoTracking().ToDictionaryAsync(d => d.Id, ct);
-        var activeRules = await _context.RoutingRules.AsNoTracking().Where(r => r.IsActive).OrderBy(r => r.EvaluationOrder).ToListAsync(ct);
+        var departments = await Cached("routing:departments", () => _context.Departments.AsNoTracking().ToDictionaryAsync(d => d.Id, ct));
+        var activeRules = await Cached("routing:active-rules", () => _context.RoutingRules.AsNoTracking().Where(r => r.IsActive).OrderBy(r => r.EvaluationOrder).ToListAsync(ct));
 
         RoutingRule? matchedRule = activeRules.FirstOrDefault(r => EvaluateRuleMatches(r, newCase, customer, departments));
 

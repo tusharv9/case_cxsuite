@@ -26,6 +26,7 @@ public class CaseService : ICaseService
     private readonly IEscalationService? _escalation;
     private readonly IMentionService _mentions;
     private readonly ILogger<CaseService> _logger;
+    private readonly IConfigCache? _configCache;
 
     public CaseService(
         ICaseRepository caseRepository,
@@ -42,8 +43,10 @@ public class CaseService : ICaseService
         ISlaClockProvider? slaClockProvider = null,
         IEscalationService? escalation = null,
         IMentionService? mentions = null,
-        ILogger<CaseService>? logger = null)
+        ILogger<CaseService>? logger = null,
+        IConfigCache? configCache = null)
     {
+        _configCache = configCache;
         _caseRepository = caseRepository;
         _notificationService = notificationService;
         _settingsService = settingsService;
@@ -1214,6 +1217,9 @@ public class CaseService : ICaseService
         public string Value(string field) => Values.TryGetValue(field, out var v) ? v : string.Empty;
     }
 
+    /// <summary>Setup data that changes rarely comes from the configuration cache, which is cleared as soon as any setting is saved.</summary>
+    private Task<List<T>> CachedAsync<T>(string key, Func<Task<List<T>>> load) => _configCache == null ? load() : _configCache.GetOrCreateAsync(key, load);
+
     private async Task<ValidatedCase> ValidateCreateCaseAsync(CreateCaseDto dto, CancellationToken ct = default)
     {
         var engine = _fieldValidation ?? throw new InvalidOperationException("Field validation is not available.");
@@ -1234,7 +1240,8 @@ public class CaseService : ICaseService
         }
         else
         {
-            department = await _context.Departments.AsNoTracking().FirstOrDefaultAsync(d => d.Id == dto.DepartmentId, ct);
+            department = (await CachedAsync("validation:departments", () => _context.Departments.AsNoTracking().ToListAsync(ct)))
+                .FirstOrDefault(d => d.Id == dto.DepartmentId);
             if (department == null || !department.IsActive)
             {
                 errors.Add(new FieldError("departmentId", "Selected department is invalid or inactive."));
@@ -1250,9 +1257,9 @@ public class CaseService : ICaseService
         }
         else
         {
-            var lowered = caseTypeInput.ToLower();
-            caseType = await _context.CaseTypeConfigs.AsNoTracking()
-                .FirstOrDefaultAsync(c => c.IsActive && (c.Code.ToLower() == lowered || c.Name.ToLower() == lowered), ct);
+            var lowered = caseTypeInput.ToLowerInvariant();
+            caseType = (await CachedAsync("validation:case-types", () => _context.CaseTypeConfigs.AsNoTracking().ToListAsync(ct)))
+                .FirstOrDefault(c => c.IsActive && (c.Code.ToLowerInvariant() == lowered || c.Name.ToLowerInvariant() == lowered));
             if (caseType == null)
                 errors.Add(new FieldError("caseType", $"Case type '{caseTypeInput}' is not configured or is inactive."));
         }
@@ -1265,9 +1272,9 @@ public class CaseService : ICaseService
         }
         else if (department != null)
         {
-            var lowered = subCategoryInput.ToLower();
-            subCategory = await _context.DepartmentSubCategories.AsNoTracking()
-                .FirstOrDefaultAsync(s => s.DepartmentId == department.Id && s.IsActive && s.Name.ToLower() == lowered, ct);
+            var lowered = subCategoryInput.ToLowerInvariant();
+            subCategory = (await CachedAsync("validation:sub-categories", () => _context.DepartmentSubCategories.AsNoTracking().ToListAsync(ct)))
+                .FirstOrDefault(s => s.DepartmentId == department.Id && s.IsActive && s.Name.ToLowerInvariant() == lowered);
             if (subCategory == null)
                 errors.Add(new FieldError("subCategory", $"Sub-category '{subCategoryInput}' is invalid for department '{department.Name}'."));
         }

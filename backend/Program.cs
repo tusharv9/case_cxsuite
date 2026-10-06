@@ -24,6 +24,12 @@ if (!builder.Environment.IsDevelopment())
 {
     builder.Logging.ClearProviders();
     builder.Logging.AddJsonConsole(o => { o.IncludeScopes = true; o.TimestampFormat = "O"; o.UseUtcTimestamp = true; });
+
+    // Set in code rather than only in appsettings so a missing or overridden config can never bring back one log line per
+    // SQL statement and per framework step. Our own request log line (RequestLoggingMiddleware) carries what is needed.
+    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+    builder.Logging.AddFilter("System.Net.Http", LogLevel.Warning);
 }
 
 builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection(SecurityOptions.SectionName));

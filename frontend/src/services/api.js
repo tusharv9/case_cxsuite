@@ -23,6 +23,8 @@ api.interceptors.request.use(
 
 // ---- Response Interceptor ----
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const STARTUP_RETRIES = 6;
+const STARTUP_RETRY_DELAY_MS = 2500;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 api.interceptors.response.use(
@@ -32,12 +34,21 @@ api.interceptors.response.use(
     const status = error.response?.status;
     const data = error.response?.data;
 
-    // A read (and only a read) that failed because the server or network blinked is tried once more: it is safe to repeat.
+    // A read that failed because the server or network blinked is tried once more: it is safe to repeat.
     const isRead = config && (config.method || 'get').toLowerCase() === 'get';
     const transient = !error.response && error.code !== 'ERR_CANCELED' || RETRYABLE_STATUS.has(status);
     if (isRead && transient && !config.__retried) {
       config.__retried = true;
       await wait(400);
+      return api.request(config);
+    }
+
+    // While the server restarts (a deploy, or waking up) it answers 503 "Initializing" to everything BEFORE running the
+    // request, so even a write is safe to send again. Give it a few short chances instead of failing the user's action.
+    const stillStarting = status === 503 && data?.status === 'Initializing';
+    if (config && stillStarting && (config.__startupRetries || 0) < STARTUP_RETRIES) {
+      config.__startupRetries = (config.__startupRetries || 0) + 1;
+      await wait(STARTUP_RETRY_DELAY_MS);
       return api.request(config);
     }
 
@@ -59,6 +70,8 @@ api.interceptors.response.use(
     // Say something a person can act on, instead of axios' technical wording.
     if (!error.response) {
       message = error.code === 'ECONNABORTED' ? 'The server took too long to answer. Please try again.' : 'Cannot reach the server. Check your connection and try again.';
+    } else if (stillStarting || status === 502 || status === 503 || status === 504) {
+      message = 'The server is restarting or temporarily unavailable. Please wait a few seconds and try again.';
     } else if (status === 401) {
       notifyUnauthorized();
     } else if (status === 403 && !data?.error) {
