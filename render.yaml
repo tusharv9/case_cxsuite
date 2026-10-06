@@ -13,5 +13,19 @@ services:
         sync: false
       - key: AllowedOrigins
         sync: false
-      - key: EnableSwagger
+      # Apply EF migrations automatically on start (idempotent; takes a database advisory lock).
+      # For stricter deployments set this to "false" and run
+      #   dotnet CaseManagement.Api.dll --migrate-only
+      # as a separate release step instead.
+      - key: Database__MigrateOnStartup
         value: "true"
+      # Which seed data to create on a NEW database: None | Bootstrap | Development.
+      # "Development" (sample users/teams/customers) is kept ONLY because the Host App does not
+      # exist yet and the standalone demo needs users. Switch to "Bootstrap" once the Host supplies
+      # users. Existing databases are never re-seeded either way.
+      - key: Database__Seed
+        value: "Development"
+      - key: AllowedHosts
+        sync: false
+      - key: EnableSwagger
+        value: "false"

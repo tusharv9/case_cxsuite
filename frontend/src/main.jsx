@@ -1,12 +1,8 @@
-// ===== MAIN.JSX — App Entry Point =====
+// ===== MAIN.JSX — Standalone entry point =====
+// Used only when Case Management runs by itself (local development / standalone deployment).
+// When a Host App loads the Remote it uses the federated `mount` export
+// and never executes this file.
 
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import './index.css';
-import App from './App.jsx';
+import { mount } from './remote/mount.jsx';
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+mount(document.getElementById('root'));

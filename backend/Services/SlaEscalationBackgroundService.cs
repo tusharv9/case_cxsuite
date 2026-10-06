@@ -7,14 +7,17 @@ using Microsoft.EntityFrameworkCore;
 public class SlaEscalationBackgroundService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly DatabaseInitializationState _databaseState;
     private readonly ILogger<SlaEscalationBackgroundService> _logger;
     private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(2);
 
     public SlaEscalationBackgroundService(
         IServiceScopeFactory scopeFactory,
+        DatabaseInitializationState databaseState,
         ILogger<SlaEscalationBackgroundService> logger)
     {
         _scopeFactory = scopeFactory;
+        _databaseState = databaseState;
         _logger = logger;
     }
 
@@ -24,8 +27,8 @@ public class SlaEscalationBackgroundService : BackgroundService
 
         try
         {
-            // Short delay on startup to allow DbSeeder and migrations to finish cleanly
-            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            // Wait until migrations/seeding have finished (replaces a fixed 5 s guess).
+            await _databaseState.WhenReady.WaitAsync(stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {

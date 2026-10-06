@@ -41,9 +41,19 @@ public class AppDbContext : DbContext
     public DbSet<AgentSkill> AgentSkills { get; set; } = null!;
     public DbSet<TeamAssignmentPointer> TeamAssignmentPointers { get; set; } = null!;
 
+    // Bookkeeping for one-time seed steps (see DbSeeder)
+    public DbSet<SeedHistoryEntry> SeedHistory { get; set; } = null!;
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<SeedHistoryEntry>(entity =>
+        {
+            entity.ToTable("SeedHistory");
+            entity.HasKey(e => e.Key);
+            entity.Property(e => e.Key).HasMaxLength(200);
+        });
 
         modelBuilder.Entity<FieldConfiguration>()
             .HasIndex(fc => new { fc.ModuleKey, fc.SectionKey, fc.ApiField })

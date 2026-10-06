@@ -3,74 +3,133 @@ namespace CaseManagement.Api.Data;
 using CaseManagement.Api.Models;
 using Microsoft.EntityFrameworkCore;
 
+/// <summary>How much data the seeder is allowed to create.</summary>
+public enum SeedMode
+{
+    /// <summary>Create nothing.</summary>
+    None,
+    /// <summary>Production bootstrap only: configuration the application cannot work without
+    /// (lookups, field layouts, case types, severities/SLA defaults, business hours, escalation
+    /// levels). No users, teams, customers or routing rules.</summary>
+    Bootstrap,
+    /// <summary>Bootstrap plus sample users, teams, customers, sub-categories, routing rules and
+    /// skills, so a developer or demo environment is usable immediately.</summary>
+    Development
+}
+
+/// <summary>
+/// Seeds default data as ONE-TIME, recorded steps (see <see cref="SeedHistoryEntry"/>).
+///
+/// Earlier versions re-ran every "Ensure…" method on every start, which silently re-created data an
+/// administrator had deleted. Now each step runs at most once per database; changing defaults means
+/// adding a new, versioned step rather than editing an old one.
+/// </summary>
 public static class DbSeeder
 {
-    public static void Seed(AppDbContext context)
+    private enum SeedKind
     {
-        SeedConfigurableSettings(context);
-        SeedCaseManagementSettings(context);
-        SeedDevUsers(context);
+        /// <summary>Required configuration; part of every environment.</summary>
+        Bootstrap,
+        /// <summary>Sample data; only seeded in <see cref="SeedMode.Development"/>.</summary>
+        Development,
+        /// <summary>Back-fills data of databases created before the current schema; only runs once,
+        /// while such a database is being adopted.</summary>
+        LegacyOnly
+    }
 
-        // Check if database is already seeded
-        if (context.Users.Any())
+    private sealed record SeedStep(string Key, SeedKind Kind, Action<AppDbContext> Run);
+
+    // Order matters: Bootstrap steps first, then Development steps that build on them.
+    private static readonly SeedStep[] Steps =
+    {
+        new("bootstrap.configurable-settings.v1", SeedKind.Bootstrap, SeedConfigurableSettings),
+        new("bootstrap.case-management-settings.v1", SeedKind.Bootstrap, SeedCaseManagementSettings),
+        new("bootstrap.case-channels-and-statuses.v1", SeedKind.Bootstrap, EnsureCaseChannelsAndStatuses),
+        new("bootstrap.sla-business-hours-escalation.v1", SeedKind.Bootstrap, EnsureSlaAndEscalationMatrix),
+
+        new("development.users-and-departments.v1", SeedKind.Development, SeedDevUsers),
+        new("development.sample-customers.v1", SeedKind.Development, ctx => { SeedPassportCustomer(ctx); SeedAccountNumberCustomer(ctx); }),
+        new("development.sample-subcategories-and-priority-mappings.v1", SeedKind.Development, SeedSampleSubCategoriesAndPriorityMappings),
+        new("development.teams-and-squads.v1", SeedKind.Development, EnsureTeamsAndSquads),
+        new("development.routing-rules-and-skills.v1", SeedKind.Development, EnsureRoutingRulesAndSkills),
+        new("development.customer360-standardization.v1", SeedKind.Development, EnsureCustomer360Standardization),
+
+        new("legacy.first-response-backfill.v1", SeedKind.LegacyOnly, EnsureFirstResponseAndEscalationMatrix),
+        new("legacy.case-sla-snapshot-backfill.v1", SeedKind.LegacyOnly, BackfillCaseSlaSnapshots),
+    };
+
+    /// <summary>
+    /// Runs every seed step that is due. Returns a human-readable line per step for logging.
+    /// </summary>
+    /// <param name="adoptedLegacyDatabase">
+    /// True when the database was created by the old per-boot seeder. Its Bootstrap/Development
+    /// data already exists (and may have been edited or deleted on purpose), so those steps are
+    /// recorded as done WITHOUT running — nothing is re-created.
+    /// </param>
+    public static IReadOnlyList<string> Run(AppDbContext context, SeedMode mode, bool adoptedLegacyDatabase)
+    {
+        var report = new List<string>();
+        var applied = context.SeedHistory.AsNoTracking().Select(h => h.Key).ToHashSet();
+
+        foreach (var step in Steps)
         {
-            FixInfinityDates(context);
-            SeedPassportCustomer(context);
-            SeedAccountNumberCustomer(context);
-            EnsureCaseChannelsAndStatuses(context);
-            EnsureFirstResponseAndEscalationMatrix(context);
-            EnsureSlaAndEscalationMatrix(context);
-            EnsureTeamsAndSquads(context);
-            EnsureRoutingRulesAndSkills(context);
-            EnsureCustomer360Standardization(context);
-            return;
+            if (applied.Contains(step.Key)) continue;
+
+            bool runIt;
+            if (adoptedLegacyDatabase)
+            {
+                runIt = step.Kind == SeedKind.LegacyOnly;
+            }
+            else
+            {
+                runIt = step.Kind switch
+                {
+                    SeedKind.Bootstrap => mode != SeedMode.None,
+                    SeedKind.Development => mode == SeedMode.Development,
+                    _ => false   // nothing to back-fill in a database that was never legacy
+                };
+            }
+
+            if (runIt)
+            {
+                if (step.Kind == SeedKind.LegacyOnly)
+                {
+                    // Best-effort back-fills of old data must never stop the service from starting.
+                    // A failure is reported and the step stays unrecorded, so it is retried next start.
+                    try
+                    {
+                        step.Run(context);
+                    }
+                    catch (Exception ex)
+                    {
+                        context.ChangeTracker.Clear();
+                        report.Add($"FAILED   {step.Key} (non-fatal, will retry next start): {ex.Message}");
+                        continue;
+                    }
+                }
+                else
+                {
+                    step.Run(context);          // throws on failure => not recorded => retried next start
+                }
+
+                context.ChangeTracker.Clear();
+                report.Add($"ran      {step.Key}");
+            }
+            else if (adoptedLegacyDatabase)
+            {
+                report.Add($"adopted  {step.Key} (already provisioned by previous version)");
+            }
+            else
+            {
+                continue;                       // not due in this mode; deliberately NOT recorded
+            }
+
+            context.SeedHistory.Add(new SeedHistoryEntry { Key = step.Key, AppliedAt = DateTime.UtcNow });
+            context.SaveChanges();
+            context.ChangeTracker.Clear();
         }
 
-        var contactCenterDept = new Department
-        {
-            Id = Guid.NewGuid(),
-            Name = "Contact Center",
-            Code = "CC"
-        };
-
-        var microFinanceDept = new Department
-        {
-            Id = Guid.NewGuid(),
-            Name = "Micro Finance",
-            Code = "MF"
-        };
-
-        context.Departments.AddRange(contactCenterDept, microFinanceDept);
-        context.SaveChanges();
-
-        var siti = new User
-        {
-            Id = Guid.NewGuid(),
-            Name = "Siti Nurhaliza",
-            Email = "siti@bank.com",
-            Role = "Sr. CC Agent",
-            DepartmentId = contactCenterDept.Id
-        };
-
-        // Note: Used aisha@bank.com instead of siti@bank.com to prevent a Unique Constraint violation on the Email field.
-        var aisha = new User
-        {
-            Id = Guid.NewGuid(),
-            Name = "Aisha Sazlina",
-            Email = "aisha@bank.com",
-            Role = "MicroFinance Officer",
-            DepartmentId = microFinanceDept.Id
-        };
-
-        context.Users.AddRange(siti, aisha);
-        context.SaveChanges();
-
-        // Assign owners
-        contactCenterDept.OwnerId = siti.Id;
-        microFinanceDept.OwnerId = aisha.Id;
-
-        context.SaveChanges();
-
+        return report;
     }
 
     private static void SeedDevUsers(AppDbContext context)
@@ -182,7 +241,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SeedDevUsers Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'SeedDevUsers' failed: {ex.Message}", ex);
         }
     }
 
@@ -227,7 +286,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SeedPassportCustomer Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'SeedPassportCustomer' failed: {ex.Message}", ex);
         }
     }
 
@@ -259,25 +318,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SeedAccountNumberCustomer Error] {ex.Message}");
-        }
-    }
-
-    private static void FixInfinityDates(AppDbContext context)
-    {
-        var users = context.Users.Where(u => u.CreatedAt == DateTime.MinValue).ToList();
-        var depts = context.Departments.Where(d => d.CreatedAt == DateTime.MinValue).ToList();
-        var customers = context.Customers.Where(c => c.CreatedAt == DateTime.MinValue).ToList();
-
-        var now = DateTime.UtcNow;
-
-        foreach(var u in users) u.CreatedAt = now;
-        foreach(var d in depts) d.CreatedAt = now;
-        foreach(var c in customers) c.CreatedAt = now;
-
-        if (users.Any() || depts.Any() || customers.Any())
-        {
-            context.SaveChanges();
+            throw new InvalidOperationException($"Seed step 'SeedAccountNumberCustomer' failed: {ex.Message}", ex);
         }
     }
 
@@ -388,7 +429,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SeedConfigurableSettings Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'SeedConfigurableSettings' failed: {ex.Message}", ex);
         }
     }
 
@@ -682,7 +723,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[SeedCaseManagementSettings Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'SeedCaseManagementSettings' failed: {ex.Message}", ex);
         }
     }
 
@@ -781,7 +822,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EnsureCaseChannelsAndStatuses Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'EnsureCaseChannelsAndStatuses' failed: {ex.Message}", ex);
         }
     }
 
@@ -825,7 +866,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EnsureFirstResponseAndEscalationMatrix Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'EnsureFirstResponseAndEscalationMatrix' failed: {ex.Message}", ex);
         }
     }
 
@@ -907,70 +948,6 @@ public static class DbSeeder
                 };
 
                 context.PrioritySlaRules.AddRange(critical, high, medium, low);
-                context.SaveChanges();
-
-                // 2. Ensure initial Department Subcategories exist for category mapping
-                var allDepts = context.Departments.ToList();
-                var fiDept = allDepts.FirstOrDefault(d => d.Code == "FI") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Fraud", StringComparison.OrdinalIgnoreCase));
-                var ccDept = allDepts.FirstOrDefault(d => d.Code == "CC") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Contact", StringComparison.OrdinalIgnoreCase));
-                var mfDept = allDepts.FirstOrDefault(d => d.Code == "MF") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Micro", StringComparison.OrdinalIgnoreCase));
-
-                var initialCategories = new List<(string Name, string Code, Guid? DeptId)>
-                {
-                    ("Fraud", "FRD", fiDept?.Id),
-                    ("Security Incident", "SEC", fiDept?.Id),
-                    ("Payment Issue", "PAY", ccDept?.Id),
-                    ("Account Access", "ACC", ccDept?.Id),
-                    ("Card Dispute", "DIS", ccDept?.Id),
-                    ("Loan Inquiry", "LON", mfDept?.Id),
-                    ("General Inquiry", "GEN", ccDept?.Id)
-                };
-
-                foreach (var (name, code, deptId) in initialCategories)
-                {
-                    if (deptId.HasValue && !context.DepartmentSubCategories.Any(s => s.Name == name))
-                    {
-                        context.DepartmentSubCategories.Add(new DepartmentSubCategory
-                        {
-                            Id = Guid.NewGuid(),
-                            Name = name,
-                            Code = code,
-                            DepartmentId = deptId.Value,
-                            DisplayOrder = 1,
-                            IsActive = true,
-                            CreatedAt = now
-                        });
-                    }
-                }
-                context.SaveChanges();
-
-                // 3. Seed PriorityCategoryMappings
-                var categoryMappings = new (string Category, PrioritySlaRule Rule)[]
-                {
-                    ("Fraud", critical),
-                    ("Security Incident", critical),
-                    ("Payment Issue", high),
-                    ("Account Access", high),
-                    ("Card Dispute", medium),
-                    ("Loan Inquiry", low)
-                };
-
-                foreach (var (cat, r) in categoryMappings)
-                {
-                    if (!context.PriorityCategoryMappings.Any(m => m.CategoryName == cat))
-                    {
-                        var subCat = context.DepartmentSubCategories.FirstOrDefault(s => s.Name == cat);
-                        context.PriorityCategoryMappings.Add(new PriorityCategoryMapping
-                        {
-                            Id = Guid.NewGuid(),
-                            PrioritySlaRuleId = r.Id,
-                            Priority = r.Priority,
-                            CategoryName = cat,
-                            DepartmentSubCategoryId = subCat?.Id,
-                            CreatedAt = now
-                        });
-                    }
-                }
                 context.SaveChanges();
             }
 
@@ -1085,7 +1062,109 @@ public static class DbSeeder
                 );
                 context.SaveChanges();
             }
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Seed step 'EnsureSlaAndEscalationMatrix' failed: {ex.Message}", ex);
+        }
+    }
 
+    /// <summary>
+    /// DEVELOPMENT DATA: sample sub-categories per department and their priority mappings. These
+    /// reference departments, which only exist in development seeds, so they are not part of the
+    /// production bootstrap.
+    /// </summary>
+    private static void SeedSampleSubCategoriesAndPriorityMappings(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+            var rules = context.PrioritySlaRules.ToList();
+            PrioritySlaRule? RuleFor(string priority) => rules.FirstOrDefault(r => r.Priority == priority);
+            var critical = RuleFor("Critical");
+            var high = RuleFor("High");
+            var medium = RuleFor("Medium");
+            var low = RuleFor("Low");
+
+            // 2. Ensure initial Department Subcategories exist for category mapping
+            var allDepts = context.Departments.ToList();
+            var fiDept = allDepts.FirstOrDefault(d => d.Code == "FI") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Fraud", StringComparison.OrdinalIgnoreCase));
+            var ccDept = allDepts.FirstOrDefault(d => d.Code == "CC") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Contact", StringComparison.OrdinalIgnoreCase));
+            var mfDept = allDepts.FirstOrDefault(d => d.Code == "MF") ?? allDepts.FirstOrDefault(d => d.Name.Contains("Micro", StringComparison.OrdinalIgnoreCase));
+
+            var initialCategories = new List<(string Name, string Code, Guid? DeptId)>
+            {
+                ("Fraud", "FRD", fiDept?.Id),
+                ("Security Incident", "SEC", fiDept?.Id),
+                ("Payment Issue", "PAY", ccDept?.Id),
+                ("Account Access", "ACC", ccDept?.Id),
+                ("Card Dispute", "DIS", ccDept?.Id),
+                ("Loan Inquiry", "LON", mfDept?.Id),
+                ("General Inquiry", "GEN", ccDept?.Id)
+            };
+
+            foreach (var (name, code, deptId) in initialCategories)
+            {
+                if (deptId.HasValue && !context.DepartmentSubCategories.Any(s => s.Name == name))
+                {
+                    context.DepartmentSubCategories.Add(new DepartmentSubCategory
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = name,
+                        Code = code,
+                        DepartmentId = deptId.Value,
+                        DisplayOrder = 1,
+                        IsActive = true,
+                        CreatedAt = now
+                    });
+                }
+            }
+            context.SaveChanges();
+
+            // 3. Seed PriorityCategoryMappings
+            var categoryMappings = new (string Category, PrioritySlaRule? Rule)[]
+            {
+                ("Fraud", critical),
+                ("Security Incident", critical),
+                ("Payment Issue", high),
+                ("Account Access", high),
+                ("Card Dispute", medium),
+                ("Loan Inquiry", low)
+            };
+
+            foreach (var (cat, r) in categoryMappings)
+            {
+                if (r == null) continue;
+                if (!context.PriorityCategoryMappings.Any(m => m.CategoryName == cat))
+                {
+                    var subCat = context.DepartmentSubCategories.FirstOrDefault(s => s.Name == cat);
+                    context.PriorityCategoryMappings.Add(new PriorityCategoryMapping
+                    {
+                        Id = Guid.NewGuid(),
+                        PrioritySlaRuleId = r.Id,
+                        Priority = r.Priority,
+                        CategoryName = cat,
+                        DepartmentSubCategoryId = subCat?.Id,
+                        CreatedAt = now
+                    });
+                }
+            }
+            context.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Seed step 'SeedSampleSubCategoriesAndPriorityMappings' failed: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// LEGACY ONLY: gives cases created before SLA snapshots existed their snapshot fields.
+    /// Runs once, while adopting a pre-migration database; a fresh database has no such cases.
+    /// </summary>
+    private static void BackfillCaseSlaSnapshots(AppDbContext context)
+    {
+        try
+        {
             // 6. Backfill existing cases with snapshot fields without altering historical behavior
             var casesWithoutSnapshots = context.Cases.Where(c => c.ExternalResolutionDueAt == null).ToList();
             foreach (var c in casesWithoutSnapshots)
@@ -1101,7 +1180,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EnsureSlaAndEscalationMatrix Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'BackfillCaseSlaSnapshots' failed: {ex.Message}", ex);
         }
     }
 
@@ -1289,7 +1368,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EnsureTeamsAndSquads Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'EnsureTeamsAndSquads' failed: {ex.Message}", ex);
         }
     }
 
@@ -1463,7 +1542,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EnsureRoutingRulesAndSkills Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'EnsureRoutingRulesAndSkills' failed: {ex.Message}", ex);
         }
     }
 
@@ -1556,7 +1635,7 @@ public static class DbSeeder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EnsureCustomer360Standardization Error] {ex.Message}");
+            throw new InvalidOperationException($"Seed step 'EnsureCustomer360Standardization' failed: {ex.Message}", ex);
         }
     }
 }

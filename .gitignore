@@ -19,3 +19,24 @@ backend/obj/
 backend/*.log
 backend/appsettings.json
 backend/appsettings.*.json
+
+# --- Build output (any project) ---
+**/bin/
+**/obj/
+**/TestResults/
+**/coverage*/
+
+# --- Logs ---
+*.log
+
+# --- Runtime uploads (use object storage; never commit user files) ---
+backend/Uploads/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+frontend/.env
+backend/appsettings.json
+backend/appsettings.*.json
+!backend/appsettings.example.json

@@ -386,6 +386,14 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         var oldVal = existing != null ? $"Name: {existing.Name}, Code: {existing.Code}, Prefix: {existing.Prefix}" : $"ID: {id}";
         var caseTypeName = existing?.Name ?? "Case Type";
 
+        if (existing != null)
+        {
+            var inUse = await _repository.CountCasesByCaseTypeAsync(existing.Code, existing.Name, ct);
+            if (inUse > 0)
+                throw new InvalidOperationException(
+                    $"Case type '{existing.Name}' cannot be deleted because {inUse} case(s) use it. Deactivate it instead.");
+        }
+
         var success = await _repository.DeleteCaseTypeAsync(id, ct);
         if (success)
         {
@@ -477,6 +485,14 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
     public async Task<bool> DeleteSubCategoryAsync(Guid id, CancellationToken ct = default)
     {
+        var existing = (await _repository.GetSubCategoriesAsync(null, false, ct)).FirstOrDefault(s => s.Id == id);
+        if (existing == null) return false;
+
+        var inUse = await _repository.CountCasesBySubCategoryAsync(existing.DepartmentId, existing.Name, ct);
+        if (inUse > 0)
+            throw new InvalidOperationException(
+                $"Sub-category '{existing.Name}' cannot be deleted because {inUse} case(s) use it. Deactivate it instead.");
+
         return await _repository.DeleteSubCategoryAsync(id, ct);
     }
 

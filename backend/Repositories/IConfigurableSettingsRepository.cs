@@ -38,6 +38,8 @@ public interface IConfigurableSettingsRepository
     Task<bool> DeleteSlaConfigurationBySeverityAsync(string severity, CancellationToken ct = default);
     Task<bool> RenameSlaConfigurationAsync(string oldSeverity, string newSeverity, CancellationToken ct = default);
     Task<int> CountCasesBySeverityAsync(string severity, CancellationToken ct = default);
+    Task<int> CountCasesByCaseTypeAsync(string code, string name, CancellationToken ct = default);
+    Task<int> CountCasesBySubCategoryAsync(Guid departmentId, string name, CancellationToken ct = default);
     Task<int> RenameCaseSeverityAsync(string oldSeverity, string newSeverity, CancellationToken ct = default);
 
 }

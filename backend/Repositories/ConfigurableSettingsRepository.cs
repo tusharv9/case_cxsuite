@@ -294,6 +294,17 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
         if (target == null) return false;
 
         _context.DepartmentSubCategories.Remove(target);
+
+        // Priority mappings are matched to sub-categories by NAME, so deleting the last
+        // sub-category with this name would leave a mapping pointing at nothing. Remove it in the
+        // same save. (Another department's sub-category of the same name keeps the mapping alive.)
+        var nameStillExists = await _context.DepartmentSubCategories
+            .AnyAsync(s => s.Id != id && s.Name == target.Name, ct);
+        var orphanedMappings = await _context.PriorityCategoryMappings
+            .Where(m => m.DepartmentSubCategoryId == id || (!nameStillExists && m.CategoryName == target.Name))
+            .ToListAsync(ct);
+        _context.PriorityCategoryMappings.RemoveRange(orphanedMappings);
+
         await _context.SaveChangesAsync(ct);
         return true;
     }
@@ -348,6 +359,20 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
     public async Task<int> CountCasesBySeverityAsync(string severity, CancellationToken ct = default)
     {
         return await _context.Cases.CountAsync(c => c.Severity.ToLower() == severity.ToLower(), ct);
+    }
+
+    public async Task<int> CountCasesByCaseTypeAsync(string code, string name, CancellationToken ct = default)
+    {
+        var lowerCode = code.ToLower();
+        var lowerName = name.ToLower();
+        return await _context.Cases.CountAsync(c => c.CaseType.ToLower() == lowerCode || c.CaseType.ToLower() == lowerName, ct);
+    }
+
+    public async Task<int> CountCasesBySubCategoryAsync(Guid departmentId, string name, CancellationToken ct = default)
+    {
+        var lowerName = name.ToLower();
+        return await _context.Cases.CountAsync(
+            c => c.DepartmentId == departmentId && c.Subcategory != null && c.Subcategory.ToLower() == lowerName, ct);
     }
 
     /// <summary>

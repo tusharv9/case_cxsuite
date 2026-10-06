@@ -31,13 +31,18 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://*:{port}");
 }
 
-// CORS allow-list is driven by configuration so production can restrict origins
-// without code changes. The development config includes localhost ports.
-var allowedOriginsRaw = builder.Configuration["AllowedOrigins"] ?? "http://localhost:3000,http://localhost:5173";
+// CORS allow-list is driven purely by configuration ("AllowedOrigins", comma separated) so each
+// environment — and the future Host App's origin — is an explicit entry, never a wildcard.
+// In Production there is no implicit default: an empty list means no cross-origin access.
+// localhost is allowed only in Development, so a production deployment can never be reached
+// from a page running on someone's local machine.
+var allowedOriginsRaw = builder.Configuration["AllowedOrigins"]
+    ?? (builder.Environment.IsDevelopment() ? "http://localhost:3000,http://localhost:5173" : string.Empty);
 var allowedOrigins = allowedOriginsRaw
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Select(o => o.TrimEnd('/'))
     .ToArray();
+var allowLocalhostOrigins = builder.Environment.IsDevelopment();
 
 builder.Services.AddCors(options =>
 {
@@ -50,11 +55,9 @@ builder.Services.AddCors(options =>
                 var trimmed = origin.TrimEnd('/');
                 if (allowedOrigins.Any(ao => string.Equals(ao, trimmed, StringComparison.OrdinalIgnoreCase)))
                     return true;
-                if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                if (allowLocalhostOrigins && Uri.TryCreate(origin, UriKind.Absolute, out var uri))
                 {
                     if (uri.Host == "localhost" || uri.Host == "127.0.0.1")
-                        return true;
-                    if (uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase))
                         return true;
                 }
                 return false;
@@ -108,6 +111,13 @@ builder.Services.AddScoped<IAssignmentStrategy, LeastOccupancyAssignmentStrategy
 builder.Services.AddScoped<IAssignmentStrategy, SkillBasedAssignmentStrategy>();
 builder.Services.AddScoped<IRoutingEngineService, RoutingEngineService>();
 
+// Database preparation (migrations + seed) runs in the background; the worker below waits for it.
+builder.Services.Configure<CaseManagement.Api.Configuration.DatabaseOptions>(
+    builder.Configuration.GetSection(CaseManagement.Api.Configuration.DatabaseOptions.SectionName));
+builder.Services.AddSingleton<DatabaseInitializationState>();
+builder.Services.AddSingleton<DatabaseInitializer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseInitializer>());
+
 // Register SLA Escalation Background Worker
 builder.Services.AddHostedService<SlaEscalationBackgroundService>();
 
@@ -150,532 +160,24 @@ app.Use(async (context, next) =>
 });
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment() || builder.Configuration.GetValue<bool>("EnableSwagger", true))
+// Swagger exposes the full API surface, so it is off outside Development unless explicitly enabled.
+if (app.Environment.IsDevelopment() || builder.Configuration.GetValue<bool>("EnableSwagger", false))
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// Auto-migrate database on startup (for both dev and prod in this project)
-using (var scope = app.Services.CreateScope())
+// NOTE: schema creation/upgrade and seeding no longer happen inline here. They are handled by
+// DatabaseInitializer (EF migrations + one-time seed steps), which runs in the background so the
+// process answers /health immediately, and can be run as a deployment step:
+//     dotnet CaseManagement.Api.dll --migrate-only
+if (args.Contains("--migrate-only"))
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
-    
-    // Automatically append PreferredLanguage column if missing from existing PostgreSQL database
-    try
-    {
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""PreferredLanguage"" text DEFAULT 'Bahasa Malaysia';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""DateOfBirth"" timestamp with time zone NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""Passport"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""AccountNumber"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ADD COLUMN IF NOT EXISTS ""IdType"" text DEFAULT 'NRIC Number';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" ALTER COLUMN ""NRIC"" DROP NOT NULL;");
-
-        // Physical removal of obsolete Customer 360 tables and columns
-        db.Database.ExecuteSqlRaw(@"DROP TABLE IF EXISTS ""CustomerProducts"" CASCADE;");
-        db.Database.ExecuteSqlRaw(@"DROP TABLE IF EXISTS ""CustomerTransactions"" CASCADE;");
-        db.Database.ExecuteSqlRaw(@"DROP TABLE IF EXISTS ""CustomerReferrals"" CASCADE;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" DROP COLUMN IF EXISTS ""TenureMonths"";");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Customers"" DROP COLUMN IF EXISTS ""ReferralStatus"";");
-        db.Database.ExecuteSqlRaw(@"UPDATE ""Customers"" SET ""CustomerSegment"" = NULL WHERE ""CustomerSegment"" IN ('Gold', 'Mass', 'Retail', 'Mass Retail', 'Premier');");
-        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_PhoneNumber_Unique"" ON ""Customers"" (""PhoneNumber"") WHERE ""PhoneNumber"" IS NOT NULL AND ""PhoneNumber"" <> '';");
-        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_NRIC_Unique"" ON ""Customers"" (""NRIC"") WHERE ""NRIC"" IS NOT NULL AND ""NRIC"" <> '';");
-        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_Passport_Unique"" ON ""Customers"" (""Passport"") WHERE ""Passport"" IS NOT NULL AND ""Passport"" <> '';");
-        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Customers_AccountNumber_Unique"" ON ""Customers"" (""AccountNumber"") WHERE ""AccountNumber"" IS NOT NULL AND ""AccountNumber"" <> '';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""CaseType"" text DEFAULT 'Complaint';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""ParentCaseId"" uuid NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""LinkedSourceCaseId"" uuid NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SubcaseType"" text DEFAULT 'Original';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""CommunicationChannel"" text DEFAULT 'Voice';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SourceChannel"" text DEFAULT 'Voice';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""PreferredCommunicationChannel"" text DEFAULT 'Phone';");
-        db.Database.ExecuteSqlRaw(@"UPDATE ""Cases"" SET ""SourceChannel"" = ""CommunicationChannel"" WHERE ""SourceChannel"" IS NULL OR ""SourceChannel"" = '';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Subcategory"" text DEFAULT 'General Inquiry';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaPausedAt"" timestamp with time zone NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaTotalPausedMinutes"" integer DEFAULT 0;");
-        
-        // Priority First Response SLA & Escalation Matrix Columns
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseTargetMinutes"" integer DEFAULT 240;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseDueAt"" timestamp with time zone NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseActualAt"" timestamp with time zone NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""FirstResponseStatus"" text DEFAULT 'Pending';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""EscalationLevel"" integer DEFAULT 1;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Sla70ReminderSent"" boolean DEFAULT false;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Sla90Escalated"" boolean DEFAULT false;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaBreachedEscalated"" boolean DEFAULT false;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""Sla12hBreachedEscalated"" boolean DEFAULT false;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaBreachedAt"" timestamp with time zone NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""SlaConfigurations"" ADD COLUMN IF NOT EXISTS ""FirstResponseMinutes"" integer DEFAULT 240;");
-
-        // SLA Snapshot & Routing Columns
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""InternalResolutionTargetMinutes"" integer DEFAULT 120;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""ExternalResolutionTargetMinutes"" integer DEFAULT 240;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""InternalResolutionDueAt"" timestamp with time zone NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""ExternalResolutionDueAt"" timestamp with time zone NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Cases"" ADD COLUMN IF NOT EXISTS ""SlaConfigVersion"" integer DEFAULT 1;");
-
-        // Cases SLA & Routing Tables
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""PrioritySlaRules"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_PrioritySlaRules"" PRIMARY KEY,
-                ""Priority"" text NOT NULL,
-                ""FirstResponseValue"" integer NOT NULL DEFAULT 30,
-                ""FirstResponseUnit"" text NOT NULL DEFAULT 'Minutes',
-                ""FirstResponseMinutes"" integer NOT NULL DEFAULT 30,
-                ""InternalResolutionValue"" integer NOT NULL DEFAULT 2,
-                ""InternalResolutionUnit"" text NOT NULL DEFAULT 'Hours',
-                ""InternalResolutionMinutes"" integer NOT NULL DEFAULT 120,
-                ""ExternalResolutionValue"" integer NOT NULL DEFAULT 4,
-                ""ExternalResolutionUnit"" text NOT NULL DEFAULT 'Hours',
-                ""ExternalResolutionMinutes"" integer NOT NULL DEFAULT 240,
-                ""Version"" integer NOT NULL DEFAULT 1,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PrioritySlaRules_Priority"" ON ""PrioritySlaRules"" (""Priority"");
-
-            CREATE TABLE IF NOT EXISTS ""PriorityCategoryMappings"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_PriorityCategoryMappings"" PRIMARY KEY,
-                ""PrioritySlaRuleId"" uuid NOT NULL CONSTRAINT ""FK_PriorityCategoryMappings_PrioritySlaRules"" REFERENCES ""PrioritySlaRules"" (""Id"") ON DELETE CASCADE,
-                ""Priority"" text NOT NULL DEFAULT 'Medium',
-                ""CategoryName"" text NOT NULL,
-                ""DepartmentSubCategoryId"" uuid NULL,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PriorityCategoryMappings_CategoryName"" ON ""PriorityCategoryMappings"" (""CategoryName"");
-            CREATE INDEX IF NOT EXISTS ""IX_PriorityCategoryMappings_PrioritySlaRuleId"" ON ""PriorityCategoryMappings"" (""PrioritySlaRuleId"");
-
-            CREATE TABLE IF NOT EXISTS ""BusinessHours"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_BusinessHours"" PRIMARY KEY,
-                ""DayOfWeek"" integer NOT NULL,
-                ""DayName"" text NOT NULL,
-                ""IsEnabled"" boolean NOT NULL DEFAULT true,
-                ""StartTime"" interval NOT NULL DEFAULT '09:00:00',
-                ""EndTime"" interval NOT NULL DEFAULT '17:00:00',
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_BusinessHours_DayOfWeek"" ON ""BusinessHours"" (""DayOfWeek"");
-
-            CREATE TABLE IF NOT EXISTS ""PublicHolidays"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_PublicHolidays"" PRIMARY KEY,
-                ""HolidayDate"" timestamp with time zone NOT NULL,
-                ""Name"" text NOT NULL,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_PublicHolidays_HolidayDate"" ON ""PublicHolidays"" (""HolidayDate"");
-
-            CREATE TABLE IF NOT EXISTS ""EscalationLevelConfigs"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_EscalationLevelConfigs"" PRIMARY KEY,
-                ""LevelNumber"" integer NOT NULL,
-                ""Name"" text NOT NULL,
-                ""AssignmentType"" text NOT NULL DEFAULT 'Role',
-                ""TargetRole"" text NOT NULL DEFAULT 'Team Lead',
-                ""TargetUserId"" uuid NULL CONSTRAINT ""FK_EscalationLevelConfigs_Users"" REFERENCES ""Users"" (""Id"") ON DELETE SET NULL,
-                ""TriggerType"" text NOT NULL DEFAULT 'SlaPercentage',
-                ""TriggerValue"" numeric NULL,
-                ""TriggerDescription"" text NOT NULL DEFAULT '',
-                ""ActionDescription"" text NOT NULL DEFAULT '',
-                ""ReassignOwner"" boolean NOT NULL DEFAULT false,
-                ""DisplayOrder"" integer NOT NULL DEFAULT 1,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_EscalationLevelConfigs_LevelNumber"" ON ""EscalationLevelConfigs"" (""LevelNumber"");
-        ");
-        
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""CaseChildRelations"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_CaseChildRelations"" PRIMARY KEY,
-                ""ChildId"" text NOT NULL,
-                ""ParentCaseId"" uuid NOT NULL CONSTRAINT ""FK_CaseChildRelations_Cases_ParentCaseId"" REFERENCES ""Cases"" (""Id"") ON DELETE CASCADE,
-                ""RelationType"" text NOT NULL,
-                ""LinkedCaseId"" uuid NULL CONSTRAINT ""FK_CaseChildRelations_Cases_LinkedCaseId"" REFERENCES ""Cases"" (""Id"") ON DELETE RESTRICT,
-                ""Reason"" text NOT NULL DEFAULT '',
-                ""CreatedByUserId"" uuid NOT NULL CONSTRAINT ""FK_CaseChildRelations_Users_CreatedByUserId"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_CaseChildRelations_ChildId"" ON ""CaseChildRelations"" (""ChildId"");
-            CREATE INDEX IF NOT EXISTS ""IX_CaseChildRelations_ParentCaseId"" ON ""CaseChildRelations"" (""ParentCaseId"");
-            CREATE INDEX IF NOT EXISTS ""IX_CaseChildRelations_LinkedCaseId"" ON ""CaseChildRelations"" (""LinkedCaseId"");
-            CREATE INDEX IF NOT EXISTS ""IX_CaseChildRelations_CreatedByUserId"" ON ""CaseChildRelations"" (""CreatedByUserId"");
-        ");
-
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""Notifications"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_Notifications"" PRIMARY KEY
-            );
-        ");
-
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""RecipientUserId"" uuid;");
-        db.Database.ExecuteSqlRaw(@"DO $$ BEGIN ALTER TABLE ""Notifications"" ALTER COLUMN ""UserId"" DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""Type"" text DEFAULT '';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""Title"" text DEFAULT '';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""Message"" text DEFAULT '';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""CaseId"" uuid NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""CaseNumber"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""IsRead"" boolean DEFAULT false;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""CreatedAt"" timestamp with time zone DEFAULT NOW();");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""ReadAt"" timestamp with time zone NULL;");
-        
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""Priority"" text DEFAULT 'High';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""ReminderCount"" integer DEFAULT 0;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Notifications"" ADD COLUMN IF NOT EXISTS ""LastReminderAt"" timestamp with time zone NULL;");
-        
-        db.Database.ExecuteSqlRaw(@"DO $$ BEGIN ALTER TABLE ""CaseEvents"" ALTER COLUMN ""CaseId"" DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""Module"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""EntityName"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""OldValue"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""IsInternal"" boolean DEFAULT true;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""CaseEvents"" ADD COLUMN IF NOT EXISTS ""Channel"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""Team"" text NULL;");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""Queue"" text NULL;");
-        
-        // Departments (Teams) Function & Channels
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Departments"" ADD COLUMN IF NOT EXISTS ""Function"" text DEFAULT '';");
-        db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Departments"" ADD COLUMN IF NOT EXISTS ""Channels"" text DEFAULT 'Voice,Chat,Email';");
-
-        // TeamMembers squad table
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""TeamMembers"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_TeamMembers"" PRIMARY KEY,
-                ""DepartmentId"" uuid NOT NULL CONSTRAINT ""FK_TeamMembers_Departments"" REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
-                ""UserId"" uuid NOT NULL CONSTRAINT ""FK_TeamMembers_Users"" REFERENCES ""Users"" (""Id"") ON DELETE CASCADE,
-                ""MemberRole"" text NOT NULL DEFAULT 'Service Agent',
-                ""PrimaryChannel"" text NOT NULL DEFAULT 'Voice',
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""JoinedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_TeamMembers_DepartmentId_UserId"" ON ""TeamMembers"" (""DepartmentId"", ""UserId"");
-        ");
-
-        // Routing Rules & Assignment Engine Tables
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""RoutingRules"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_RoutingRules"" PRIMARY KEY,
-                ""Name"" text NOT NULL,
-                ""Description"" text NOT NULL DEFAULT '',
-                ""EvaluationOrder"" integer NOT NULL DEFAULT 1,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""ConditionsJson"" text NOT NULL DEFAULT '{{}}',
-                ""TargetDepartmentId"" uuid NOT NULL CONSTRAINT ""FK_RoutingRules_Departments"" REFERENCES ""Departments"" (""Id"") ON DELETE RESTRICT,
-                ""TargetQueueName"" text NULL,
-                ""ActionDescription"" text NOT NULL DEFAULT '',
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE INDEX IF NOT EXISTS ""IX_RoutingRules_EvaluationOrder"" ON ""RoutingRules"" (""EvaluationOrder"");
-
-            CREATE TABLE IF NOT EXISTS ""AssignmentConfigurations"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_AssignmentConfigurations"" PRIMARY KEY,
-                ""DepartmentId"" uuid NULL CONSTRAINT ""FK_AssignmentConfigurations_Departments"" REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
-                ""Algorithm"" text NOT NULL DEFAULT 'RoundRobin',
-                ""MaxConcurrentCapacity"" integer NOT NULL DEFAULT 5,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS ""AgentSkills"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_AgentSkills"" PRIMARY KEY,
-                ""UserId"" uuid NOT NULL CONSTRAINT ""FK_AgentSkills_Users"" REFERENCES ""Users"" (""Id"") ON DELETE CASCADE,
-                ""SkillName"" text NOT NULL,
-                ""ProficiencyLevel"" integer NOT NULL DEFAULT 1,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_AgentSkills_UserId_SkillName"" ON ""AgentSkills"" (""UserId"", ""SkillName"");
-
-            CREATE TABLE IF NOT EXISTS ""TeamAssignmentPointers"" (
-                ""DepartmentId"" uuid NOT NULL CONSTRAINT ""PK_TeamAssignmentPointers"" PRIMARY KEY REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
-                ""LastAssignedUserId"" uuid NOT NULL CONSTRAINT ""FK_TeamAssignmentPointers_Users"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
-                ""LastAssignedAt"" timestamp with time zone NOT NULL DEFAULT NOW()
-            );
-        ");
-
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""CaseAttachments"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_CaseAttachments"" PRIMARY KEY,
-                ""CaseId"" uuid NOT NULL CONSTRAINT ""FK_CaseAttachments_Cases_CaseId"" REFERENCES ""Cases"" (""Id"") ON DELETE CASCADE,
-                ""FileName"" text NOT NULL,
-                ""FileType"" text NOT NULL,
-                ""FileSizeBytes"" bigint NOT NULL DEFAULT 0,
-                ""StoragePath"" text NOT NULL,
-                ""Note"" text NULL,
-                ""UploadedByUserId"" uuid NOT NULL CONSTRAINT ""FK_CaseAttachments_Users_UploadedByUserId"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW(),
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""FileType"" text DEFAULT '';
-            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""ContentType"" text DEFAULT 'application/octet-stream';
-            DO $$ BEGIN ALTER TABLE ""CaseAttachments"" ALTER COLUMN ""ContentType"" DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
-            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""FileSizeBytes"" bigint DEFAULT 0;
-            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""FileSize"" bigint DEFAULT 0;
-            DO $$ BEGIN ALTER TABLE ""CaseAttachments"" ALTER COLUMN ""FileSize"" DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
-            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""StoragePath"" text DEFAULT '';
-
-            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""Note"" text NULL;
-            ALTER TABLE ""CaseAttachments"" ADD COLUMN IF NOT EXISTS ""UploadedByUserId"" uuid;
-            CREATE INDEX IF NOT EXISTS ""IX_CaseAttachments_CaseId"" ON ""CaseAttachments"" (""CaseId"");
-            CREATE INDEX IF NOT EXISTS ""IX_CaseAttachments_UploadedByUserId"" ON ""CaseAttachments"" (""UploadedByUserId"");
-        ");
-
-
-
-        db.Database.ExecuteSqlRaw(@"
-            CREATE INDEX IF NOT EXISTS ""IX_Notifications_RecipientUserId"" ON ""Notifications"" (""RecipientUserId"");
-            CREATE INDEX IF NOT EXISTS ""IX_Notifications_IsRead"" ON ""Notifications"" (""IsRead"");
-            CREATE INDEX IF NOT EXISTS ""IX_Notifications_CreatedAt"" ON ""Notifications"" (""CreatedAt"");
-        ");
-
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""FieldConfigurations"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_FieldConfigurations"" PRIMARY KEY,
-                ""ModuleKey"" text NOT NULL,
-                ""SectionKey"" text NOT NULL,
-                ""ApiField"" text NOT NULL,
-                ""DisplayLabel"" text NOT NULL,
-                ""IsVisible"" boolean NOT NULL DEFAULT true,
-                ""IsRequired"" boolean NOT NULL DEFAULT false,
-                ""IsEditable"" boolean NOT NULL DEFAULT true,
-                ""IsSensitive"" boolean NOT NULL DEFAULT false,
-                ""MaskingRule"" text NOT NULL DEFAULT 'None',
-                ""VisibleChars"" integer NOT NULL DEFAULT 4,
-                ""DisplayOrder"" integer NOT NULL DEFAULT 0,
-                ""FieldType"" text NOT NULL DEFAULT 'Text',
-                ""ValidationRegex"" text NULL,
-                ""MinLength"" integer NULL,
-                ""MaxLength"" integer NULL,
-                ""LookupTypeCode"" text NULL,
-                ""IsCustomField"" boolean NOT NULL DEFAULT false,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_FieldConfigurations_ModuleKey_SectionKey_ApiField""
-                ON ""FieldConfigurations"" (""ModuleKey"", ""SectionKey"", ""ApiField"");
-
-            CREATE TABLE IF NOT EXISTS ""LookupTypes"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_LookupTypes"" PRIMARY KEY,
-                ""Code"" text NOT NULL,
-                ""Name"" text NOT NULL,
-                ""Description"" text NOT NULL,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_LookupTypes_Code"" ON ""LookupTypes"" (""Code"");
-
-            CREATE TABLE IF NOT EXISTS ""LookupValues"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_LookupValues"" PRIMARY KEY,
-                ""LookupTypeId"" uuid NOT NULL CONSTRAINT ""FK_LookupValues_LookupTypes_LookupTypeId"" REFERENCES ""LookupTypes"" (""Id"") ON DELETE CASCADE,
-                ""TypeCode"" text NOT NULL,
-                ""Value"" text NOT NULL,
-                ""Label"" text NOT NULL,
-                ""DisplayOrder"" integer NOT NULL DEFAULT 0,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_LookupValues_LookupTypeId_Value"" ON ""LookupValues"" (""LookupTypeId"", ""Value"");
-            CREATE INDEX IF NOT EXISTS ""IX_LookupValues_TypeCode"" ON ""LookupValues"" (""TypeCode"");
-
-            CREATE TABLE IF NOT EXISTS ""CustomerCustomAttributes"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_CustomerCustomAttributes"" PRIMARY KEY,
-                ""CustomerId"" uuid NOT NULL CONSTRAINT ""FK_CustomerCustomAttributes_Customers_CustomerId"" REFERENCES ""Customers"" (""Id"") ON DELETE CASCADE,
-                ""FieldKey"" text NOT NULL,
-                ""FieldValue"" text NOT NULL,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE INDEX IF NOT EXISTS ""IX_CustomerCustomAttributes_CustomerId"" ON ""CustomerCustomAttributes"" (""CustomerId"");
-
-            CREATE TABLE IF NOT EXISTS ""CaseTypeConfigs"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_CaseTypeConfigs"" PRIMARY KEY,
-                ""Code"" text NOT NULL,
-                ""Name"" text NOT NULL,
-                ""Prefix"" text NOT NULL,
-                ""DisplayOrder"" integer NOT NULL DEFAULT 0,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_CaseTypeConfigs_Code"" ON ""CaseTypeConfigs"" (""Code"");
-
-            CREATE TABLE IF NOT EXISTS ""DepartmentSubCategories"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_DepartmentSubCategories"" PRIMARY KEY,
-                ""DepartmentId"" uuid NOT NULL CONSTRAINT ""FK_DepartmentSubCategories_Departments_DepartmentId"" REFERENCES ""Departments"" (""Id"") ON DELETE CASCADE,
-                ""Name"" text NOT NULL,
-                ""Code"" text NOT NULL,
-                ""DisplayOrder"" integer NOT NULL DEFAULT 0,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE INDEX IF NOT EXISTS ""IX_DepartmentSubCategories_DepartmentId"" ON ""DepartmentSubCategories"" (""DepartmentId"");
-
-            CREATE TABLE IF NOT EXISTS ""SlaConfigurations"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_SlaConfigurations"" PRIMARY KEY,
-                ""Severity"" text NOT NULL,
-                ""InternalHours"" integer NOT NULL DEFAULT 0,
-                ""ExternalHours"" integer NOT NULL DEFAULT 0,
-                ""IsActive"" boolean NOT NULL DEFAULT true,
-                ""CreatedAt"" timestamp with time zone NOT NULL,
-                ""UpdatedAt"" timestamp with time zone NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SlaConfigurations_Severity"" ON ""SlaConfigurations"" (""Severity"");
-
-            -- Clean up retired tables from removed features
-            DROP TABLE IF EXISTS ""DepartmentEscalationTemplates"" CASCADE;
-            DROP TABLE IF EXISTS ""NotificationRules"" CASCADE;
-        ");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[DB Auto-Migration] Note: {ex.Message}");
-    }
-
-    // --- Performance indexes -----------------------------------------------------------
-    // These mirror the HasIndex declarations in AppDbContext.OnModelCreating so that
-    // databases created by EnsureCreated() and databases grown by the ALTERs above end up
-    // with the same physical schema. Every statement is IF NOT EXISTS, so this block is safe
-    // to re-run on every startup. It is isolated in its own try/catch so a failure here
-    // cannot prevent the case-number sequence below from being created.
-    try
-    {
-        db.Database.ExecuteSqlRaw(@"
-            -- Board listing: ORDER BY ""CreatedAt"" DESC, optionally filtered by department.
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_CreatedAt"" ON ""Cases"" (""CreatedAt"" DESC);
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_DepartmentId_CreatedAt"" ON ""Cases"" (""DepartmentId"", ""CreatedAt"" DESC);
-
-            -- Sub-case hierarchy: columns were added by ALTER above, so EF never indexed them.
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_ParentCaseId"" ON ""Cases"" (""ParentCaseId"");
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_LinkedSourceCaseId"" ON ""Cases"" (""LinkedSourceCaseId"");
-
-            -- Audit trail: global ORDER BY ""CreatedAt"" DESC with keyset/offset paging,
-            -- and per-case timelines on the case detail screen.
-            CREATE INDEX IF NOT EXISTS ""IX_CaseEvents_CreatedAt"" ON ""CaseEvents"" (""CreatedAt"" DESC);
-            CREATE INDEX IF NOT EXISTS ""IX_CaseEvents_CaseId_CreatedAt"" ON ""CaseEvents"" (""CaseId"", ""CreatedAt"" DESC);
-
-            -- Notification list is always scoped to one recipient, newest first.
-            CREATE INDEX IF NOT EXISTS ""IX_Notifications_RecipientUserId_CreatedAt"" ON ""Notifications"" (""RecipientUserId"", ""CreatedAt"" DESC);
-            -- Unread badge polls this constantly; a partial index keeps it tiny.
-            CREATE INDEX IF NOT EXISTS ""IX_Notifications_Unread"" ON ""Notifications"" (""RecipientUserId"") WHERE ""IsRead"" = false;
-
-            -- Customer lookup normalises the NRIC before comparing (REPLACE(""NRIC"", '-', '')),
-            -- which the plain unique index on ""NRIC"" cannot serve. A matching expression index
-            -- makes that branch an index lookup instead of a sequential scan. Expressed as raw
-            -- SQL because EF Core cannot model an expression index.
-            CREATE INDEX IF NOT EXISTS ""IX_Customers_NRIC_Normalized""
-                ON ""Customers"" (replace(""NRIC"", '-', ''));
-
-            -- Case List View paging and Board columns: WHERE Status = ? ORDER BY CreatedAt DESC.
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_Status_CreatedAt"" ON ""Cases"" (""Status"", ""CreatedAt"" DESC);
-            -- Priority filter and severity usage counts.
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_Severity"" ON ""Cases"" (""Severity"");
-            -- Duplicate-notification check performed before every notification insert.
-            CREATE INDEX IF NOT EXISTS ""IX_Notifications_Dedup""
-                ON ""Notifications"" (""RecipientUserId"", ""Type"", ""CaseId"", ""CreatedAt"" DESC);
-        ");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[DB Index Bootstrap] Note: {ex.Message}");
-    }
-
-    // --- Case collaboration feed ------------------------------------------------------
-    // Collaboration activity is stored apart from the case workflow timeline (CaseEvents).
-    try
-    {
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS ""CaseCollaborationActivities"" (
-                ""Id"" uuid NOT NULL CONSTRAINT ""PK_CaseCollaborationActivities"" PRIMARY KEY,
-                ""CaseId"" uuid NOT NULL CONSTRAINT ""FK_CaseCollaborationActivities_Cases_CaseId"" REFERENCES ""Cases"" (""Id"") ON DELETE CASCADE,
-                ""ActivityType"" text NOT NULL,
-                ""ActorUserId"" uuid NOT NULL CONSTRAINT ""FK_CaseCollaborationActivities_Users_ActorUserId"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
-                ""TargetUserId"" uuid NULL CONSTRAINT ""FK_CaseCollaborationActivities_Users_TargetUserId"" REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT,
-                ""Content"" text NULL,
-                ""CreatedAt"" timestamp with time zone NOT NULL DEFAULT NOW()
-            );
-            CREATE INDEX IF NOT EXISTS ""IX_CaseCollaborationActivities_CaseId_CreatedAt""
-                ON ""CaseCollaborationActivities"" (""CaseId"", ""CreatedAt"" DESC);
-            CREATE INDEX IF NOT EXISTS ""IX_CaseCollaborationActivities_ActorUserId"" ON ""CaseCollaborationActivities"" (""ActorUserId"");
-            CREATE INDEX IF NOT EXISTS ""IX_CaseCollaborationActivities_TargetUserId"" ON ""CaseCollaborationActivities"" (""TargetUserId"");
-        ");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[DB Collaboration Bootstrap] Note: {ex.Message}");
-    }
-
-    // --- Trigram search indexes ---------------------------------------------------------
-    // Case and customer search use ILIKE '%term%', which a B-tree index cannot serve. pg_trgm
-    // GIN indexes make those searches index scans. Isolated so a database without permission
-    // to create the extension still starts normally (search just stays unindexed).
-    try
-    {
-        db.Database.ExecuteSqlRaw(@"
-            CREATE EXTENSION IF NOT EXISTS pg_trgm;
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_CaseNumber_Trgm"" ON ""Cases"" USING gin (""CaseNumber"" gin_trgm_ops);
-            CREATE INDEX IF NOT EXISTS ""IX_Cases_Title_Trgm"" ON ""Cases"" USING gin (""Title"" gin_trgm_ops);
-            CREATE INDEX IF NOT EXISTS ""IX_Customers_FullName_Trgm"" ON ""Customers"" USING gin (""FullName"" gin_trgm_ops);
-            CREATE INDEX IF NOT EXISTS ""IX_Users_Name_Trgm"" ON ""Users"" USING gin (""Name"" gin_trgm_ops);
-        ");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[DB Trigram Index Bootstrap] Note: {ex.Message}");
-    }
-
-    // --- Case number sequence ----------------------------------------------------------
-    // Atomic allocation for the numeric part of Cases.CaseNumber. The starting point is
-    // derived from the data already present (never a hardcoded constant) and is only ever
-    // moved forward, so restarts and pre-existing rows are both handled. If this fails the
-    // repository falls back to a database-side MAX, so case creation keeps working.
-    try
-    {
-        db.Database.ExecuteSqlRaw($@"
-            DO $$
-            DECLARE
-                data_max    bigint;
-                current_val bigint;
-                target      bigint;
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_class c
-                    JOIN pg_namespace n ON n.oid = c.relnamespace
-                    WHERE c.relkind = 'S' AND c.relname = '{SchemaConstants.CaseNumberSequence}'
-                ) THEN
-                    CREATE SEQUENCE {SchemaConstants.CaseNumberSequence};
-                END IF;
-
-                SELECT COALESCE(MAX(split_part(""CaseNumber"", '-', 2)::bigint), 0)
-                  INTO data_max
-                  FROM ""Cases""
-                 WHERE split_part(""CaseNumber"", '-', 2) ~ '^[0-9]+$';
-
-                SELECT CASE WHEN is_called THEN last_value ELSE 0 END
-                  INTO current_val
-                  FROM {SchemaConstants.CaseNumberSequence};
-
-                target := GREATEST(data_max, current_val);
-                PERFORM setval('{SchemaConstants.CaseNumberSequence}', GREATEST(target, 1), target > 0);
-            END $$;
-        ");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[DB Case Sequence Bootstrap] Note: {ex.Message}");
-    }
-
-    DbSeeder.Seed(db);
+    var initialised = await app.Services
+        .GetRequiredService<DatabaseInitializer>()
+        .RunAsync(forceMigrate: true, CancellationToken.None);
+    app.Logger.LogInformation(initialised ? "Migration finished." : "Migration FAILED.");
+    return initialised ? 0 : 1;
 }
 
 // Forward headers from reverse proxies (Render, load balancers)
@@ -692,12 +194,23 @@ if (!app.Environment.IsDevelopment())
 
 app.UseCors("ReactPolicy");
 
+// Before anything that touches the database: API calls get a clean 503 until it is ready.
+app.UseMiddleware<DatabaseReadinessMiddleware>();
 app.UseMiddleware<UserAuthorizationMiddleware>();
 app.UseAuthorization();
 
-// Zero-downtime health probe for Render
+// Liveness: the process is up (answers immediately, even while the database is still being prepared).
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+
+// Readiness: the database is migrated/seeded and the API can serve requests.
+app.MapGet("/ready", (DatabaseInitializationState state) =>
+    state.IsReady
+        ? Results.Ok(new { status = "ready" })
+        : Results.Json(new { status = state.Status.ToString(), message = state.Message },
+            statusCode: StatusCodes.Status503ServiceUnavailable));
 
 app.MapControllers();
 
 app.Run();
+
+return 0;
