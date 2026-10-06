@@ -12,14 +12,6 @@ export const routingRuleService = {
   },
 
   /**
-   * Get a single routing rule by ID
-   */
-  async getRuleById(id) {
-    const response = await api.get(`/api/routing-rules/${id}`);
-    return response.data;
-  },
-
-  /**
    * Create a new routing rule
    */
   async createRule(payload) {
@@ -60,18 +52,27 @@ export const routingRuleService = {
   },
 
   /**
-   * Get current assignment algorithm configuration
+   * The assignment settings in force: global, or for one team (its own, or the global ones it follows).
    */
-  async getAssignmentConfig() {
-    const response = await api.get('/api/routing-rules/assignment-config');
+  async getAssignmentConfig(departmentId) {
+    const response = await api.get('/api/routing-rules/assignment-config', { params: departmentId ? { departmentId } : {} });
     return response.data;
   },
 
   /**
-   * Update assignment algorithm and capacity
+   * Update the global assignment algorithm and capacity (or a team's own, when departmentId is given)
    */
-  async updateAssignmentConfig(payload) {
-    const response = await api.put('/api/routing-rules/assignment-config', payload);
+  async updateAssignmentConfig(payload, departmentId) {
+    const response = await api.put('/api/routing-rules/assignment-config', payload, { params: departmentId ? { departmentId } : {} });
+    return response.data;
+  },
+
+  /**
+   * What a rule can look at and the valid values for each (teams, sub-categories, case types, priorities, channels,
+   * customer segments, algorithms). Editors use this instead of hard-coded lists.
+   */
+  async getVocabulary() {
+    const response = await api.get('/api/routing-rules/vocabulary');
     return response.data;
   }
 };

@@ -7,9 +7,9 @@
 // custom field appears, validates and is submitted without any code change.
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
-import { X, PlusCircle, UserCheck, UserPlus } from 'lucide-react';
+import { PlusCircle, UserCheck, UserPlus } from 'lucide-react';
 import { Button } from '../../common/Button/Button.jsx';
+import { SideDrawer } from '../../common/SideDrawer/SideDrawer.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
 import { Loader, ErrorState } from '../../common/Loader/Loader.jsx';
 import { DynamicField } from '../../common/DynamicField/DynamicField.jsx';
@@ -55,6 +55,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
   const [values, setValues] = useState({});
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [touched, setTouched] = useState(false);   // the person has entered something (so closing should ask)
 
   // What the server says the priority would be for the chosen department + sub-category.
   const [priorityInfo, setPriorityInfo] = useState({ isMapped: false });
@@ -98,6 +99,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
   useEffect(() => {
     if (isOpen && !wasOpen.current) {
       setErrors({});
+      setTouched(false);
       setSelectedCustomer(null);
       setCustomerMode('existing');
       setPriorityInfo({ isMapped: false });
@@ -156,6 +158,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
 
   // ---- Editing -------------------------------------------------------------------------------------------------
   const setValue = (apiField, value) => {
+    setTouched(true);
     setValues((prev) => {
       const next = { ...prev, [apiField]: value };
       if (apiField === 'departmentId') {
@@ -372,40 +375,36 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
     );
   };
 
-  return createPortal(
+  return (
     <>
-      <div className="create-drawer-overlay" onClick={onClose} aria-hidden="true" />
-      <aside className="create-drawer" role="dialog" aria-modal="true" aria-label="Create new case">
-        <div className="create-drawer__header">
-          <div className="create-drawer__header-content">
-            <h2>Create New Case</h2>
-            <p>Fill in the required fields to open a case</p>
-          </div>
-          <button className="create-drawer__close" onClick={onClose} aria-label="Close drawer">
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="create-drawer__body scrollbar-thin">
-          {isLoadingMeta && <Loader text="Loading form…" />}
-          {loadError && <ErrorState title="Couldn't load the form" message={loadError} onRetry={loadMetadata} />}
-          {!isLoadingMeta && !loadError && meta && visibleFields.map(renderField)}
-        </div>
-
-        <div className="create-drawer__footer">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button
-            className="create-drawer__submit"
-            variant="primary"
-            isLoading={isSubmitting}
-            disabled={!meta || Boolean(loadError)}
-            leftIcon={<PlusCircle size={15} />}
-            onClick={handleSubmit}
-          >
-            Create Case
-          </Button>
-        </div>
-      </aside>
+      <SideDrawer
+        isOpen={isOpen}
+        onClose={onClose}
+        isDirty={touched && !isSubmitting}
+        escapeEnabled={!isCreateCustomerOpen && !isExistingCustomerOpen}
+        title="Create New Case"
+        subtitle="Fill in the required fields to open a case"
+        ariaLabel="Create new case"
+        footer={({ requestClose }) => (
+          <>
+            <Button variant="ghost" onClick={requestClose}>Cancel</Button>
+            <Button
+              className="create-drawer__submit"
+              variant="primary"
+              isLoading={isSubmitting}
+              disabled={!meta || Boolean(loadError)}
+              leftIcon={<PlusCircle size={15} />}
+              onClick={handleSubmit}
+            >
+              Create Case
+            </Button>
+          </>
+        )}
+      >
+        {isLoadingMeta && <Loader text="Loading form…" />}
+        {loadError && <ErrorState title="Couldn't load the form" message={loadError} onRetry={loadMetadata} />}
+        {!isLoadingMeta && !loadError && meta && visibleFields.map(renderField)}
+      </SideDrawer>
 
       {isCreateCustomerOpen && (
         <CreateCustomerDrawer
@@ -422,7 +421,6 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           onCustomerFound={(customer) => { chooseCustomer(customer); setIsExistingCustomerOpen(false); }}
         />
       )}
-    </>,
-    document.body
+    </>
   );
 }

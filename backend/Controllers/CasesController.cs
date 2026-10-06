@@ -11,10 +11,14 @@ using Microsoft.AspNetCore.Mvc;
 public class CasesController : BaseApiController
 {
     private readonly ICaseService _caseService;
+    private readonly IAttachmentService _attachments;
+    private readonly ICaseCollaborationService _collaboration;
 
-    public CasesController(ICaseService caseService)
+    public CasesController(ICaseService caseService, IAttachmentService attachments, ICaseCollaborationService collaboration)
     {
         _caseService = caseService;
+        _attachments = attachments;
+        _collaboration = collaboration;
     }
 
     [HttpGet]
@@ -29,23 +33,11 @@ public class CasesController : BaseApiController
         [FromQuery] string? channel,
         CancellationToken ct)
     {
-        if (page.HasValue)
-        {
-            var paged = await _caseService.GetPaginatedBoardCasesAsync(
-                status,
-                page.Value,
-                pageSize ?? 30,
-                departmentId,
-                caseType,
-                search,
-                priority,
-                channel,
-                ct);
-            return Ok(paged);
-        }
-
-        var cases = await _caseService.GetBoardCasesAsync(departmentId, caseType, ct);
-        return Ok(cases);
+        // Always paged. (A call without a page used to return every case in the database — hundreds of MB at scale.)
+        var paged = await _caseService.GetPaginatedBoardCasesAsync(
+            status, Math.Max(1, page ?? 1), Math.Clamp(pageSize ?? 30, 1, 100),
+            departmentId, caseType, search, priority, channel, ct);
+        return Ok(paged);
     }
 
     /// <summary>Open / SLA-breached counts for the Case Management header.</summary>
@@ -107,42 +99,45 @@ public class CasesController : BaseApiController
     public async Task<IActionResult> RequestSwarm(Guid id, [FromBody] RequestSwarmDto dto)
     {
         dto.UserId = CurrentUserId;
-        await _caseService.RequestSwarmAsync(id, dto, CurrentUserId);
+        await _collaboration.RequestSwarmAsync(id, dto, CurrentUserId);
         return Ok(new { message = "Swarm requested successfully. Team Lead and Subject Matter Experts have been notified and added to the case." });
     }
 
     [HttpGet("{id:guid}/attachments")]
     public async Task<IActionResult> GetAttachments(Guid id, CancellationToken ct)
-    {
-        var attachments = await _caseService.GetAttachmentsAsync(id, ct);
-        return Ok(attachments);
-    }
+        => Ok(await _attachments.GetAttachmentsAsync(id, ct));
 
     [HttpPost("{id:guid}/attachments")]
-    public async Task<IActionResult> UploadAttachment(Guid id, [FromForm] Microsoft.AspNetCore.Http.IFormFile file, [FromForm] string? note)
-    {
-        var attachment = await _caseService.UploadAttachmentAsync(id, file, note, CurrentUserId);
-        return Ok(attachment);
-    }
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("uploads")]
+    public async Task<IActionResult> UploadAttachment(Guid id, [FromForm] Microsoft.AspNetCore.Http.IFormFile file, [FromForm] string? note, CancellationToken ct)
+        => Ok(await _attachments.UploadAttachmentAsync(id, file, note, CurrentUserId, ct));
 
+    /// <summary>
+    /// Always a DOWNLOAD, never rendered by the browser: the type comes from the verified extension, the browser is told not to
+    /// guess otherwise (nosniff), and the response is not cached by shared caches.
+    /// </summary>
     [HttpGet("{id:guid}/attachments/{attachmentId:guid}/download")]
-    public async Task<IActionResult> DownloadAttachment(Guid id, Guid attachmentId)
+    public async Task<IActionResult> DownloadAttachment(Guid id, Guid attachmentId, CancellationToken ct)
     {
-        var (fileBytes, contentType, fileName) = await _caseService.GetAttachmentDownloadAsync(id, attachmentId);
-        return File(fileBytes, contentType, fileName);
+        var download = await _attachments.OpenDownloadAsync(id, attachmentId, ct);
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        Response.Headers["Cache-Control"] = "private, no-store";
+        Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+        if (download.Sha256 != null) Response.Headers["X-Content-SHA256"] = download.Sha256;
+        return File(download.Content, download.ContentType, download.FileName);   // File(...) sends Content-Disposition: attachment
     }
 
     [HttpPost("{id:guid}/coworkers")]
     public async Task<IActionResult> AddCoworkers(Guid id, [FromBody] AddCoworkersDto dto)
     {
-        await _caseService.AddCoworkersAsync(id, dto.CoworkerIds, CurrentUserId);
+        await _collaboration.AddCoworkersAsync(id, dto.CoworkerIds, CurrentUserId);
         return Ok(new { message = "Coworkers added successfully." });
     }
 
     [HttpDelete("{id:guid}/coworkers/{coworkerId:guid}")]
     public async Task<IActionResult> RemoveCoworker(Guid id, Guid coworkerId)
     {
-        await _caseService.RemoveCoworkerAsync(id, coworkerId, CurrentUserId);
+        await _collaboration.RemoveCoworkerAsync(id, coworkerId, CurrentUserId);
         return Ok(new { message = "Coworker removed successfully." });
     }
 
@@ -150,14 +145,14 @@ public class CasesController : BaseApiController
     [HttpGet("{id:guid}/collaboration")]
     public async Task<IActionResult> GetCollaboration(Guid id, [FromQuery] DateTime? before, [FromQuery] int limit = 50, CancellationToken ct = default)
     {
-        var result = await _caseService.GetCollaborationAsync(id, before, limit, ct);
+        var result = await _collaboration.GetCollaborationAsync(id, before, Math.Clamp(limit, 1, 200), ct);
         return Ok(result);
     }
 
     [HttpPost("{id:guid}/collaboration/notes")]
     public async Task<IActionResult> AddCollaborationNote(Guid id, [FromBody] AddCollaborationNoteDto dto)
     {
-        var activity = await _caseService.AddCollaborationNoteAsync(id, dto?.Content ?? string.Empty, CurrentUserId);
+        var activity = await _collaboration.AddCollaborationNoteAsync(id, dto?.Content ?? string.Empty, CurrentUserId);
         return Ok(activity);
     }
 

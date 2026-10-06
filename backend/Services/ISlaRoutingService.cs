@@ -23,7 +23,6 @@ public interface ISlaRoutingService
     Task<PriorityResolutionDto> PreviewPriorityAsync(Guid? departmentId, string? subCategoryName, CancellationToken ct = default);
     Task<PrioritySlaRule> GetActivePrioritySlaRuleAsync(string priority, CancellationToken ct = default);
     Task<CaseEscalationStatusDto?> GetCaseEscalationStatusAsync(Guid caseId, CancellationToken ct = default);
-    Task<User?> ResolveNextEscalationTargetAsync(Case c, int targetLevel, CancellationToken ct = default);
 }
 
 /// <summary>The priority a case gets and why: the sub-category's configured mapping wins; otherwise the requested one.</summary>

@@ -54,3 +54,20 @@ TEST_POSTGRES_ADMIN_CONNECTION="Host=127.0.0.1;Port=5432;Username=postgres" dotn
 ```
 They create and drop their own `cmtest_*` databases (never use a real environment's server). Without the
 variable they are skipped.
+
+## SLA engine tables (Phase 5)
+
+`BusinessCalendarSettings` (one row: the calendar's IANA time zone), `Notifications.EventKey` (unique per recipient when set), `Cases.SlaReminderSent`. See [SLA_ENGINE.md](SLA_ENGINE.md).
+
+## Teams, routing & monitoring (Phase 6)
+
+`TeamMembers` is the only team membership; `TeamMembers.IsAssignable`, `SkillRules`, one `AssignmentConfigurations` row per team (unique) plus the global row. Dropped: `Departments.Channels`, `TeamMembers.PrimaryChannel`, `RoutingRules.TargetQueueName`. See [TEAMS_ROUTING.md](TEAMS_ROUTING.md).
+
+## Attachments (Phase 7)
+
+`CaseAttachments.ContentHash` (SHA-256, nullable for earlier uploads). Files themselves are not in the database: see [NOTIFICATIONS_ATTACHMENTS.md](NOTIFICATIONS_ATTACHMENTS.md) for storage.
+
+## Phase 8 additions
+
+- `Cases.SlaOutcome` (text, nullable): persisted result of the SLA clock when a case stops (`Met` / `Breached`). Set by `SlaClock.Stop`; existing closed cases are back-filled once at startup by `SlaMonitorService.BackfillOutcomesAsync`. Lets dashboards count breaches in SQL instead of loading cases.
+- Partial indexes over **open** cases only (`Status NOT IN ('Resolved','Closed','Cancelled')`): `(OwnerId, Status)` and `(DepartmentId, Status)`, plus an index on breached outcomes. Migrations: `SlaOutcomeAndPerformance`, `OpenCaseIndexes`. Back up the database before the first start on an existing deployment.

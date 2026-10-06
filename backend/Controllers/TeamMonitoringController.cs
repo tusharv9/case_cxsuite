@@ -17,32 +17,18 @@ public class TeamMonitoringController : BaseApiController
         _monitoringService = monitoringService;
     }
 
-    [HttpGet("summary")]
-    public async Task<IActionResult> GetSummary(CancellationToken ct)
+    /// <summary>The whole monitor in one request, for every team or one (<c>?teamId=</c>).</summary>
+    [HttpGet("overview")]
+    public async Task<IActionResult> GetOverview([FromQuery] Guid? teamId, CancellationToken ct)
     {
-        var summary = await _monitoringService.GetMonitoringSummaryAsync(ct);
-        return Ok(summary);
-    }
-
-    [HttpGet("agent-board")]
-    public async Task<IActionResult> GetAgentBoard(CancellationToken ct)
-    {
-        var board = await _monitoringService.GetAgentStatusBoardAsync(ct);
-        return Ok(board);
-    }
-
-    [HttpGet("queue-health")]
-    public async Task<IActionResult> GetQueueHealth(CancellationToken ct)
-    {
-        var health = await _monitoringService.GetQueueHealthAsync(ct);
-        return Ok(health);
-    }
-
-    [HttpGet("sla-at-risk")]
-    public async Task<IActionResult> GetSlaAtRisk(CancellationToken ct)
-    {
-        var atRisk = await _monitoringService.GetSlaAtRiskCasesAsync(ct);
-        return Ok(atRisk);
+        try
+        {
+            return Ok(await _monitoringService.GetOverviewAsync(teamId, ct));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
     }
 
     [HttpPost("nudge/{agentId:guid}")]

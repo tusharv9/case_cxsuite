@@ -1,5 +1,7 @@
 namespace CaseManagement.Api.Services;
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using CaseManagement.Api.Data;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Models;
@@ -12,12 +14,14 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
     private readonly IConfigurableSettingsRepository _repository;
     private readonly AppDbContext _context;
+    private readonly ILogger<ConfigurableSettingsService> _logger;
     private readonly INotificationService _notificationService;
     private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public ConfigurableSettingsService(IConfigurableSettingsRepository repository, AppDbContext context, INotificationService notificationService, IHttpContextAccessor httpContextAccessor)
+    public ConfigurableSettingsService(IConfigurableSettingsRepository repository, AppDbContext context, INotificationService notificationService, IHttpContextAccessor httpContextAccessor, ILogger<ConfigurableSettingsService>? logger = null)
     {
         _repository = repository;
+        _logger = logger ?? NullLogger<ConfigurableSettingsService>.Instance;
         _context = context;
         _notificationService = notificationService;
         _httpContextAccessor = httpContextAccessor;
@@ -35,7 +39,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             var userId = CurrentUserId;
             if (userId is null)
             {
-                Console.WriteLine($"[ConfigAuditLog] Skipped '{entityName}': no acting user on the request.");
+                _logger.LogWarning("Configuration audit entry for {Entity} skipped: no acting user on the request.", entityName);
                 return;
             }
 
@@ -59,7 +63,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ConfigAuditLog Error] {ex.Message}");
+            _logger.LogWarning(ex, "ConfigAuditLog Error");
         }
     }
 

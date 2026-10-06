@@ -192,6 +192,30 @@ public class CustomerRepository : ICustomerRepository
         return await query.MapToCustomerDetail().FirstOrDefaultAsync(ct);
     }
 
+    public async Task<PagedResponseDto<CustomerTimelineItemDto>> GetCustomerTimelineAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default)
+    {
+        // Milestones of the case's life, plus anything that was said to / by the customer. Internal working notes
+        // and automatic bookkeeping (reminders, SLA notes, audit rows) are not part of the customer's story.
+        var milestones = new[] { EventType.Create, EventType.Assign, EventType.Transfer, EventType.Escalate, EventType.Resolve };
+
+        var query = _context.CaseEvents.AsNoTracking()
+            .Where(e => e.CaseId != null && e.Case!.CustomerId == customerId)
+            .Where(e => milestones.Contains(e.EventType) || !e.IsInternal);
+
+        var total = await query.CountAsync(ct);
+        var items = await query
+            .OrderByDescending(e => e.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(e => new CustomerTimelineItemDto
+            {
+                Id = e.Id, CaseId = e.CaseId!.Value, CaseNumber = e.Case!.CaseNumber, CaseTitle = e.Case.Title,
+                Type = e.EventType.ToString(), Message = e.Message, ActorName = e.User != null ? e.User.Name : string.Empty, CreatedAt = e.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        return new PagedResponseDto<CustomerTimelineItemDto> { Items = items, TotalCount = total, Page = page, PageSize = pageSize };
+    }
+
     public async Task<PagedResponseDto<CaseSummaryDto>> GetCustomerCasesAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default)
     {
         var query = _context.Cases
@@ -212,6 +236,14 @@ public class CustomerRepository : ICustomerRepository
                 Status = caseItem.Status.ToString(),
                 Severity = caseItem.Severity,
                 SlaStartTime = caseItem.SlaStartTime,
+                SlaPausedAt = caseItem.SlaPausedAt,
+                SlaTotalPausedMinutes = caseItem.SlaTotalPausedMinutes,
+                InternalResolutionTargetMinutes = caseItem.InternalResolutionTargetMinutes,
+                ExternalResolutionTargetMinutes = caseItem.ExternalResolutionTargetMinutes,
+                FirstResponseTargetMinutes = caseItem.FirstResponseTargetMinutes,
+                FirstResponseDueAt = caseItem.FirstResponseDueAt,
+                FirstResponseActualAt = caseItem.FirstResponseActualAt,
+                FirstResponseStatus = caseItem.FirstResponseStatus,
                 SlaTargetHours = caseItem.SlaTargetHours,
                 ResolvedAt = caseItem.ResolvedAt,
                 DepartmentId = caseItem.DepartmentId,
@@ -222,8 +254,6 @@ public class CustomerRepository : ICustomerRepository
                 CustomerId = caseItem.CustomerId,
                 CustomerName = caseItem.Customer != null ? caseItem.Customer.FullName : string.Empty,
                 CaseType = string.IsNullOrEmpty(caseItem.CaseType) ? (caseItem.CaseNumber.StartsWith("S-") ? "Service" : ((caseItem.CaseNumber.StartsWith("I-") || caseItem.CaseNumber.StartsWith("E-")) ? "Inquiry" : "Complaint")) : caseItem.CaseType,
-                SlaPausedAt = caseItem.SlaPausedAt,
-                SlaTotalPausedMinutes = caseItem.SlaTotalPausedMinutes,
                 Subcategory = caseItem.Subcategory ?? "General Inquiry",
                 PreferredLanguage = caseItem.Customer != null ? caseItem.Customer.PreferredLanguage : "Bahasa Malaysia",
                 SourceChannel = caseItem.SourceChannel ?? caseItem.CommunicationChannel ?? "Voice",

@@ -4,9 +4,9 @@
 // code, because they are rules about the identity document itself, not configurable data.
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { createPortal } from 'react-dom';
-import { X, UserPlus } from 'lucide-react';
+import { UserPlus } from 'lucide-react';
 import { Button } from '../../common/Button/Button.jsx';
+import { SideDrawer } from '../../common/SideDrawer/SideDrawer.jsx';
 import { Loader, ErrorState } from '../../common/Loader/Loader.jsx';
 import { DynamicField } from '../../common/DynamicField/DynamicField.jsx';
 import { customerService } from '../../../services/customerService.js';
@@ -40,6 +40,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   const [phoneDigits, setPhoneDigits] = useState('');
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
+  const [touched, setTouched] = useState(false);
 
   const loadMetadata = useCallback(() => {
     setIsLoadingMeta(true);
@@ -68,6 +69,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   useEffect(() => {
     if (!isOpen) return;
     setErrors({});
+    setTouched(false);
     setPhoneDigits('');
     loadMetadata();
   }, [isOpen, loadMetadata]);
@@ -94,6 +96,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   const clearError = (...keys) => setErrors((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => !keys.includes(k))));
 
   const setValue = (key, v) => {
+    setTouched(true);
     setValues((prev) => ({ ...prev, [key]: v }));
     clearError(key, ...(key === idKey ? ['idValue', 'nric'] : []));
   };
@@ -102,6 +105,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     let digits = e.target.value.replace(/\D/g, '');
     if (digits.startsWith('60')) digits = digits.slice(2);
     else if (digits.startsWith('0')) digits = digits.slice(1);
+    setTouched(true);
     setPhoneDigits(digits.slice(0, 15));
     clearError('phoneNumber');
   };
@@ -229,28 +233,17 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     );
   };
 
-  return createPortal(
-    <>
-      <div className="create-drawer-overlay" onClick={onClose} aria-hidden="true" />
-      <aside className="create-drawer" role="dialog" aria-modal="true" aria-label="Create new customer">
-        <div className="create-drawer__header">
-          <div className="create-drawer__header-content">
-            <h2>Add New Customer</h2>
-            <p>Register customer profile with ID options &amp; language options</p>
-          </div>
-          <button className="create-drawer__close" onClick={onClose} aria-label="Close drawer">
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="create-drawer__body scrollbar-thin">
-          {isLoadingMeta && <Loader text="Loading form…" />}
-          {loadError && <ErrorState title="Couldn't load the form" message={loadError} onRetry={loadMetadata} />}
-          {!isLoadingMeta && !loadError && meta && fields.map(renderField)}
-        </div>
-
-        <div className="create-drawer__footer">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+  return (
+    <SideDrawer
+      isOpen={isOpen}
+      onClose={onClose}
+      isDirty={touched && !isLoading}
+      title="Add New Customer"
+      subtitle="Register customer profile with ID options & language options"
+      ariaLabel="Create new customer"
+      footer={({ requestClose }) => (
+        <>
+          <Button variant="ghost" onClick={requestClose}>Cancel</Button>
           <Button
             className="create-drawer__submit"
             variant="primary"
@@ -261,9 +254,12 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
           >
             Save Customer
           </Button>
-        </div>
-      </aside>
-    </>,
-    document.body
+        </>
+      )}
+    >
+      {isLoadingMeta && <Loader text="Loading form…" />}
+      {loadError && <ErrorState title="Couldn't load the form" message={loadError} onRetry={loadMetadata} />}
+      {!isLoadingMeta && !loadError && meta && fields.map(renderField)}
+    </SideDrawer>
   );
 }

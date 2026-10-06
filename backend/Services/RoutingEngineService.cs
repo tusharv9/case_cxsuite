@@ -1,5 +1,7 @@
 namespace CaseManagement.Api.Services;
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using CaseManagement.Api.Data;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Models;
@@ -11,11 +13,15 @@ public class RoutingEngineService : IRoutingEngineService
 {
     private readonly AppDbContext _context;
     private readonly IEnumerable<IAssignmentStrategy> _strategies;
+    private readonly IAgentPoolService _pool;
+    private readonly ILogger<RoutingEngineService> _logger;
 
-    public RoutingEngineService(AppDbContext context, IEnumerable<IAssignmentStrategy> strategies)
+    public RoutingEngineService(AppDbContext context, IEnumerable<IAssignmentStrategy> strategies, IAgentPoolService pool, ILogger<RoutingEngineService>? logger = null)
     {
         _context = context;
+        _logger = logger ?? NullLogger<RoutingEngineService>.Instance;
         _strategies = strategies;
+        _pool = pool;
     }
 
     public async Task<IEnumerable<RoutingRuleDto>> GetRulesAsync(CancellationToken ct = default)
@@ -49,7 +55,6 @@ public class RoutingEngineService : IRoutingEngineService
                 Conditions = conds,
                 TargetDepartmentId = r.TargetDepartmentId,
                 TargetDepartmentName = r.TargetDepartment?.Name ?? "Unassigned Team",
-                TargetQueueName = r.TargetQueueName,
                 ActionDescription = r.ActionDescription,
                 CreatedAt = r.CreatedAt
             };
@@ -67,6 +72,7 @@ public class RoutingEngineService : IRoutingEngineService
         if (string.IsNullOrWhiteSpace(dto.Name))
             throw new InvalidOperationException("Rule name is required.");
 
+        await ValidateRuleAsync(dto.Conditions, dto.TargetDepartmentId, ct);
         var count = await _context.RoutingRules.CountAsync(ct);
         var order = dto.EvaluationOrder.HasValue && dto.EvaluationOrder.Value > 0 ? dto.EvaluationOrder.Value : count + 1;
 
@@ -81,7 +87,6 @@ public class RoutingEngineService : IRoutingEngineService
             IsActive = dto.IsActive,
             ConditionsJson = condsJson,
             TargetDepartmentId = dto.TargetDepartmentId,
-            TargetQueueName = dto.TargetQueueName,
             ActionDescription = dto.ActionDescription?.Trim() ?? $"Route to team",
             CreatedAt = DateTime.UtcNow
         };
@@ -99,13 +104,13 @@ public class RoutingEngineService : IRoutingEngineService
         if (rule == null) throw new KeyNotFoundException("Routing rule not found.");
 
         var oldState = JsonSerializer.Serialize(new { rule.Name, rule.IsActive, rule.EvaluationOrder, rule.ConditionsJson });
+        await ValidateRuleAsync(dto.Conditions, dto.TargetDepartmentId, ct);
 
         if (!string.IsNullOrWhiteSpace(dto.Name)) rule.Name = dto.Name.Trim();
         if (dto.Description != null) rule.Description = dto.Description.Trim();
         if (dto.EvaluationOrder.HasValue) rule.EvaluationOrder = dto.EvaluationOrder.Value;
         if (dto.IsActive.HasValue) rule.IsActive = dto.IsActive.Value;
         if (dto.TargetDepartmentId.HasValue) rule.TargetDepartmentId = dto.TargetDepartmentId.Value;
-        if (dto.TargetQueueName != null) rule.TargetQueueName = dto.TargetQueueName.Trim();
         if (dto.ActionDescription != null) rule.ActionDescription = dto.ActionDescription.Trim();
         if (dto.Conditions != null) rule.ConditionsJson = JsonSerializer.Serialize(dto.Conditions);
 
@@ -164,149 +169,228 @@ public class RoutingEngineService : IRoutingEngineService
         await _context.SaveChangesAsync(ct);
     }
 
-    public async Task<AssignmentConfigDto> GetAssignmentConfigAsync(CancellationToken ct = default)
-    {
-        var config = await _context.AssignmentConfigurations
-            .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.DepartmentId == null && c.IsActive, ct);
+    // ------------------------------------------------------------------------------------ assignment settings
 
-        if (config == null)
+    private static readonly string[] Algorithms = { "RoundRobin", "SkillBased", "LeastOccupancy" };
+
+    private static AssignmentConfigDto ToDto(AssignmentConfiguration c, bool isOverride) => new()
+    {
+        DepartmentId = c.DepartmentId,
+        Algorithm = c.Algorithm,
+        MaxConcurrentCapacity = c.MaxConcurrentCapacity,
+        IsTeamOverride = isOverride,
+        UpdatedAt = c.UpdatedAt ?? c.CreatedAt
+    };
+
+    private async Task<AssignmentConfiguration> ResolveConfigAsync(Guid? departmentId, CancellationToken ct)
+    {
+        if (departmentId.HasValue)
         {
-            return new AssignmentConfigDto
-            {
-                Algorithm = "RoundRobin",
-                MaxConcurrentCapacity = 5,
-                UpdatedAt = DateTime.UtcNow
-            };
+            var own = await _context.AssignmentConfigurations.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.DepartmentId == departmentId && c.IsActive, ct);
+            if (own != null) return own;
         }
 
-        return new AssignmentConfigDto
-        {
-            Algorithm = config.Algorithm,
-            MaxConcurrentCapacity = config.MaxConcurrentCapacity,
-            UpdatedAt = config.UpdatedAt ?? config.CreatedAt
-        };
+        return await _context.AssignmentConfigurations.AsNoTracking().FirstOrDefaultAsync(c => c.DepartmentId == null && c.IsActive, ct)
+            ?? throw new InvalidOperationException("No assignment settings are configured. Set the assignment algorithm under Cases SLA & Routing.");
     }
 
-    public async Task<AssignmentConfigDto> UpdateAssignmentConfigAsync(UpdateAssignmentConfigDto dto, Guid actingUserId, CancellationToken ct = default)
+    public async Task<AssignmentConfigDto> GetAssignmentConfigAsync(Guid? departmentId = null, CancellationToken ct = default)
     {
-        var allowedAlgorithms = new[] { "RoundRobin", "SkillBased", "LeastOccupancy" };
-        var algo = allowedAlgorithms.FirstOrDefault(a => string.Equals(a, dto.Algorithm, StringComparison.OrdinalIgnoreCase)) ?? "RoundRobin";
+        var config = await ResolveConfigAsync(departmentId, ct);
+        return ToDto(config, departmentId.HasValue && config.DepartmentId == departmentId);
+    }
 
-        var config = await _context.AssignmentConfigurations
-            .FirstOrDefaultAsync(c => c.DepartmentId == null, ct);
+    public async Task<AssignmentConfigDto> UpdateAssignmentConfigAsync(UpdateAssignmentConfigDto dto, Guid actingUserId, Guid? departmentId = null, CancellationToken ct = default)
+    {
+        var algo = Algorithms.FirstOrDefault(a => string.Equals(a, dto.Algorithm, StringComparison.OrdinalIgnoreCase))
+                   ?? throw new InvalidOperationException($"'{dto.Algorithm}' is not an assignment algorithm. Choose one of: {string.Join(", ", Algorithms)}.");
+        if (dto.MaxConcurrentCapacity is < 1 or > 500)
+            throw new InvalidOperationException("Capacity must be between 1 and 500 open cases per agent.");
 
+        string scope = "all teams";
+        if (departmentId.HasValue)
+        {
+            scope = (await _context.Departments.AsNoTracking().Where(d => d.Id == departmentId).Select(d => d.Name).FirstOrDefaultAsync(ct))
+                    ?? throw new KeyNotFoundException("Team not found.");
+        }
+
+        var config = await _context.AssignmentConfigurations.FirstOrDefaultAsync(c => c.DepartmentId == departmentId, ct);
         if (config == null)
         {
+            // A team's first override starts from the current global settings; the global row is never created here.
+            var basis = departmentId.HasValue ? await ResolveConfigAsync(null, ct) : null;
             config = new AssignmentConfiguration
             {
                 Id = Guid.NewGuid(),
-                DepartmentId = null,
+                DepartmentId = departmentId,
                 Algorithm = algo,
-                MaxConcurrentCapacity = dto.MaxConcurrentCapacity ?? 5,
+                MaxConcurrentCapacity = dto.MaxConcurrentCapacity ?? basis?.MaxConcurrentCapacity
+                    ?? throw new InvalidOperationException("Capacity is required."),
                 IsActive = true,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow
             };
-
             _context.AssignmentConfigurations.Add(config);
         }
         else
         {
             config.Algorithm = algo;
-            if (dto.MaxConcurrentCapacity.HasValue && dto.MaxConcurrentCapacity.Value > 0)
-            {
-                config.MaxConcurrentCapacity = dto.MaxConcurrentCapacity.Value;
-            }
+            if (dto.MaxConcurrentCapacity.HasValue) config.MaxConcurrentCapacity = dto.MaxConcurrentCapacity.Value;
+            config.IsActive = true;
             config.UpdatedAt = DateTime.UtcNow;
         }
 
-        await RecordAuditLogAsync("CONFIG_UPDATED", "AssignmentConfiguration", $"Changed assignment algorithm to '{algo}'", null, algo, actingUserId);
+        await RecordAuditLogAsync("CONFIG_UPDATED", "AssignmentConfiguration", $"Assignment for {scope}: '{algo}', capacity {config.MaxConcurrentCapacity}.", null, algo, actingUserId);
         await _context.SaveChangesAsync(ct);
 
-        return await GetAssignmentConfigAsync(ct);
+        return ToDto(config, departmentId.HasValue);
     }
+
+    public async Task ClearTeamAssignmentConfigAsync(Guid departmentId, Guid actingUserId, CancellationToken ct = default)
+    {
+        var own = await _context.AssignmentConfigurations.FirstOrDefaultAsync(c => c.DepartmentId == departmentId, ct);
+        if (own == null) return;
+        _context.AssignmentConfigurations.Remove(own);
+        await RecordAuditLogAsync("CONFIG_UPDATED", "AssignmentConfiguration", "A team now follows the global assignment settings.", own.Algorithm, null, actingUserId);
+        await _context.SaveChangesAsync(ct);
+    }
+
+    // ------------------------------------------------------------------------------------ vocabulary & validation
+
+    public async Task<RoutingVocabularyDto> GetVocabularyAsync(CancellationToken ct = default)
+    {
+        var channels = await _context.LookupValues.AsNoTracking()
+            .Where(v => v.LookupType.Code == "SOURCE_CHANNEL" && v.IsActive).OrderBy(v => v.DisplayOrder).Select(v => v.Value).ToListAsync(ct);
+
+        return new RoutingVocabularyDto
+        {
+            Departments = await _context.Departments.AsNoTracking().Where(d => d.IsActive).OrderBy(d => d.Name)
+                .Select(d => new NamedOptionDto { Id = d.Id, Name = d.Name }).ToListAsync(ct),
+            SubCategories = await _context.DepartmentSubCategories.AsNoTracking().Where(s => s.IsActive).Select(s => s.Name).Distinct().OrderBy(n => n).ToListAsync(ct),
+            CaseTypes = await _context.CaseTypeConfigs.AsNoTracking().Where(t => t.IsActive).OrderBy(t => t.Name).Select(t => t.Name).ToListAsync(ct),
+            Priorities = await _context.PrioritySlaRules.AsNoTracking().Where(r => r.IsActive).OrderBy(r => r.DisplayOrder).Select(r => r.Priority).ToListAsync(ct),
+            Channels = channels,
+            CustomerSegments = await _context.Customers.AsNoTracking().Where(c => c.CustomerSegment != null && c.CustomerSegment != "")
+                .Select(c => c.CustomerSegment!).Distinct().OrderBy(n => n).ToListAsync(ct),
+            Algorithms = Algorithms.ToList(),
+        };
+    }
+
+    /// <summary>A rule may only mention things that exist, and only route to an active team.</summary>
+    private async Task ValidateRuleAsync(RuleConditionsDto? conds, Guid? targetDepartmentId, CancellationToken ct)
+    {
+        if (targetDepartmentId.HasValue)
+        {
+            var target = await _context.Departments.AsNoTracking().FirstOrDefaultAsync(d => d.Id == targetDepartmentId.Value, ct)
+                         ?? throw new InvalidOperationException("The destination team does not exist.");
+            if (!target.IsActive) throw new InvalidOperationException($"'{target.Name}' is inactive, so a rule cannot route to it.");
+        }
+        if (conds == null) return;
+
+        if (!string.IsNullOrWhiteSpace(conds.MatchType) && !new[] { "ALL", "ANY" }.Contains(conds.MatchType, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Match type must be ALL or ANY.");
+
+        var vocab = await GetVocabularyAsync(ct);
+        void Check(string label, string? value, IEnumerable<string> valid)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            if (!valid.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"'{value}' is not a valid {label}. Choose one of: {string.Join(", ", valid)}.");
+        }
+        Check("team", conds.Department, vocab.Departments.Select(d => d.Name));
+        Check("sub-category", conds.Category, vocab.SubCategories);
+        Check("case type", conds.CaseType, vocab.CaseTypes);
+        Check("priority", conds.Priority, vocab.Priorities);
+        Check("channel", conds.Channel, vocab.Channels);
+    }
+
+    // ------------------------------------------------------------------------------------ routing
 
     public async Task<RoutingDecisionResult> RouteAndAssignCaseAsync(Case newCase, Customer? customer, CancellationToken ct = default)
     {
         var result = new RoutingDecisionResult();
 
-        // 1. STAGE 1: Top-down Routing Rule Evaluation
-        var activeRules = await _context.RoutingRules
-            .AsNoTracking()
-            .Include(r => r.TargetDepartment)
-            .Where(r => r.IsActive)
-            .OrderBy(r => r.EvaluationOrder)
-            .ToListAsync(ct);
+        // STAGE 1 — the first active rule (in order) that matches decides the team.
+        var departments = await _context.Departments.AsNoTracking().ToDictionaryAsync(d => d.Id, ct);
+        var activeRules = await _context.RoutingRules.AsNoTracking().Where(r => r.IsActive).OrderBy(r => r.EvaluationOrder).ToListAsync(ct);
 
-        RoutingRule? matchedRule = null;
+        RoutingRule? matchedRule = activeRules.FirstOrDefault(r => EvaluateRuleMatches(r, newCase, customer, departments));
 
-        foreach (var rule in activeRules)
+        Department target;
+        if (matchedRule != null && departments.TryGetValue(matchedRule.TargetDepartmentId, out var ruleTarget) && ruleTarget.IsActive)
         {
-            if (EvaluateRuleMatches(rule, newCase, customer))
-            {
-                matchedRule = rule;
-                break;
-            }
-        }
-
-        Department? targetDepartment = null;
-
-        if (matchedRule != null && matchedRule.TargetDepartment != null && matchedRule.TargetDepartment.IsActive)
-        {
-            targetDepartment = matchedRule.TargetDepartment;
+            target = ruleTarget;
             result.MatchedRuleId = matchedRule.Id;
             result.MatchedRuleName = matchedRule.Name;
-            result.TargetDepartmentId = matchedRule.TargetDepartmentId;
-            result.TargetDepartmentName = matchedRule.TargetDepartment.Name;
         }
         else
         {
-            // Fallback: If newCase has an explicitly selected valid active department, keep it
-            targetDepartment = await _context.Departments.FirstOrDefaultAsync(d => d.Id == newCase.DepartmentId && d.IsActive, ct)
-                               ?? await _context.Departments.FirstOrDefaultAsync(d => d.Code == "CC" && d.IsActive, ct)
-                               ?? await _context.Departments.Where(d => d.IsActive).OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
-
-            result.TargetDepartmentId = targetDepartment?.Id ?? newCase.DepartmentId;
-            result.TargetDepartmentName = targetDepartment?.Name ?? "Contact Center";
-            result.MatchedRuleName = "Default Active Fallback";
+            // No (usable) rule: the case stays with the team it was opened for. There is no hidden "default team".
+            target = departments.TryGetValue(newCase.DepartmentId, out var own) && own.IsActive
+                ? own
+                : throw new InvalidOperationException("The team this case was opened for is missing or inactive, and no routing rule applies. Activate the team or add a routing rule.");
+            result.MatchedRuleName = matchedRule != null ? $"{matchedRule.Name} (destination team inactive — kept with the original team)" : "No rule matched — kept with the original team";
         }
 
-        // Apply team to case
-        newCase.DepartmentId = result.TargetDepartmentId;
+        result.TargetDepartmentId = target.Id;
+        result.TargetDepartmentName = target.Name;
+        newCase.DepartmentId = target.Id;
 
-        // 2. STAGE 2: Automatic Agent Assignment
-        var config = await GetAssignmentConfigAsync(ct);
+        // STAGE 2 — pick an agent. Assignments to one team are serialised so two simultaneous cases cannot both see the same
+        // "least loaded" agent or the same round-robin position; the lock lasts until the surrounding transaction commits.
+        await LockTeamAsync(target.Id, ct);
+
+        var config = await ResolveConfigAsync(target.Id, ct);
         result.AlgorithmUsed = config.Algorithm;
 
+        var pool = await _pool.GetAsync(target.Id, config.MaxConcurrentCapacity, ct);
         var strategy = _strategies.FirstOrDefault(s => string.Equals(s.AlgorithmName, config.Algorithm, StringComparison.OrdinalIgnoreCase))
-                       ?? _strategies.First(s => s.AlgorithmName == "RoundRobin");
+                       ?? throw new InvalidOperationException($"The assignment algorithm '{config.Algorithm}' is not available.");
 
-        var assignedAgent = await strategy.SelectEligibleAgentAsync(result.TargetDepartmentId, newCase, customer, config.MaxConcurrentCapacity, ct);
+        var choice = pool.Eligible.Count > 0
+            ? await strategy.SelectAsync(new AssignmentRequest(target.Id, newCase, customer, pool.Eligible, config.MaxConcurrentCapacity), ct)
+            : null;
 
-        if (assignedAgent != null)
+        var ruleText = matchedRule != null && result.MatchedRuleId != null ? $"rule '{matchedRule.Name}'" : "no matching rule";
+
+        if (choice != null)
         {
-            newCase.OwnerId = assignedAgent.Id;
-            result.AssignedUserId = assignedAgent.Id;
-            result.AssignedUserName = assignedAgent.Name;
-            result.RoutingLogMessage = $"Case routed to '{result.TargetDepartmentName}' via rule '{(matchedRule?.Name ?? "Fallback")}' and assigned to '{assignedAgent.Name}' via {config.Algorithm}.";
-        }
-        else
-        {
-            // If no agent eligible, assign to team lead or keep in queue
-            if (targetDepartment?.OwnerId.HasValue == true)
-            {
-                newCase.OwnerId = targetDepartment.OwnerId.Value;
-                result.AssignedUserId = targetDepartment.OwnerId.Value;
-                result.AssignedUserName = "Team Lead";
-            }
-            result.RoutingLogMessage = $"Case routed to '{result.TargetDepartmentName}' queue. Pending agent assignment.";
+            newCase.OwnerId = choice.User.Id;
+            result.AssignedUserId = choice.User.Id;
+            result.AssignedUserName = choice.User.Name;
+            result.RoutingLogMessage = $"Case routed to '{target.Name}' via {ruleText} and assigned to '{choice.User.Name}' via {config.Algorithm}" +
+                                       (string.IsNullOrWhiteSpace(choice.Note) ? "." : $" ({choice.Note}).");
+            return result;
         }
 
+        // Nobody can take it: say why, and let the team lead hold it so it is not lost. The lead is told by the caller.
+        result.HeldReason = pool.Describe(target.Name);
+        var lead = target.OwnerId.HasValue
+            ? await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == target.OwnerId.Value && u.IsActive, ct)
+            : null;
+        if (lead != null)
+        {
+            newCase.OwnerId = lead.Id;
+            result.HeldByUserId = lead.Id;
+            result.AssignedUserId = lead.Id;
+            result.AssignedUserName = lead.Name;
+        }
+        result.RoutingLogMessage = $"Case routed to '{target.Name}' via {ruleText}. Pending agent assignment: {result.HeldReason}" +
+                                   (lead != null ? $" Held by the team lead, {lead.Name}." : " No team lead is set, so it stays with its creator.");
         return result;
     }
 
-    private bool EvaluateRuleMatches(RoutingRule rule, Case c, Customer? cust)
+    private async Task LockTeamAsync(Guid departmentId, CancellationToken ct)
+    {
+        if (!_context.Database.IsNpgsql() || _context.Database.CurrentTransaction == null) return;
+        var key = departmentId.ToString();
+        await _context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", ct);
+    }
+
+    private static bool Same(string? a, string? b) =>
+        !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b) && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private bool EvaluateRuleMatches(RoutingRule rule, Case c, Customer? cust, IReadOnlyDictionary<Guid, Department> departments)
     {
         RuleConditionsDto conds;
         try
@@ -315,66 +399,26 @@ public class RoutingEngineService : IRoutingEngineService
         }
         catch
         {
-            return false;
+            return false;   // an unreadable rule never matches (it must not silently become "match everything")
         }
 
+        // Every condition is an EXACT (case-insensitive) comparison with a configured value — never "contains".
         var matches = new List<bool>();
 
-        // 1. Department (Structured Criterion)
         if (!string.IsNullOrWhiteSpace(conds.Department))
         {
-            var dept = _context.Departments.AsNoTracking().FirstOrDefault(d => d.Id == c.DepartmentId);
-            var deptName = dept?.Name ?? "";
-            var deptCode = dept?.Code ?? "";
-            bool deptMatch = string.Equals(deptName, conds.Department.Trim(), StringComparison.OrdinalIgnoreCase) ||
-                             string.Equals(deptCode, conds.Department.Trim(), StringComparison.OrdinalIgnoreCase) ||
-                             deptName.Contains(conds.Department.Trim(), StringComparison.OrdinalIgnoreCase);
-            matches.Add(deptMatch);
+            departments.TryGetValue(c.DepartmentId, out var dept);
+            matches.Add(dept != null && (Same(dept.Name, conds.Department) || Same(dept.Code, conds.Department)));
         }
+        if (!string.IsNullOrWhiteSpace(conds.Category)) matches.Add(Same(c.Subcategory, conds.Category));
+        if (!string.IsNullOrWhiteSpace(conds.CaseType)) matches.Add(Same(c.CaseType, conds.CaseType));
+        if (!string.IsNullOrWhiteSpace(conds.Priority)) matches.Add(Same(c.Severity, conds.Priority));
+        if (!string.IsNullOrWhiteSpace(conds.CustomerSegment)) matches.Add(Same(cust?.CustomerSegment, conds.CustomerSegment));
+        if (!string.IsNullOrWhiteSpace(conds.Channel)) matches.Add(Same(string.IsNullOrWhiteSpace(c.SourceChannel) ? c.CommunicationChannel : c.SourceChannel, conds.Channel));
 
-        // 2. Case Category / Sub-Category (Structured Criterion)
-        if (!string.IsNullOrWhiteSpace(conds.Category))
-        {
-            var subcat = (c.Subcategory ?? "").ToLowerInvariant();
-            matches.Add(subcat.Contains(conds.Category.Trim().ToLowerInvariant()));
-        }
+        if (matches.Count == 0) return true;   // a rule with no conditions is a deliberate catch-all
 
-        // 3. Case Type (Structured Criterion)
-        if (!string.IsNullOrWhiteSpace(conds.CaseType))
-        {
-            matches.Add(string.Equals(c.CaseType, conds.CaseType.Trim(), StringComparison.OrdinalIgnoreCase));
-        }
-
-        // 4. Severity / Priority (Structured Criterion)
-        if (!string.IsNullOrWhiteSpace(conds.Priority))
-        {
-            matches.Add(string.Equals(c.Severity, conds.Priority.Trim(), StringComparison.OrdinalIgnoreCase));
-        }
-
-        // 5. Customer Type / Customer Segment (Structured Criterion)
-        if (!string.IsNullOrWhiteSpace(conds.CustomerSegment))
-        {
-            var custSeg = (cust?.CustomerSegment ?? "").ToLowerInvariant();
-            matches.Add(custSeg.Contains(conds.CustomerSegment.Trim().ToLowerInvariant()));
-        }
-
-        // 6. Source / Communication Channel (Structured Criterion)
-        if (!string.IsNullOrWhiteSpace(conds.Channel))
-        {
-            var raw = conds.Channel.ToLowerInvariant();
-            var caseCh = (c.SourceChannel ?? c.CommunicationChannel ?? "").ToLowerInvariant();
-            var isChannelMatch = raw.Contains(caseCh) || caseCh.Contains(raw);
-            matches.Add(isChannelMatch);
-        }
-
-        if (!matches.Any()) return true; // Rule with no conditions matches everything
-
-        if (string.Equals(conds.MatchType, "ANY", StringComparison.OrdinalIgnoreCase))
-        {
-            return matches.Any(m => m);
-        }
-
-        return matches.All(m => m); // Default ALL
+        return string.Equals(conds.MatchType, "ANY", StringComparison.OrdinalIgnoreCase) ? matches.Any(m => m) : matches.All(m => m);
     }
 
     private async Task RecordAuditLogAsync(string actionType, string entityName, string description, string? oldValue, string? newValue, Guid userId)
@@ -400,7 +444,7 @@ public class RoutingEngineService : IRoutingEngineService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[RoutingEngineAuditLog Error] {ex.Message}");
+            _logger.LogWarning(ex, "RoutingEngineAuditLog Error");
         }
     }
 }

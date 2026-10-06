@@ -17,7 +17,7 @@ public sealed class ConfigChangeInterceptor : SaveChangesInterceptor
     {
         typeof(FieldConfiguration), typeof(LookupType), typeof(LookupValue), typeof(CaseTypeConfig),
         typeof(DepartmentSubCategory), typeof(Department), typeof(PrioritySlaRule), typeof(PriorityCategoryMapping),
-        typeof(BusinessHour), typeof(PublicHoliday), typeof(EscalationLevelConfig),
+        typeof(BusinessHour), typeof(PublicHoliday), typeof(BusinessCalendarSetting), typeof(TeamMember), typeof(AssignmentConfiguration), typeof(SkillRule), typeof(AgentSkill), typeof(RoutingRule), typeof(EscalationLevelConfig),
     };
 
     private readonly IConfigCache _cache;

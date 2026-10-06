@@ -7,6 +7,12 @@ import { Button } from '../../common/Button/Button.jsx';
 import { routingRuleService } from '../../../services/routingRuleService.js';
 import './CreateRoutingRuleDrawer.css';
 
+// A value saved on an existing rule stays selectable even if it has since left the list, so editing never silently drops it.
+function withCurrent(options, current) {
+  const list = options || [];
+  return current && !list.some((o) => String(o).toLowerCase() === String(current).toLowerCase()) ? [...list, current] : list;
+}
+
 export function CreateRoutingRuleDrawer({
   isOpen,
   onClose,
@@ -29,11 +35,24 @@ export function CreateRoutingRuleDrawer({
 
   // Destination Team / Queue
   const [targetDepartmentId, setTargetDepartmentId] = useState('');
-  const [targetQueueName, setTargetQueueName] = useState('');
   const [actionDescription, setActionDescription] = useState('');
+
+  // What a rule can look at, and the valid values for each — from the server, never hard-coded here.
+  const [vocab, setVocab] = useState(null);
+  const [vocabError, setVocabError] = useState(null);
 
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let live = true;
+    setVocabError(null);
+    routingRuleService.getVocabulary()
+      .then((v) => live && setVocab(v))
+      .catch((err) => live && setVocabError(err?.message || 'The rule options could not be loaded.'));
+    return () => { live = false; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -53,7 +72,6 @@ export function CreateRoutingRuleDrawer({
       setCustomerSegment(conds.customerSegment || '');
 
       setTargetDepartmentId(editingRule.targetDepartmentId || '');
-      setTargetQueueName(editingRule.targetQueueName || '');
       setActionDescription(editingRule.actionDescription || '');
     } else {
       setName('');
@@ -67,7 +85,6 @@ export function CreateRoutingRuleDrawer({
       setPriority('');
       setCustomerSegment('');
       setTargetDepartmentId(availableDepartments[0]?.id || '');
-      setTargetQueueName('');
       setActionDescription('');
     }
     setErrors({});
@@ -103,7 +120,6 @@ export function CreateRoutingRuleDrawer({
       };
 
       const selectedDept = availableDepartments.find((d) => d.id === targetDepartmentId);
-      const resolvedQueueName = targetQueueName.trim() || selectedDept?.name || 'Default Queue';
 
       const payload = {
         name: name.trim(),
@@ -111,8 +127,7 @@ export function CreateRoutingRuleDrawer({
         isActive,
         conditions: conditionsPayload,
         targetDepartmentId,
-        targetQueueName: resolvedQueueName,
-        actionDescription: actionDescription.trim() || `Route to ${resolvedQueueName}`
+        actionDescription: actionDescription.trim() || `Route to ${selectedDept?.name || 'the team'}`
       };
 
       if (editingRule) {
@@ -176,7 +191,7 @@ export function CreateRoutingRuleDrawer({
               <input
                 type="text"
                 className={`crr-input ${errors.name ? 'crr-input--error' : ''}`}
-                placeholder="e.g. Fraud keywords → Critical queue"
+                placeholder="e.g. Fraud sub-category → fraud team"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
@@ -188,7 +203,7 @@ export function CreateRoutingRuleDrawer({
               <input
                 type="text"
                 className="crr-input"
-                placeholder="e.g. Type = Complaint • Channel = Any • Match: keywords 'fraud'..."
+                placeholder="e.g. Sub-category = Fraud"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
@@ -233,86 +248,71 @@ export function CreateRoutingRuleDrawer({
               </div>
             </div>
 
+            {vocabError && (
+              <div className="crr-alert crr-alert--error">
+                <AlertCircle size={16} />
+                <span>{vocabError}</span>
+              </div>
+            )}
+
             <div className="crr-grid">
               <div className="crr-field">
-                <label className="crr-label">Department</label>
-                <select
-                  className="crr-select"
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                >
-                  <option value="">Any Department</option>
-                  {availableDepartments.map((d) => (
-                    <option key={d.id} value={d.name}>{d.name} ({d.code || 'Team'})</option>
+                <label className="crr-label">Team the case was opened for</label>
+                <select className="crr-select" value={department} onChange={(e) => setDepartment(e.target.value)}>
+                  <option value="">Any team</option>
+                  {withCurrent(vocab?.departments?.map((d) => d.name), department).map((name) => (
+                    <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
               </div>
 
               <div className="crr-field">
-                <label className="crr-label">Category / Sub-Category</label>
-                <input
-                  type="text"
-                  className="crr-input"
-                  placeholder="e.g. Fraudulent Transactions, Financing Disbursement"
-                  value={subCategory}
-                  onChange={(e) => setSubCategory(e.target.value)}
-                />
-              </div>
-
-              <div className="crr-field">
-                <label className="crr-label">Case Type</label>
-                <select
-                  className="crr-select"
-                  value={caseType}
-                  onChange={(e) => setCaseType(e.target.value)}
-                >
-                  <option value="">Any Type</option>
-                  <option value="Complaint">Complaint (C-#####)</option>
-                  <option value="Inquiry">Inquiry (I-#####)</option>
-                  <option value="Service">Service (S-#####)</option>
+                <label className="crr-label">Sub-category</label>
+                <select className="crr-select" value={subCategory} onChange={(e) => setSubCategory(e.target.value)}>
+                  <option value="">Any sub-category</option>
+                  {withCurrent(vocab?.subCategories, subCategory).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
                 </select>
               </div>
 
               <div className="crr-field">
-                <label className="crr-label">Priority / Severity</label>
-                <select
-                  className="crr-select"
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                >
-                  <option value="">Any Priority</option>
-                  <option value="Critical">Critical</option>
-                  <option value="High">High</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Low">Low</option>
+                <label className="crr-label">Case Type</label>
+                <select className="crr-select" value={caseType} onChange={(e) => setCaseType(e.target.value)}>
+                  <option value="">Any type</option>
+                  {withCurrent(vocab?.caseTypes, caseType).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="crr-field">
+                <label className="crr-label">Priority</label>
+                <select className="crr-select" value={priority} onChange={(e) => setPriority(e.target.value)}>
+                  <option value="">Any priority</option>
+                  {withCurrent(vocab?.priorities, priority).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
                 </select>
               </div>
 
               <div className="crr-field">
                 <label className="crr-label">Customer Segment</label>
-                <select
-                  className="crr-select"
-                  value={customerSegment}
-                  onChange={(e) => setCustomerSegment(e.target.value)}
-                >
-                  <option value="">Any Segment</option>
-                  <option value="Priority">Priority / Premier</option>
-                  <option value="SME">SME / Business</option>
-                  <option value="Retail">Retail</option>
+                <select className="crr-select" value={customerSegment} onChange={(e) => setCustomerSegment(e.target.value)}>
+                  <option value="">Any segment</option>
+                  {withCurrent(vocab?.customerSegments, customerSegment).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
                 </select>
               </div>
 
               <div className="crr-field">
                 <label className="crr-label">Intake Channel</label>
-                <select
-                  className="crr-select"
-                  value={channel}
-                  onChange={(e) => setChannel(e.target.value)}
-                >
-                  <option value="">Any Channel</option>
-                  <option value="Voice">Phone / Voice</option>
-                  <option value="Email">Email</option>
-                  <option value="WhatsApp">WhatsApp</option>
+                <select className="crr-select" value={channel} onChange={(e) => setChannel(e.target.value)}>
+                  <option value="">Any channel</option>
+                  {withCurrent(vocab?.channels, channel).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -324,23 +324,17 @@ export function CreateRoutingRuleDrawer({
 
             <div className="crr-field">
               <label className="crr-label">
-                Destination Team / Queue <span className="crr-required">*</span>
+                Destination team <span className="crr-required">*</span>
               </label>
               <select
                 className={`crr-select ${errors.targetDepartmentId ? 'crr-select--error' : ''}`}
                 value={targetDepartmentId}
-                onChange={(e) => {
-                  setTargetDepartmentId(e.target.value);
-                  const selected = availableDepartments.find((d) => d.id === e.target.value);
-                  if (selected && !targetQueueName) {
-                    setTargetQueueName(selected.name);
-                  }
-                }}
+                onChange={(e) => setTargetDepartmentId(e.target.value)}
               >
                 <option value="">Select destination team...</option>
-                {availableDepartments.map((dept) => (
+                {availableDepartments.filter((d) => d.isActive !== false || d.id === targetDepartmentId).map((dept) => (
                   <option key={dept.id} value={dept.id}>
-                    {dept.name} ({dept.code || 'Team'})
+                    {dept.name}{dept.isActive === false ? ' (inactive)' : ''}
                   </option>
                 ))}
               </select>
@@ -354,7 +348,7 @@ export function CreateRoutingRuleDrawer({
               <input
                 type="text"
                 className="crr-input"
-                placeholder="e.g. Route to Risk & Fraud Dept (High Priority)"
+                placeholder="e.g. Route to the fraud team"
                 value={actionDescription}
                 onChange={(e) => setActionDescription(e.target.value)}
               />
@@ -371,7 +365,7 @@ export function CreateRoutingRuleDrawer({
             variant="primary"
             type="submit"
             form="routing-rule-form"
-            loading={saving}
+            isLoading={saving}
             icon={Check}
           >
             {editingRule ? 'Save Changes' : 'Create Rule'}

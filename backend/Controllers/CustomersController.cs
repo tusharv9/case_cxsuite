@@ -55,9 +55,14 @@ public class CustomersController : BaseApiController
         [FromQuery] int pageSize = 10,
         CancellationToken ct = default)
     {
-        var result = await _customerService.GetCustomerCasesAsync(id, page, pageSize, ct);
+        var result = await _customerService.GetCustomerCasesAsync(id, Math.Max(1, page), Math.Clamp(pageSize, 1, 100), ct);
         return Ok(result);
     }
+
+    /// <summary>Everything that happened across the customer's cases (milestones and customer-visible messages), newest first.</summary>
+    [HttpGet("{id:guid}/timeline")]
+    public async Task<IActionResult> GetCustomerTimeline(Guid id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
+        => Ok(await _customerService.GetCustomerTimelineAsync(id, page, pageSize, ct));
 
     [HttpPost]
     public async Task<IActionResult> CreateCustomer([FromBody] CreateCustomerDto dto)

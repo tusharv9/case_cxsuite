@@ -10,11 +10,11 @@ using Microsoft.AspNetCore.Mvc;
 [RequirePermission(Permissions.CasesRead)]
 public class DashboardController : BaseApiController
 {
-    private readonly ICaseService _caseService;
+    private readonly IDashboardService _dashboard;
 
-    public DashboardController(ICaseService caseService)
+    public DashboardController(IDashboardService dashboard)
     {
-        _caseService = caseService;
+        _dashboard = dashboard;
     }
 
     /// <summary>
@@ -33,13 +33,14 @@ public class DashboardController : BaseApiController
         [FromQuery] bool? myCasesOnly,
         CancellationToken ct)
     {
-        Guid? userId = myCasesOnly == true ? CurrentUserId : null;
-
-        var summary = await _caseService.GetDashboardSummaryAsync(
-            departmentId, caseType, status, severity,
-            dateRange, customStartDate, customEndDate,
-            userId, ct);
+        var summary = await _dashboard.GetSummaryAsync(new DashboardQuery(
+            departmentId, caseType, status, severity, dateRange, customStartDate, customEndDate,
+            myCasesOnly == true ? CurrentUserId : null), ct);
 
         return Ok(summary);
     }
+
+    /// <summary>Every option the dashboard's filter bar offers, in one request.</summary>
+    [HttpGet("filters")]
+    public async Task<IActionResult> GetFilters(CancellationToken ct) => Ok(await _dashboard.GetFiltersAsync(ct));
 }

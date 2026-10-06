@@ -1,26 +1,5 @@
 // ===== DATE UTILITIES =====
 
-/**
- * Format a date to readable string: "Today · 09:14" or "3 days ago"
- */
-export function formatRelativeDate(dateString) {
-  if (!dateString) return '';
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now - date;
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays === 0) {
-    return `Today · ${formatTime(date)}`;
-  } else if (diffDays === 1) {
-    return `Yesterday · ${formatTime(date)}`;
-  } else if (diffDays < 30) {
-    return `${diffDays} days ago`;
-  } else {
-    return formatDate(date);
-  }
-}
-
 export function formatTimeAgo(dateString) {
   if (!dateString) return '';
   const date = new Date(dateString);

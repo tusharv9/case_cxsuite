@@ -22,11 +22,24 @@ api.interceptors.request.use(
 );
 
 // ---- Response Interceptor ----
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const config = error.config;
     const status = error.response?.status;
     const data = error.response?.data;
+
+    // A read (and only a read) that failed because the server or network blinked is tried once more: it is safe to repeat.
+    const isRead = config && (config.method || 'get').toLowerCase() === 'get';
+    const transient = !error.response && error.code !== 'ERR_CANCELED' || RETRYABLE_STATUS.has(status);
+    if (isRead && transient && !config.__retried) {
+      config.__retried = true;
+      await wait(400);
+      return api.request(config);
+    }
 
     // Extract FluentValidation errors (RFC-7807 structure: { errors: { field: [messages] } })
     let message;
@@ -40,22 +53,27 @@ api.interceptors.response.use(
     }
 
     if (!message) {
-      message =
-        data?.error ||
-        data?.title ||
-        error.message ||
-        'An unexpected error occurred';
+      message = data?.error || data?.title || error.message || 'An unexpected error occurred';
     }
 
-    if (status === 401) {
+    // Say something a person can act on, instead of axios' technical wording.
+    if (!error.response) {
+      message = error.code === 'ECONNABORTED' ? 'The server took too long to answer. Please try again.' : 'Cannot reach the server. Check your connection and try again.';
+    } else if (status === 401) {
       notifyUnauthorized();
     } else if (status === 403 && !data?.error) {
       message = 'You do not have permission to do that.';
+    } else if (status === 429) {
+      const seconds = Number(error.response.headers?.['retry-after']);
+      message = seconds > 0 ? `Too many requests. Please wait ${seconds} second${seconds === 1 ? '' : 's'} and try again.` : 'Too many requests. Please slow down and try again shortly.';
+    } else if (status >= 500 && data?.correlationId) {
+      message = `${message} (reference ${String(data.correlationId).slice(0, 8)})`;   // support can find exactly this failure in the logs
     }
 
     // Re-throw with a clean message
     const enhancedError = new Error(message);
     enhancedError.status = status;
+    enhancedError.correlationId = data?.correlationId;
     enhancedError.original = error;
     return Promise.reject(enhancedError);
   }

@@ -1,5 +1,7 @@
 namespace CaseManagement.Api.Services;
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using CaseManagement.Api.Configuration;
 using CaseManagement.Api.Data;
 using CaseManagement.Api.DTOs;
@@ -15,15 +17,18 @@ public class DepartmentService : IDepartmentService
     private readonly IDepartmentRepository _departmentRepository;
     private readonly AppDbContext _context;
     private readonly IMemoryCache _cache;
+    private readonly ILogger<DepartmentService> _logger;
     private readonly LookupCacheOptions _options;
 
     public DepartmentService(
         IDepartmentRepository departmentRepository,
         AppDbContext context,
         IMemoryCache cache,
-        IOptions<LookupCacheOptions> options)
+        IOptions<LookupCacheOptions> options,
+        ILogger<DepartmentService>? logger = null)
     {
         _departmentRepository = departmentRepository;
+        _logger = logger ?? NullLogger<DepartmentService>.Instance;
         _context = context;
         _cache = cache;
         _options = options.Value;
@@ -79,7 +84,7 @@ public class DepartmentService : IDepartmentService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DepartmentAuditLog Error] {ex.Message}");
+            _logger.LogWarning(ex, "DepartmentAuditLog Error");
         }
     }
 
@@ -108,7 +113,7 @@ public class DepartmentService : IDepartmentService
     public async Task<Department> UpdateDepartmentAsync(Guid id, UpdateDepartmentDto dto, Guid userId)
     {
         var department = await _departmentRepository.GetByIdAsync(id);
-        if (department == null) throw new ArgumentException("Department not found.");
+        if (department == null) throw new KeyNotFoundException("Department not found.");
 
         var name = dto.Name?.Trim() ?? string.Empty;
         var code = dto.Code?.Trim() ?? string.Empty;
@@ -132,7 +137,7 @@ public class DepartmentService : IDepartmentService
     public async Task DeleteDepartmentAsync(Guid id, Guid userId)
     {
         var department = await _departmentRepository.GetByIdAsync(id);
-        if (department == null) throw new ArgumentException("Department not found.");
+        if (department == null) throw new KeyNotFoundException("Department not found.");
 
         var caseCount = await _departmentRepository.CountCasesAsync(id);
         if (caseCount > 0)
@@ -153,7 +158,7 @@ public class DepartmentService : IDepartmentService
     public async Task SetDepartmentOwnerAsync(Guid id, SetDepartmentOwnerDto dto, Guid userId)
     {
         var department = await _departmentRepository.GetByIdAsync(id);
-        if (department == null) throw new ArgumentException("Department not found.");
+        if (department == null) throw new KeyNotFoundException("Department not found.");
 
         if (department.OwnerId == dto.OwnerId)
             throw new InvalidOperationException("This user is already the owner of this department.");

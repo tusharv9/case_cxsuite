@@ -1,295 +1,67 @@
-// ===== SLA UTILS =====
+// ===== SLA DISPLAY =====
+// The server decides how a case stands against its SLA (case.sla, computed by the one backend SLA clock in BUSINESS
+// minutes: working hours, holidays, pauses). This file only turns that verdict into text and ticks it down between
+// refreshes. It contains no SLA rules, targets or calendar of its own.
 
-/**
- * SLA targets of a case. The target is the snapshot the server took from the priority's configured rule when the
- * case was created (case.slaTargetHours); nothing here is hard-coded per priority. (Internal-target modelling moves
- * server-side with the SLA engine phase.)
- */
-export function getSlaConfig(_severity, targetHours) {
-  const externalHours = Number(targetHours) > 0 ? Number(targetHours) : 0;
-  return { externalHours, internalHours: externalHours > 0 ? Math.max(1, externalHours - 2) : 0 };
+/** How long the display keeps counting down on its own before it stops and waits for fresh data from the server. */
+const MAX_LOCAL_TICK_MINUTES = 10;
+
+/** "2h 05m", "3d 4h" for a number of minutes (sign ignored). */
+export function formatMinutes(minutes) {
+  const total = Math.floor(Math.abs(minutes));
+  const days = Math.floor(total / (60 * 24));
+  const hours = Math.floor(total / 60) % 24;
+  const mins = total % 60;
+  return days > 0 ? `${days}d ${hours}h` : `${Math.floor(total / 60)}h ${String(mins).padStart(2, '0')}m`;
 }
 
 /**
- * Helper to check if a specific date or today is an active public holiday
+ * Minutes left on one target (negative once breached), as of `nowMs`. Between server refreshes the number keeps moving
+ * only while the server said the clock was running, and never for longer than MAX_LOCAL_TICK_MINUTES.
  */
-export function checkIsPublicHolidayToday(publicHolidays, targetDate = new Date()) {
-  if (!Array.isArray(publicHolidays) || publicHolidays.length === 0) return { isHoliday: false, holidayName: null };
-  const d = new Date(targetDate);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const dateStr = `${y}-${m}-${day}`;
+export function remainingMinutes(target, sla, nowMs = Date.now()) {
+  if (!target || !sla) return 0;
+  if (!sla.isClockRunning) return target.remainingMinutes;
+  const sinceComputed = (nowMs - Date.parse(sla.computedAt)) / 60000;
+  return target.remainingMinutes - Math.min(MAX_LOCAL_TICK_MINUTES, Math.max(0, sinceComputed));
+}
 
-  for (const h of publicHolidays) {
-    if (!h.isActive) continue;
-    const hDateStr = typeof h.holidayDate === 'string' ? h.holidayDate.substring(0, 10) : '';
-    if (hDateStr === dateStr) {
-      return { isHoliday: true, holidayName: h.name };
+/**
+ * What to show for a case's resolution SLA.
+ * @returns {{ status: 'within'|'breached'|'paused'|'holiday-paused'|'bh-paused'|'normal'|'unknown', label: string, tooltip?: string, color: string, isBreached: boolean }}
+ */
+export function getSlaDisplay(caseItem, nowMs = Date.now()) {
+  const sla = caseItem?.sla;
+  if (!sla) return { status: 'unknown', label: '—', color: '#64748b', isBreached: false };
+
+  // Resolved: the verdict is final.
+  if (sla.isStopped) {
+    return sla.health === 'Breached'
+      ? { status: 'breached', label: 'SLA Breached', color: '#dc2626', isBreached: true }
+      : { status: 'within', label: 'SLA Met', color: '#16a34a', isBreached: false };
+  }
+
+  const target = sla.internal;
+  if (!target || target.targetMinutes <= 0) {
+    return { status: 'unknown', label: 'No SLA target', tooltip: 'This case has no SLA target recorded.', color: '#64748b', isBreached: false };
+  }
+  const left = remainingMinutes(target, sla, nowMs);
+  const text = left < 0 ? `-${formatMinutes(left)} over` : formatMinutes(left);
+
+  if (sla.isPaused) {
+    return { status: 'paused', label: 'Clock paused', tooltip: 'SLA clock paused (Waiting on Customer)', color: '#64748b', isBreached: false };
+  }
+
+  if (left < 0) return { status: 'breached', label: text, color: '#dc2626', isBreached: true };
+
+  if (!sla.isClockRunning) {
+    // Not paused by anything about the case: it is simply outside working time right now.
+    if (caseItem.isHolidayToday) {
+      const name = caseItem.holidayName || 'Public Holiday';
+      return { status: 'holiday-paused', label: `${text} · holiday`, tooltip: `SLA clock paused today for ${name}`, holidayName: name, color: '#b45309', isBreached: false };
     }
-  }
-  return { isHoliday: false, holidayName: null };
-}
-
-/**
- * Helper to check if current time is within active business hours window in MYT
- * @param {Array} businessHours
- * @param {Date|number} [targetDate]
- * @returns {boolean}
- */
-export function checkIsBusinessHoursActive(businessHours, targetDate = new Date()) {
-  if (!Array.isArray(businessHours) || businessHours.length === 0) return true;
-  
-  // Convert targetDate to Malaysia Standard Time (UTC+8)
-  const d = new Date(targetDate);
-  const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
-  const mytDate = new Date(utc + (3600000 * 8));
-
-  const dayOfWeek = mytDate.getDay(); // 0 is Sunday, 1 is Monday...
-  const bh = businessHours.find((b) => b.dayOfWeek === dayOfWeek);
-  if (!bh || !bh.isEnabled) {
-    return false;
+    return { status: 'bh-paused', label: `${text} · closed`, tooltip: 'SLA clock stopped: outside working hours', color: '#b45309', isBreached: false };
   }
 
-  // Parse start and end time (format "HH:mm" or "HH:mm:ss")
-  const currentMinutes = mytDate.getHours() * 60 + mytDate.getMinutes();
-  
-  const parseTimeMinutes = (timeStr) => {
-    if (!timeStr) return 0;
-    const parts = timeStr.split(':');
-    return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
-  };
-
-  const startMinutes = parseTimeMinutes(bh.startTime || '09:00');
-  const endMinutes = parseTimeMinutes(bh.endTime || '17:00');
-
-  return currentMinutes >= startMinutes && currentMinutes < endMinutes;
-}
-
-/**
- * SLA Display Helper for CaseCard, CaseList & CaseDrawer
- */
-export function getSlaDisplay(
-  slaStartTime,
-  slaTargetHours = 24,
-  status = 'Open',
-  currentTimestamp,
-  slaPausedAt = null,
-  slaTotalPausedMinutes = 0,
-  isHolidayToday = false,
-  holidayName = null,
-  isBusinessHoursActive = true
-) {
-  if (status === 'Resolved' || status === 'Closed') {
-    return { status: 'within', label: 'SLA Met', color: '#16a34a' };
-  }
-
-  if (isHolidayToday) {
-    const hName = holidayName || 'Public Holiday';
-    return {
-      status: 'holiday-paused',
-      isHoliday: true,
-      label: 'Clock paused (Holiday)',
-      shortLabel: 'Holiday Paused',
-      tooltip: `SLA Clock Paused: Today is a Public Holiday (${hName})`,
-      holidayName: hName,
-      color: '#b45309',
-    };
-  }
-
-  if (isBusinessHoursActive === false) {
-    return {
-      status: 'bh-paused',
-      isHoliday: false,
-      isBusinessHoursOff: true,
-      label: 'Clock paused (Business Hours)',
-      shortLabel: 'BH Paused',
-      tooltip: 'SLA Clock Paused: Outside configured business hours schedule',
-      color: '#b45309',
-    };
-  }
-
-  if (status === 'WaitingOnCustomer' || status === 'Waiting on Customer' || Boolean(slaPausedAt)) {
-    return {
-      status: 'paused',
-      isHoliday: false,
-      label: 'Clock paused',
-      shortLabel: 'Clock paused',
-      tooltip: 'SLA Clock Paused (Waiting on Customer)',
-      color: '#64748b',
-    };
-  }
-
-  const start = new Date(slaStartTime || Date.now()).getTime();
-  const targetMs = (slaTargetHours || 24) * 3600 * 1000;
-  const pausedMs = (slaTotalPausedMinutes || 0) * 60 * 1000;
-  const effectiveDeadline = start + targetMs + pausedMs;
-  const now = currentTimestamp || Date.now();
-  const remainingMs = effectiveDeadline - now;
-
-  if (remainingMs <= 0) {
-    const absMs = Math.abs(remainingMs);
-    const totalHours = Math.floor(absMs / 3600000);
-    const days = Math.floor(totalHours / 24);
-    const hours = totalHours % 24;
-    const minutes = Math.floor((absMs % 3600000) / 60000);
-    
-    const label = days > 0 
-      ? `-${days}d ${hours}h over`
-      : `-${hours}h ${String(minutes).padStart(2, '0')}m over`;
-
-    return { 
-      status: 'breached', 
-      label, 
-      color: '#dc2626' 
-    };
-  }
-
-  const totalHours = Math.floor(remainingMs / 3600000);
-  const days = Math.floor(totalHours / 24);
-  const hours = totalHours % 24;
-  const minutes = Math.floor((remainingMs % 3600000) / 60000);
-
-  const label = days > 0
-    ? `${days}d ${hours}h`
-    : `${hours}h ${String(minutes).padStart(2, '0')}m`;
-
-  return { 
-    status: 'normal', 
-    label, 
-    color: '#d97706' 
-  };
-}
-
-export function formatSlaRemaining(slaStartTime, slaTargetHours = 24, currentTimestamp, status = 'Open', slaPausedAt = null, slaTotalPausedMinutes = 0, isHolidayToday = false, holidayName = null) {
-  const display = getSlaDisplay(slaStartTime, slaTargetHours, status, currentTimestamp, slaPausedAt, slaTotalPausedMinutes, isHolidayToday, holidayName);
-  return display.label;
-}
-
-/**
- * Calculate Dual SLA status for a case
- * @param {Object} caseItem
- * @param {number} [currentTimestamp]
- * @param {boolean} [isHolidayToday]
- * @param {string} [holidayName]
- * @returns {Object} { external, internal, isInternalBreached, isExternalBreached, isPaused, isHoliday }
- */
-export function calculateDualSla(caseItem, currentTimestamp, isHolidayToday = null, holidayName = null, isBusinessHoursActive = null) {
-  if (!caseItem) return null;
-  const isResolved = caseItem.status === 'Resolved' || caseItem.status === 'Closed';
-
-  if (isResolved) {
-    return {
-      externalTargetHours: 0,
-      internalTargetHours: 0,
-      externalRemainingFormatted: 'SLA Met',
-      internalRemainingFormatted: 'SLA Met',
-      isExternalBreached: false,
-      isInternalBreached: false,
-      isPaused: false,
-      isHoliday: false,
-      internalLabel: 'SLA Met',
-      externalLabel: 'SLA Met',
-    };
-  }
-
-  const holidayActive = isHolidayToday !== null && isHolidayToday !== undefined
-    ? Boolean(isHolidayToday)
-    : Boolean(caseItem.isHolidayToday);
-  const activeHolidayName = holidayName || caseItem.holidayName || 'Public Holiday';
-
-  if (holidayActive) {
-    return {
-      externalTargetHours: 0,
-      internalTargetHours: 0,
-      externalRemainingFormatted: 'Clock paused (Holiday)',
-      internalRemainingFormatted: 'Clock paused (Holiday)',
-      isExternalBreached: false,
-      isInternalBreached: false,
-      isPaused: true,
-      isHoliday: true,
-      holidayName: activeHolidayName,
-      internalLabel: `SLA Clock Paused (Public Holiday: ${activeHolidayName})`,
-      externalLabel: `SLA Clock Paused (Public Holiday: ${activeHolidayName})`,
-    };
-  }
-
-  const bhActive = isBusinessHoursActive !== null && isBusinessHoursActive !== undefined
-    ? Boolean(isBusinessHoursActive)
-    : (caseItem.isBusinessHoursActive !== undefined ? Boolean(caseItem.isBusinessHoursActive) : true);
-
-  if (!bhActive) {
-    return {
-      externalTargetHours: 0,
-      internalTargetHours: 0,
-      externalRemainingFormatted: 'Clock paused (Business Hours)',
-      internalRemainingFormatted: 'Clock paused (Business Hours)',
-      isExternalBreached: false,
-      isInternalBreached: false,
-      isPaused: true,
-      isHoliday: false,
-      isBusinessHoursOff: true,
-      internalLabel: 'SLA Clock Paused (Outside / Disabled Business Hours)',
-      externalLabel: 'SLA Clock Paused (Outside / Disabled Business Hours)',
-    };
-  }
-
-  const isPaused = caseItem.status === 'WaitingOnCustomer' || caseItem.status === 'Waiting on Customer' || Boolean(caseItem.slaPausedAt);
-
-  if (isPaused) {
-    return {
-      externalTargetHours: 0,
-      internalTargetHours: 0,
-      externalRemainingFormatted: 'Clock paused',
-      internalRemainingFormatted: 'Clock paused',
-      isExternalBreached: false,
-      isInternalBreached: false,
-      isPaused: true,
-      isHoliday: false,
-      internalLabel: 'SLA Clock Paused (Waiting on Customer)',
-      externalLabel: 'SLA Clock Paused (Waiting on Customer)',
-    };
-  }
-
-  const startTime = new Date(caseItem.slaStartTime || caseItem.createdAt || Date.now()).getTime();
-  const now = currentTimestamp || Date.now();
-  const pausedMs = (caseItem.slaTotalPausedMinutes || 0) * 60 * 1000;
-  const elapsedMs = (isResolved ? (new Date(caseItem.resolvedAt || now).getTime() - startTime) : (now - startTime)) - pausedMs;
-
-  const { externalHours, internalHours } = getSlaConfig(caseItem.severity, caseItem.slaTargetHours);
-
-  const externalTargetMs = externalHours * 3600 * 1000;
-  const internalTargetMs = internalHours * 3600 * 1000;
-
-  const externalRemainingMs = externalTargetMs - elapsedMs;
-  const internalRemainingMs = internalTargetMs - elapsedMs;
-
-  const isExternalBreached = externalRemainingMs < 0 && !isResolved;
-  const isInternalBreached = internalRemainingMs < 0 && !isResolved;
-
-  const formatRemaining = (ms) => {
-    if (isResolved) return 'SLA Met';
-    const isNegative = ms < 0;
-    const absMs = Math.abs(ms);
-    const totalHours = Math.floor(absMs / 3600000);
-    const days = Math.floor(totalHours / 24);
-    const hours = totalHours % 24;
-    const minutes = String(Math.floor((absMs % 3600000) / 60000)).padStart(2, '0');
-    if (days > 0) {
-      return `${isNegative ? '-' : ''}${days}d ${hours}h`;
-    }
-    return `${isNegative ? '-' : ''}${hours}h ${minutes}m`;
-  };
-
-  return {
-    externalTargetHours: externalHours,
-    internalTargetHours: internalHours,
-    externalRemainingFormatted: formatRemaining(externalRemainingMs),
-    internalRemainingFormatted: formatRemaining(internalRemainingMs),
-    isExternalBreached,
-    isInternalBreached,
-    isPaused: false,
-    internalLabel: `${internalHours} Hours (Internal · Agent)`,
-    externalLabel: `${externalHours} Hours (External · Customer)`,
-  };
+  return { status: 'normal', label: text, color: '#d97706', isBreached: false };
 }

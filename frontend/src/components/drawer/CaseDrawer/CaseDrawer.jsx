@@ -34,7 +34,6 @@ import { useUsers } from '../../../hooks/useUsers.js';
 import { useDepartments } from '../../../hooks/useDepartments.js';
 import { caseService } from '../../../services/caseService.js';
 import { metadataService } from '../../../services/metadataService.js';
-import { getSlaDisplay, getSlaConfig } from '../../../utils/slaUtils.js';
 import { SlaDisplay } from '../../common/SlaDisplay/SlaDisplay.jsx';
 import { ConfirmDialog } from '../../common/ConfirmDialog/ConfirmDialog.jsx';
 import { useToast } from '../../../hooks/useToast.js';

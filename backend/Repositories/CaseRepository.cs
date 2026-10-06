@@ -146,40 +146,8 @@ public class CaseRepository : ICaseRepository
     public async Task<Guid?> GetDepartmentOwnerAsync(Guid departmentId)
     {
         var department = await _context.Departments.FirstOrDefaultAsync(d => d.Id == departmentId);
-        if (department == null) throw new ArgumentException("Department not found.");
+        if (department == null) throw new KeyNotFoundException("Department not found.");
         return department.OwnerId;
-    }
-
-    public async Task<IEnumerable<CaseSummaryDto>> GetBoardCasesAsync(Guid? departmentId = null, string? caseType = null, CancellationToken ct = default)
-    {
-        var query = _context.Cases.AsNoTracking();
-
-        if (departmentId.HasValue)
-        {
-            query = query.Where(c => c.DepartmentId == departmentId.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(caseType) && !caseType.Equals("all", StringComparison.OrdinalIgnoreCase))
-        {
-            string norm = caseType.Trim();
-            if (norm.Equals("Enquiry", StringComparison.OrdinalIgnoreCase)) norm = "Inquiry";
-
-            bool isInquiry = norm.Equals("Inquiry", StringComparison.OrdinalIgnoreCase);
-            bool isService = norm.Equals("Service", StringComparison.OrdinalIgnoreCase);
-            bool isComplaint = norm.Equals("Complaint", StringComparison.OrdinalIgnoreCase);
-
-            query = query.Where(c => 
-                c.CaseType == norm || 
-                (isInquiry && (c.CaseNumber.StartsWith("I-") || c.CaseNumber.StartsWith("E-"))) ||
-                (isService && c.CaseNumber.StartsWith("S-")) ||
-                (isComplaint && c.CaseNumber.StartsWith("C-"))
-            );
-        }
-
-        return await query
-            .OrderByDescending(c => c.CreatedAt)
-            .MapToCaseSummary()
-            .ToListAsync(ct);
     }
 
     public async Task<PagedResponseDto<CaseSummaryDto>> GetPaginatedBoardCasesAsync(

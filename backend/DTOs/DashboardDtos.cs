@@ -80,6 +80,13 @@ public class AttentionCaseSummary
     public int SlaTotalPausedMinutes { get; set; }
     public string CustomerName { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>The SLA clock's verdict for this case, so the dashboard reads exactly like the board.</summary>
+    public CaseSlaDto? Sla { get; set; }
+
+    // The raw inputs the front end may want next to the verdict.
+    public bool IsHolidayToday { get; set; }
+    public string? HolidayName { get; set; }
 }
 
 public class RecentActivityItem
@@ -97,4 +104,22 @@ public class SeverityCaseCount
     public string Severity { get; set; } = string.Empty;
     public int Count { get; set; }
     public int DisplayOrder { get; set; }
+}
+
+/// <summary>Everything the dashboard's filter bar offers, in one response (it used to take seven requests).</summary>
+public class DashboardFiltersDto
+{
+    public List<NamedOptionDto> Departments { get; set; } = new();
+    public List<FilterOptionDto> CaseTypes { get; set; } = new();
+    public List<FilterOptionDto> Statuses { get; set; } = new();
+    public List<string> Priorities { get; set; } = new();
+    public List<FilterOptionDto> SlaStatuses { get; set; } = new();
+    public List<FilterOptionDto> DateRanges { get; set; } = new();
+    public List<FilterOptionDto> QuickActions { get; set; } = new();
+}
+
+public class FilterOptionDto
+{
+    public string Value { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
 }

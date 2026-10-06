@@ -24,12 +24,21 @@ import {
   GripVertical
 } from 'lucide-react';
 import { slaRoutingService } from '../../services/slaRoutingService.js';
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard.jsx';
+import { ManageSkillsDrawer } from '../../components/drawer/ManageSkillsDrawer/ManageSkillsDrawer.jsx';
 import { routingRuleService } from '../../services/routingRuleService.js';
 import { teamService } from '../../services/teamService.js';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog/ConfirmDialog.jsx';
 import { CreateRoutingRuleDrawer } from '../../components/drawer/CreateRoutingRuleDrawer/CreateRoutingRuleDrawer.jsx';
 import './CasesSlaRoutingPage.css';
+
+const ASSIGNMENT_LABELS = {
+  Role: 'A role',
+  User: 'A specific person',
+  DepartmentOwner: "The department's owner",
+  Owner: 'The case owner (reminder)',
+};
 
 export function CasesSlaRoutingPage() {
   const [loading, setLoading] = useState(true);
@@ -46,6 +55,10 @@ export function CasesSlaRoutingPage() {
   const [availableCategories, setAvailableCategories] = useState([]);
   const [availableRoles, setAvailableRoles] = useState([]);
   const [availableUsers, setAvailableUsers] = useState([]);
+  const [timeZoneId, setTimeZoneId] = useState('');
+  const [availableTimeZones, setAvailableTimeZones] = useState([]);
+  const [triggerTypes, setTriggerTypes] = useState([]);       // the triggers the engine can execute (from the server)
+  const [assignmentTypes, setAssignmentTypes] = useState([]);
 
   // Pristine snapshot for change tracking and discard
   const [pristineState, setPristineState] = useState(null);
@@ -69,11 +82,15 @@ export function CasesSlaRoutingPage() {
   const [escalationSaving, setEscalationSaving] = useState(false);
   const [escalationDrawerError, setEscalationDrawerError] = useState(null);
   const [escalationForm, setEscalationForm] = useState({
-    levelNumber: 5,
-    name: 'Level 5',
-    targetRole: 'Team Lead',
-    triggerCondition: 'SLA Consumption Breached',
-    actionDescription: 'Send notification to target role'
+    levelNumber: 1,
+    name: 'Level 1',
+    assignmentType: 'Role',
+    targetRole: '',
+    targetUserId: '',
+    triggerType: 'SlaBreached',
+    triggerValue: '',
+    actionDescription: '',
+    reassignOwner: true
   });
 
   // Delete Escalation Level Confirmation State
@@ -82,9 +99,10 @@ export function CasesSlaRoutingPage() {
 
   // Routing Rules & Assignment State
   const [routingRules, setRoutingRules] = useState([]);
-  const [assignmentConfig, setAssignmentConfig] = useState({ algorithm: 'RoundRobin', maxConcurrentCapacity: 5 });
+  const [assignmentConfig, setAssignmentConfig] = useState({ algorithm: '', maxConcurrentCapacity: 0 });
   const [availableDepartments, setAvailableDepartments] = useState([]);
   const [ruleDrawerOpen, setRuleDrawerOpen] = useState(false);
+  const [skillsDrawerOpen, setSkillsDrawerOpen] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const [ruleToDelete, setRuleToDelete] = useState(null);
   const [isDeletingRule, setIsDeletingRule] = useState(false);
@@ -101,7 +119,7 @@ export function CasesSlaRoutingPage() {
       const [data, rulesData, configData, teamsData] = await Promise.all([
         slaRoutingService.getConfiguration(),
         routingRuleService.getRules().catch(() => []),
-        routingRuleService.getAssignmentConfig().catch(() => ({ algorithm: 'RoundRobin', maxConcurrentCapacity: 5 })),
+        routingRuleService.getAssignmentConfig().catch(() => null),   // not invented: an unreadable setting shows as unset
         teamService.getAllTeams().catch(() => [])
       ]);
 
@@ -112,15 +130,20 @@ export function CasesSlaRoutingPage() {
       setAvailableCategories(data.availableCategories || []);
       setAvailableRoles(data.availableRoles || []);
       setAvailableUsers(data.availableUsers || []);
+      setTimeZoneId(data.timeZoneId || '');
+      setAvailableTimeZones(data.availableTimeZones || []);
+      setTriggerTypes(data.triggerTypes || []);
+      setAssignmentTypes(data.assignmentTypes || []);
 
       setRoutingRules(rulesData || []);
-      setAssignmentConfig(configData || { algorithm: 'RoundRobin', maxConcurrentCapacity: 5 });
+      setAssignmentConfig(configData || { algorithm: '', maxConcurrentCapacity: 0 });
       setAvailableDepartments(teamsData || []);
 
       setPristineState(JSON.stringify({
         priorityRules: data.priorityRules || [],
         businessHours: data.businessHours || [],
-        escalationLevels: data.escalationLevels || []
+        escalationLevels: data.escalationLevels || [],
+        timeZoneId: data.timeZoneId || ''
       }));
     } catch (err) {
       console.error('Failed to load SLA & Routing configuration:', err);
@@ -137,7 +160,7 @@ export function CasesSlaRoutingPage() {
         routingRuleService.getAssignmentConfig()
       ]);
       setRoutingRules(rulesData || []);
-      setAssignmentConfig(configData || { algorithm: 'RoundRobin', maxConcurrentCapacity: 5 });
+      setAssignmentConfig(configData || { algorithm: '', maxConcurrentCapacity: 0 });
     } catch (err) {
       console.error('Failed to refresh routing rules:', err);
     }
@@ -228,10 +251,14 @@ export function CasesSlaRoutingPage() {
     const current = JSON.stringify({
       priorityRules,
       businessHours,
-      escalationLevels
+      escalationLevels,
+      timeZoneId
     });
     return current !== pristineState;
-  }, [pristineState, priorityRules, businessHours, escalationLevels]);
+  }, [pristineState, priorityRules, businessHours, escalationLevels, timeZoneId]);
+
+  // Unsaved edits are not thrown away by a refresh, a closed tab or a click on another page.
+  const unsavedGuard = useUnsavedChangesGuard(isDirty, 'You have unsaved changes to the SLA, operating hours or escalation configuration. If you leave now, they will be lost.');
 
   // Validation: Check category collisions across priorities
   const categoryLabel = (id) => {
@@ -273,6 +300,7 @@ export function CasesSlaRoutingPage() {
     setPriorityRules(parsed.priorityRules);
     setBusinessHours(parsed.businessHours);
     setEscalationLevels(parsed.escalationLevels);
+    setTimeZoneId(parsed.timeZoneId);
     setError(null);
     setSuccessMessage('Changes discarded. Restored last saved configuration.');
     setTimeout(() => setSuccessMessage(null), 3500);
@@ -295,6 +323,7 @@ export function CasesSlaRoutingPage() {
     setSuccessMessage(null);
 
     const payload = {
+      timeZoneId,
       priorityRules: priorityRules.map(r => ({
         id: r.id,
         priority: r.priority,
@@ -321,7 +350,6 @@ export function CasesSlaRoutingPage() {
         targetUserId: l.assignmentType === 'User' ? l.targetUserId : null,
         triggerType: l.triggerType || 'SlaPercentage',
         triggerValue: l.triggerValue !== null && l.triggerValue !== undefined ? Number(l.triggerValue) : null,
-        triggerDescription: l.triggerDescription || '',
         actionDescription: l.actionDescription || '',
         reassignOwner: Boolean(l.reassignOwner),
         isActive: l.isActive !== false
@@ -331,10 +359,17 @@ export function CasesSlaRoutingPage() {
     try {
       await slaRoutingService.updateConfiguration(payload);
       setSuccessMessage('Configuration saved successfully. All changes are live.');
+      // Reload so what is shown is exactly what the server stored (derived trigger text, ids, normalised values).
+      const refreshed = await slaRoutingService.getConfiguration();
+      setPriorityRules(refreshed.priorityRules || []);
+      setBusinessHours(refreshed.businessHours || []);
+      setEscalationLevels(refreshed.escalationLevels || []);
+      setTimeZoneId(refreshed.timeZoneId || '');
       setPristineState(JSON.stringify({
-        priorityRules: payload.priorityRules,
-        businessHours: payload.businessHours,
-        escalationLevels: payload.escalationLevels
+        priorityRules: refreshed.priorityRules || [],
+        businessHours: refreshed.businessHours || [],
+        escalationLevels: refreshed.escalationLevels || [],
+        timeZoneId: refreshed.timeZoneId || ''
       }));
       setTimeout(() => setSuccessMessage(null), 4000);
     } catch (err) {
@@ -463,56 +498,64 @@ export function CasesSlaRoutingPage() {
     setEscalationForm({
       levelNumber: nextNum,
       name: `Level ${nextNum}`,
-      targetRole: availableRoles[0] || 'Team Lead',
-      triggerCondition: 'SLA Consumption Breached',
-      actionDescription: `Notify ${availableRoles[0] || 'Team Lead'} and flag for escalation review`
+      assignmentType: 'Role',
+      targetRole: availableRoles[0] || '',
+      targetUserId: '',
+      triggerType: 'SlaBreached',
+      triggerValue: '',
+      actionDescription: '',
+      reassignOwner: true
     });
     setEscalationDrawerError(null);
     setEscalationDrawerOpen(true);
   }
 
+  const triggerDefinition = (type) => triggerTypes.find(t => t.type === type);
+
   async function handleSaveEscalationLevel(e) {
     e.preventDefault();
-    if (!escalationForm.targetRole.trim()) {
-      setEscalationDrawerError('Target Role is required.');
+    const trigger = triggerDefinition(escalationForm.triggerType);
+    if (escalationForm.assignmentType === 'Role' && !escalationForm.targetRole.trim()) {
+      setEscalationDrawerError('Choose the role that receives the escalation.');
+      return;
+    }
+    if (escalationForm.assignmentType === 'User' && !escalationForm.targetUserId) {
+      setEscalationDrawerError('Choose the person who receives the escalation.');
+      return;
+    }
+    if (trigger?.needsValue && escalationForm.triggerValue === '') {
+      setEscalationDrawerError(`Enter a value (${trigger.unit}) for "${trigger.label}".`);
       return;
     }
     setEscalationSaving(true);
     setEscalationDrawerError(null);
 
     try {
-      const payload = {
+      await slaRoutingService.createEscalationLevel({
         levelNumber: escalationForm.levelNumber,
         name: escalationForm.name,
-        targetRole: escalationForm.targetRole,
-        triggerCondition: escalationForm.triggerCondition || 'SLA Consumption Breached',
-        actionDescription: escalationForm.actionDescription || `Notify ${escalationForm.targetRole}`
-      };
-      await slaRoutingService.createEscalationLevel(payload);
+        assignmentType: escalationForm.assignmentType,
+        targetRole: escalationForm.assignmentType === 'Role' ? escalationForm.targetRole : '',
+        targetUserId: escalationForm.assignmentType === 'User' ? escalationForm.targetUserId : null,
+        triggerType: escalationForm.triggerType,
+        triggerValue: trigger?.needsValue ? Number(escalationForm.triggerValue) : null,
+        actionDescription: escalationForm.actionDescription,
+        reassignOwner: escalationForm.reassignOwner
+      });
       const refreshed = await slaRoutingService.getConfiguration();
       setEscalationLevels(refreshed.escalationLevels || []);
-      setSuccessMessage(`Escalation Level ${payload.levelNumber} added successfully.`);
+      // The new level is already saved: fold it into the "saved" snapshot so it does not look like an unsaved edit.
+      setPristineState(prev => {
+        if (!prev) return prev;
+        return JSON.stringify({ ...JSON.parse(prev), escalationLevels: refreshed.escalationLevels || [] });
+      });
+      setSuccessMessage(`Escalation Level ${escalationForm.levelNumber} added successfully.`);
       setEscalationDrawerOpen(false);
       setTimeout(() => setSuccessMessage(null), 3500);
     } catch (err) {
+      // Nothing is invented locally: the level exists only if the server accepted it.
       console.error('Failed to create escalation level:', err);
-      // Fallback local addition if needed
-      const fallbackLevel = {
-        id: crypto.randomUUID(),
-        levelNumber: escalationForm.levelNumber,
-        name: escalationForm.name,
-        assignmentType: 'Role',
-        targetRole: escalationForm.targetRole,
-        triggerType: 'SlaPercentage',
-        triggerDescription: escalationForm.triggerCondition || 'SLA Consumption Breached',
-        actionDescription: escalationForm.actionDescription || `Notify ${escalationForm.targetRole}`,
-        reassignOwner: true,
-        isActive: true
-      };
-      setEscalationLevels(prev => [...prev, fallbackLevel]);
-      setSuccessMessage(`Escalation Level ${fallbackLevel.levelNumber} added.`);
-      setEscalationDrawerOpen(false);
-      setTimeout(() => setSuccessMessage(null), 3500);
+      setEscalationDrawerError(err?.response?.data?.error || err?.message || 'The escalation level could not be saved.');
     } finally {
       setEscalationSaving(false);
     }
@@ -526,20 +569,10 @@ export function CasesSlaRoutingPage() {
     if (!levelToDelete) return;
     setIsDeletingLevel(true);
     try {
-      if (levelToDelete.id) {
-        await slaRoutingService.deleteEscalationLevel(levelToDelete.id);
-        const refreshed = await slaRoutingService.getConfiguration();
-        setEscalationLevels(refreshed.escalationLevels || []);
-      } else {
-        setEscalationLevels(prev => {
-          const filtered = prev.filter(l => l.levelNumber !== levelToDelete.levelNumber);
-          return filtered.map((l, i) => ({
-            ...l,
-            levelNumber: i + 1,
-            name: l.name.startsWith('Level ') ? `Level ${i + 1}` : l.name
-          }));
-        });
-      }
+      await slaRoutingService.deleteEscalationLevel(levelToDelete.id);
+      const refreshed = await slaRoutingService.getConfiguration();
+      setEscalationLevels(refreshed.escalationLevels || []);
+      setPristineState(prev => prev ? JSON.stringify({ ...JSON.parse(prev), escalationLevels: refreshed.escalationLevels || [] }) : prev);
       setSuccessMessage(`Escalation Level ${levelToDelete.levelNumber} deleted.`);
       setTimeout(() => setSuccessMessage(null), 3500);
       setLevelToDelete(null);
@@ -690,6 +723,7 @@ export function CasesSlaRoutingPage() {
 
   return (
     <div className="sla-routing-page">
+      {unsavedGuard.dialog}
       {/* 1. HEADER BANNER */}
       <div className="sla-routing-page__header">
         <div className="sla-routing-banner">
@@ -962,7 +996,21 @@ export function CasesSlaRoutingPage() {
                 <div>
                   <h2 className="sla-bh-card__title">Business hours</h2>
                 </div>
-                <span className="sla-bh-card__badge">MY · GMT+8 · drives SLA clocks</span>
+                <label className="sla-bh-tz">
+                  <span className="sla-bh-card__badge">Time zone · drives SLA clocks</span>
+                  <select
+                    id="business-hours-timezone"
+                    className="sla-field-select"
+                    value={timeZoneId}
+                    onChange={(e) => setTimeZoneId(e.target.value)}
+                    aria-label="Business hours time zone"
+                  >
+                    {!availableTimeZones.includes(timeZoneId) && <option value={timeZoneId}>{timeZoneId || 'Choose a time zone…'}</option>}
+                    {availableTimeZones.map(z => (
+                      <option key={z} value={z}>{z}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               <div className="sla-bh-card__body">
@@ -1130,7 +1178,7 @@ export function CasesSlaRoutingPage() {
                 </div>
                 <div>
                   <h2 className="sla-card__title">Escalation matrix</h2>
-                  <span className="sla-card__subtitle">fully configurable — auto-fires from SLA consumption; all triggers audit-logged</span>
+                  <span className="sla-card__subtitle">each level fires on a trigger the engine runs — SLA consumption, breach, or a missed first response; every escalation is audit-logged</span>
                 </div>
               </div>
 
@@ -1171,33 +1219,76 @@ export function CasesSlaRoutingPage() {
                           </button>
                         </div>
 
-                        {/* 1. Target Role */}
+                        {/* 1. Who receives it */}
                         <div className="sla-hlevel-role-block">
                           <select
                             className="sla-hlevel-role-select"
-                            value={lvl.targetRole || availableRoles[0] || 'Team Lead'}
-                            onChange={(e) => handleEscalationFieldChange(index, 'targetRole', e.target.value)}
-                            title="Target Role"
+                            value={lvl.assignmentType || 'Role'}
+                            onChange={(e) => handleEscalationFieldChange(index, 'assignmentType', e.target.value)}
+                            title="Who receives the escalation"
+                            aria-label={`Level ${lvl.levelNumber} assignment`}
                           >
-                            {currentRoleList.map(role => (
-                              <option key={role} value={role}>{role}</option>
+                            {assignmentTypes.map(t => (
+                              <option key={t} value={t}>{ASSIGNMENT_LABELS[t] || t}</option>
                             ))}
                           </select>
+                          {(lvl.assignmentType || 'Role') === 'Role' && (
+                            <select
+                              className="sla-hlevel-role-select"
+                              value={lvl.targetRole || ''}
+                              onChange={(e) => handleEscalationFieldChange(index, 'targetRole', e.target.value)}
+                              title="Target Role"
+                              aria-label={`Level ${lvl.levelNumber} role`}
+                            >
+                              <option value="" disabled>Choose a role…</option>
+                              {currentRoleList.map(role => (
+                                <option key={role} value={role}>{role}</option>
+                              ))}
+                            </select>
+                          )}
+                          {lvl.assignmentType === 'User' && (
+                            <select
+                              className="sla-hlevel-role-select"
+                              value={lvl.targetUserId || ''}
+                              onChange={(e) => handleEscalationFieldChange(index, 'targetUserId', e.target.value)}
+                              title="Target person"
+                              aria-label={`Level ${lvl.levelNumber} person`}
+                            >
+                              <option value="" disabled>Choose a person…</option>
+                              {availableUsers.map(u => (
+                                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                              ))}
+                            </select>
+                          )}
                         </div>
 
-                        {/* 2. Trigger Condition */}
+                        {/* 2. Trigger — structured, so what is shown is what the engine runs */}
                         <div className="sla-hlevel-field-group">
                           <label className="sla-hlevel-field-label">TRIGGER</label>
-                          <input
-                            type="text"
+                          <select
                             className="sla-hlevel-input"
-                            value={lvl.triggerDescription || lvl.triggerCondition || ''}
-                            placeholder="e.g. SLA 70% consumed"
-                            onChange={(e) => {
-                              handleEscalationFieldChange(index, 'triggerDescription', e.target.value);
-                              handleEscalationFieldChange(index, 'triggerCondition', e.target.value);
-                            }}
-                          />
+                            value={lvl.triggerType || 'SlaBreached'}
+                            onChange={(e) => handleEscalationFieldChange(index, 'triggerType', e.target.value)}
+                            aria-label={`Level ${lvl.levelNumber} trigger`}
+                          >
+                            {triggerTypes.map(t => (
+                              <option key={t.type} value={t.type}>{t.label}</option>
+                            ))}
+                          </select>
+                          {triggerDefinition(lvl.triggerType)?.needsValue && (
+                            <div className="sla-hlevel-value-row">
+                              <input
+                                type="number"
+                                className="sla-hlevel-input"
+                                min={triggerDefinition(lvl.triggerType).min}
+                                max={triggerDefinition(lvl.triggerType).max}
+                                value={lvl.triggerValue ?? ''}
+                                aria-label={`Level ${lvl.levelNumber} trigger value`}
+                                onChange={(e) => handleEscalationFieldChange(index, 'triggerValue', e.target.value === '' ? null : Number(e.target.value))}
+                              />
+                              <span className="sla-hlevel-unit">{triggerDefinition(lvl.triggerType).unit}</span>
+                            </div>
+                          )}
                         </div>
 
                         {/* 3. Action */}
@@ -1210,6 +1301,22 @@ export function CasesSlaRoutingPage() {
                             placeholder="e.g. Reminder + queue flag"
                             onChange={(e) => handleEscalationFieldChange(index, 'actionDescription', e.target.value)}
                           />
+                          <label className="sla-hlevel-check">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(lvl.reassignOwner)}
+                              onChange={(e) => handleEscalationFieldChange(index, 'reassignOwner', e.target.checked)}
+                            />
+                            <span>Reassign the case to them</span>
+                          </label>
+                          <label className="sla-hlevel-check">
+                            <input
+                              type="checkbox"
+                              checked={lvl.isActive !== false}
+                              onChange={(e) => handleEscalationFieldChange(index, 'isActive', e.target.checked)}
+                            />
+                            <span>Active</span>
+                          </label>
                         </div>
                       </div>
 
@@ -1237,6 +1344,15 @@ export function CasesSlaRoutingPage() {
                   Rules are evaluated top-down on intake. The first matching rule determines the initial queue and priority.
                 </p>
               </div>
+              <button
+                type="button"
+                id="btn-manage-skills"
+                className="sla-btn sla-btn--outline"
+                onClick={() => setSkillsDrawerOpen(true)}
+                title="Skills used by skill-based assignment"
+              >
+                <span>Manage skills</span>
+              </button>
               <button
                 type="button"
                 id="btn-add-routing-rule"
@@ -1338,7 +1454,7 @@ export function CasesSlaRoutingPage() {
                       <div className="routing-rule-card__bottom">
                         <span className="routing-dest-badge">
                           <ArrowRight size={13} className="routing-dest-badge__arrow" />
-                          <span>{rule.targetDepartmentName || rule.targetQueueName || 'Destination Team'}</span>
+                          <span>{rule.targetDepartmentName || 'Destination Team'}</span>
                         </span>
                         {rule.actionDescription && (
                           <span className="routing-action-note">{rule.actionDescription}</span>
@@ -1625,37 +1741,95 @@ export function CasesSlaRoutingPage() {
                   </div>
                 </div>
 
-                {/* 2. Target Role */}
+                {/* 2. Who receives it */}
                 <div className="sla-field-col">
-                  <label className="sla-field-label">
-                    Target Role <span className="sla-field-required">*</span>
-                  </label>
+                  <label className="sla-field-label">Escalate to</label>
                   <select
-                    id="escalation-target-role-select"
+                    id="escalation-assignment-select"
                     className="sla-field-select"
-                    value={escalationForm.targetRole}
-                    onChange={(e) => setEscalationForm(prev => ({ ...prev, targetRole: e.target.value }))}
+                    value={escalationForm.assignmentType}
+                    onChange={(e) => setEscalationForm(prev => ({ ...prev, assignmentType: e.target.value }))}
                   >
-                    {availableRoles.map(role => (
-                      <option key={role} value={role}>{role}</option>
+                    {assignmentTypes.map(t => (
+                      <option key={t} value={t}>{ASSIGNMENT_LABELS[t] || t}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* 3. Trigger Condition */}
+                {escalationForm.assignmentType === 'Role' && (
+                  <div className="sla-field-col">
+                    <label className="sla-field-label">
+                      Target Role <span className="sla-field-required">*</span>
+                    </label>
+                    <select
+                      id="escalation-target-role-select"
+                      className="sla-field-select"
+                      value={escalationForm.targetRole}
+                      onChange={(e) => setEscalationForm(prev => ({ ...prev, targetRole: e.target.value }))}
+                    >
+                      <option value="" disabled>Choose a role…</option>
+                      {availableRoles.map(role => (
+                        <option key={role} value={role}>{role}</option>
+                      ))}
+                    </select>
+                    <div className="sla-time-hint">
+                      The role is the one your Host App gives users; the engine picks an active person holding it, preferring the case&apos;s own team.
+                    </div>
+                  </div>
+                )}
+
+                {escalationForm.assignmentType === 'User' && (
+                  <div className="sla-field-col">
+                    <label className="sla-field-label">
+                      Person <span className="sla-field-required">*</span>
+                    </label>
+                    <select
+                      id="escalation-target-user-select"
+                      className="sla-field-select"
+                      value={escalationForm.targetUserId}
+                      onChange={(e) => setEscalationForm(prev => ({ ...prev, targetUserId: e.target.value }))}
+                    >
+                      <option value="" disabled>Choose a person…</option>
+                      {availableUsers.map(u => (
+                        <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* 3. Trigger */}
                 <div className="sla-field-col">
                   <label className="sla-field-label">
-                    Trigger Condition <span className="sla-field-required">*</span>
+                    Trigger <span className="sla-field-required">*</span>
                   </label>
-                  <input
-                    type="text"
-                    required
-                    id="escalation-trigger-input"
-                    placeholder="e.g. SLA Breached or SLA 95% consumed"
-                    className="sla-field-input"
-                    value={escalationForm.triggerCondition}
-                    onChange={(e) => setEscalationForm(prev => ({ ...prev, triggerCondition: e.target.value }))}
-                  />
+                  <select
+                    id="escalation-trigger-select"
+                    className="sla-field-select"
+                    value={escalationForm.triggerType}
+                    onChange={(e) => setEscalationForm(prev => ({ ...prev, triggerType: e.target.value, triggerValue: '' }))}
+                  >
+                    {triggerTypes.map(t => (
+                      <option key={t.type} value={t.type}>{t.label}</option>
+                    ))}
+                  </select>
+                  {triggerDefinition(escalationForm.triggerType)?.needsValue && (
+                    <div className="sla-hlevel-value-row" style={{ marginTop: 8 }}>
+                      <input
+                        type="number"
+                        required
+                        id="escalation-trigger-value-input"
+                        className="sla-field-input"
+                        min={triggerDefinition(escalationForm.triggerType).min}
+                        max={triggerDefinition(escalationForm.triggerType).max}
+                        value={escalationForm.triggerValue}
+                        onChange={(e) => setEscalationForm(prev => ({ ...prev, triggerValue: e.target.value }))}
+                      />
+                      <span className="sla-hlevel-unit">{triggerDefinition(escalationForm.triggerType).unit}</span>
+                    </div>
+                  )}
+                  <div className="sla-time-hint">
+                    Levels fire in order, one per check, and never while the clock is paused (Waiting on Customer).
+                  </div>
                 </div>
 
                 {/* 4. Action Description */}
@@ -1669,6 +1843,14 @@ export function CasesSlaRoutingPage() {
                     value={escalationForm.actionDescription}
                     onChange={(e) => setEscalationForm(prev => ({ ...prev, actionDescription: e.target.value }))}
                   />
+                  <label className="sla-hlevel-check" style={{ marginTop: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={escalationForm.reassignOwner}
+                      onChange={(e) => setEscalationForm(prev => ({ ...prev, reassignOwner: e.target.checked }))}
+                    />
+                    <span>Reassign the case to them</span>
+                  </label>
                 </div>
               </div>
 
@@ -1686,7 +1868,7 @@ export function CasesSlaRoutingPage() {
                   type="submit"
                   id="btn-create-escalation-level"
                   className="sla-btn sla-btn--blue"
-                  disabled={escalationSaving || !escalationForm.targetRole}
+                  disabled={escalationSaving || (escalationForm.assignmentType === 'Role' && !escalationForm.targetRole)}
                 >
                   {escalationSaving ? 'Creating...' : 'Create Escalation Level'}
                 </button>
@@ -1716,6 +1898,7 @@ export function CasesSlaRoutingPage() {
       )}
 
       {/* ==================== CREATE / EDIT ROUTING RULE DRAWER ==================== */}
+      <ManageSkillsDrawer isOpen={skillsDrawerOpen} onClose={() => setSkillsDrawerOpen(false)} />
       <CreateRoutingRuleDrawer
         isOpen={ruleDrawerOpen}
         onClose={() => {

@@ -4,9 +4,16 @@ using CaseManagement.Api.DTOs;
 
 public interface ITeamMonitoringService
 {
-    Task<TeamMonitoringSummaryDto> GetMonitoringSummaryAsync(CancellationToken ct = default);
-    Task<IEnumerable<AgentStatusItemDto>> GetAgentStatusBoardAsync(CancellationToken ct = default);
-    Task<IEnumerable<QueueHealthItemDto>> GetQueueHealthAsync(CancellationToken ct = default);
-    Task<IEnumerable<SlaAtRiskCaseDto>> GetSlaAtRiskCasesAsync(CancellationToken ct = default);
+    /// <summary>The whole monitor in one call, for every team or just one.</summary>
+    Task<TeamMonitoringOverviewDto> GetOverviewAsync(Guid? teamId = null, CancellationToken ct = default);
     Task NudgeAgentAsync(Guid agentId, string? reason, Guid supervisorUserId, CancellationToken ct = default);
+}
+
+public class TeamMonitoringOptions
+{
+    public const string SectionName = "TeamMonitoring";
+
+    /// <summary>The occupancy range (% of capacity) the wallboard treats as healthy.</summary>
+    public int OccupancyTargetMin { get; set; } = 70;
+    public int OccupancyTargetMax { get; set; } = 85;
 }

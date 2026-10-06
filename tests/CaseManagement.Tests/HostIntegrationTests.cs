@@ -290,8 +290,8 @@ public class HostModeTests
         // Reading cases: baseline for everyone signed in.
         Assert.Equal(HttpStatusCode.OK, await Status("/api/cases?pageSize=1", nobody));
         // Monitoring needs monitoring.view: agent no, supervisor yes.
-        Assert.Equal(HttpStatusCode.Forbidden, await Status("/api/team-monitoring/summary", agent));
-        Assert.Equal(HttpStatusCode.OK, await Status("/api/team-monitoring/summary", supervisor));
+        Assert.Equal(HttpStatusCode.Forbidden, await Status("/api/team-monitoring/overview", agent));
+        Assert.Equal(HttpStatusCode.OK, await Status("/api/team-monitoring/overview", supervisor));
         // Audit trail needs audit.view.
         Assert.Equal(HttpStatusCode.Forbidden, await Status("/api/audit", agent));
         Assert.Equal(HttpStatusCode.OK, await Status("/api/audit", supervisor));
@@ -379,7 +379,12 @@ public class StandaloneModeTests
     {
         await using var db = await TempDatabase.CreateAsync();
 
-        await using (var refused = new AppUnderTest(db.ConnectionString, new Dictionary<string, string> { ["HostIntegration:Mode"] = "Standalone" }))
+        await using (var refused = new AppUnderTest(db.ConnectionString, new Dictionary<string, string>
+        {
+            ["HostIntegration:Mode"] = "Standalone",
+            // appsettings.json allows Standalone in production for the demo deployment; this case checks the default rule.
+            ["HostIntegration:AllowStandaloneInProduction"] = "false",
+        }))
         {
             var ex = Assert.ThrowsAny<Exception>(() => refused.CreateClient());
             Assert.Contains("NO real authentication", ex.ToString());

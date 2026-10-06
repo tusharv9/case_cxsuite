@@ -13,8 +13,14 @@ public interface IRoutingEngineService
     Task DeleteRuleAsync(Guid id, Guid actingUserId, CancellationToken ct = default);
     Task ReorderRulesAsync(ReorderRulesDto dto, Guid actingUserId, CancellationToken ct = default);
     
-    Task<AssignmentConfigDto> GetAssignmentConfigAsync(CancellationToken ct = default);
-    Task<AssignmentConfigDto> UpdateAssignmentConfigAsync(UpdateAssignmentConfigDto dto, Guid actingUserId, CancellationToken ct = default);
+    /// <summary>The settings in force for a team (its own, or the global default), or the global default when no team is given.</summary>
+    Task<AssignmentConfigDto> GetAssignmentConfigAsync(Guid? departmentId = null, CancellationToken ct = default);
+    Task<AssignmentConfigDto> UpdateAssignmentConfigAsync(UpdateAssignmentConfigDto dto, Guid actingUserId, Guid? departmentId = null, CancellationToken ct = default);
+    /// <summary>Removes a team's own settings so it follows the global default again.</summary>
+    Task ClearTeamAssignmentConfigAsync(Guid departmentId, Guid actingUserId, CancellationToken ct = default);
+
+    /// <summary>What routing rules can look at, and the valid values for each.</summary>
+    Task<RoutingVocabularyDto> GetVocabularyAsync(CancellationToken ct = default);
 
     Task<RoutingDecisionResult> RouteAndAssignCaseAsync(Case newCase, Customer? customer, CancellationToken ct = default);
 }

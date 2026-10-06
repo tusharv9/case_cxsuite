@@ -1,7 +1,8 @@
 // ===== APP ROUTES =====
 
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from '../components/common/ErrorBoundary/ErrorBoundary.jsx';
 import { AppLayout } from '../components/layout/AppLayout/AppLayout.jsx';
 import { Loader } from '../components/common/Loader/Loader.jsx';
 import { IdentityGate } from '../components/layout/IdentityGate/IdentityGate.jsx';
@@ -26,9 +27,11 @@ function PageLoader() {
 }
 
 export function AppRoutes() {
+  const { pathname } = useLocation();
   return (
     <IdentityGate>
     <AppLayout>
+      <ErrorBoundary resetKey={pathname}>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Dashboard */}
@@ -66,6 +69,7 @@ export function AppRoutes() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
+      </ErrorBoundary>
     </AppLayout>
     </IdentityGate>
   );

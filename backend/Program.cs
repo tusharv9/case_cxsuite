@@ -11,9 +11,23 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.ResponseCompression;
+using CaseManagement.Api.Configuration;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// One JSON object per log line outside Development, so a log aggregator can filter by CorrelationId, route and status.
+if (!builder.Environment.IsDevelopment())
+{
+    builder.Logging.ClearProviders();
+    builder.Logging.AddJsonConsole(o => { o.IncludeScopes = true; o.TimestampFormat = "O"; o.UseUtcTimestamp = true; });
+}
+
+builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection(SecurityOptions.SectionName));
+var securityOptions = builder.Configuration.GetSection(SecurityOptions.SectionName).Get<SecurityOptions>() ?? new SecurityOptions();
 
 // Add services to the container.
 
@@ -52,6 +66,14 @@ var allowedOrigins = allowedOriginsRaw
     .ToArray();
 var allowLocalhostOrigins = builder.Environment.IsDevelopment();
 
+// Wildcard patterns (e.g. "https://*.example.com") must be asked for, one at a time. They are never a default.
+var originPatterns = securityOptions.AllowedOriginPatterns
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(p => OriginPattern.TryParse(p))
+    .Where(p => p != null)
+    .Cast<OriginPattern>()
+    .ToArray();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactPolicy", policy =>
@@ -61,22 +83,65 @@ builder.Services.AddCors(options =>
             {
                 if (string.IsNullOrEmpty(origin)) return false;
                 var trimmed = origin.TrimEnd('/');
-                if (allowedOrigins.Any(ao => string.Equals(ao, trimmed, StringComparison.OrdinalIgnoreCase)))
-                    return true;
-                if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
-                {
-                    if (uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase))
-                        return true;
-                    if (allowLocalhostOrigins && (uri.Host == "localhost" || uri.Host == "127.0.0.1"))
-                        return true;
-                }
-                return false;
+                if (allowedOrigins.Any(ao => string.Equals(ao, trimmed, StringComparison.OrdinalIgnoreCase))) return true;
+                if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+                if (originPatterns.Any(p => p.Matches(uri))) return true;
+                return allowLocalhostOrigins && (uri.Host == "localhost" || uri.Host == "127.0.0.1");
             })
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+            // Only what the API actually uses. Identity travels in headers (never cookies), so credentialed requests are not allowed.
+            .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+            .WithHeaders("Authorization", "Content-Type", "Accept", "X-User-Id", "X-Correlation-Id")
+            .WithExposedHeaders("X-Correlation-Id", "Content-Disposition", "X-Content-SHA256", "Retry-After")
+            .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
     });
 });
+
+// Compress JSON responses (dashboard and lists are the big ones).
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;   // safe here: responses carry no secrets that an attacker can mix with chosen input (no cookies/tokens in bodies)
+    o.Providers.Add<BrotliCompressionProvider>();
+    o.Providers.Add<GzipCompressionProvider>();
+});
+
+// Rate limiting: a runaway client or script cannot flatten the API. Limits are per signed-in user (or IP when anonymous).
+if (securityOptions.RateLimit.Enabled)
+{
+    builder.Services.AddRateLimiter(o =>
+    {
+        o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        o.OnRejected = async (ctx, ct) =>
+        {
+            if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retry))
+                ctx.HttpContext.Response.Headers.RetryAfter = ((int)retry.TotalSeconds).ToString();
+            ctx.HttpContext.Response.ContentType = "application/json";
+            await ctx.HttpContext.Response.WriteAsync("{\"error\":\"Too many requests. Please slow down and try again shortly.\"}", ct);
+        };
+
+        static string Caller(HttpContext c) =>
+            c.Request.Headers.TryGetValue("X-User-Id", out var u) && !string.IsNullOrWhiteSpace(u) ? "u:" + u.ToString()
+            : c.Request.Headers.Authorization.Count > 0 ? "t:" + c.Request.Headers.Authorization.ToString().GetHashCode()
+            : "ip:" + (c.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+
+        o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(c =>
+            !c.Request.Path.StartsWithSegments("/api")
+                ? RateLimitPartition.GetNoLimiter("static")
+                : RateLimitPartition.GetFixedWindowLimiter(Caller(c), _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = securityOptions.RateLimit.RequestsPerMinute, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
+                }));
+
+        o.AddPolicy("uploads", c => RateLimitPartition.GetFixedWindowLimiter(Caller(c), _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = securityOptions.RateLimit.UploadsPerMinute, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
+        }));
+    });
+}
+
+// Uploads: the form limit follows the configured maximum file size (plus room for the other fields), not the framework default.
+var attachmentMax = builder.Configuration.GetSection(AttachmentOptions.SectionName).Get<AttachmentOptions>()?.MaxFileSizeBytes ?? new AttachmentOptions().MaxFileSizeBytes;
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o => o.MultipartBodyLengthLimit = attachmentMax + 1024 * 1024);
+builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = attachmentMax + 2 * 1024 * 1024);
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
@@ -200,12 +265,25 @@ builder.Services.AddScoped<IPiiMaskingService, PiiMaskingService>();
 builder.Services.AddScoped<IFieldValidationEngine, FieldValidationEngine>();
 builder.Services.AddScoped<IMetadataService, MetadataService>();
 builder.Services.AddScoped<IBusinessTimeService, BusinessTimeService>();
+builder.Services.AddScoped<IEscalationService, EscalationService>();
+builder.Services.AddScoped<ISlaClockProvider, SlaClockProvider>();
+builder.Services.AddScoped<ISlaMonitor, SlaMonitorService>();
+builder.Services.Configure<SlaMonitorOptions>(builder.Configuration.GetSection(SlaMonitorOptions.SectionName));
 builder.Services.AddScoped<ISlaRoutingService, SlaRoutingService>();
 builder.Services.AddScoped<ITeamService, TeamService>();
 builder.Services.AddScoped<ITeamMonitoringService, TeamMonitoringService>();
+builder.Services.Configure<TeamMonitoringOptions>(builder.Configuration.GetSection(TeamMonitoringOptions.SectionName));
 builder.Services.AddScoped<IAssignmentStrategy, RoundRobinAssignmentStrategy>();
 builder.Services.AddScoped<IAssignmentStrategy, LeastOccupancyAssignmentStrategy>();
 builder.Services.AddScoped<IAssignmentStrategy, SkillBasedAssignmentStrategy>();
+builder.Services.Configure<CaseManagement.Api.Configuration.NotificationOptions>(builder.Configuration.GetSection(CaseManagement.Api.Configuration.NotificationOptions.SectionName));
+builder.Services.AddSingleton<IAttachmentStore, LocalDiskAttachmentStore>();
+builder.Services.AddScoped<IAttachmentService, AttachmentService>();
+builder.Services.AddScoped<IMentionService, MentionService>();
+builder.Services.AddScoped<ICaseCollaborationService, CaseCollaborationService>();
+builder.Services.AddScoped<IDashboardService, DashboardService>();
+builder.Services.AddScoped<IAgentPoolService, AgentPoolService>();
+builder.Services.AddScoped<ISkillService, SkillService>();
 builder.Services.AddScoped<IRoutingEngineService, RoutingEngineService>();
 
 // Database preparation (migrations + seed) runs in the background; the worker below waits for it.
@@ -238,21 +316,12 @@ builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
 var app = builder.Build();
 
+// Order matters: correlation id first (so everything after it, including errors, can quote it), then the safety net.
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseResponseCompression();
+app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseMiddleware<ExceptionMiddleware>();
-
-// Correlation ID: if the host app sends one, use it; otherwise create one.
-app.Use(async (context, next) =>
-{
-    if (!context.Request.Headers.ContainsKey("X-Correlation-Id"))
-    {
-        context.Request.Headers["X-Correlation-Id"] = Guid.NewGuid().ToString("N");
-    }
-    context.Response.Headers["X-Correlation-Id"] = context.Request.Headers["X-Correlation-Id"].ToString();
-    using (app.Logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = context.Request.Headers["X-Correlation-Id"].ToString() }))
-    {
-        await next();
-    }
-});
 
 // Configure the HTTP request pipeline.
 // Swagger exposes the full API surface, so it is off outside Development unless explicitly enabled.
@@ -260,7 +329,11 @@ if (app.Environment.IsDevelopment() || builder.Configuration.GetValue<bool>("Ena
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    if (!app.Environment.IsDevelopment())
+        app.Logger.LogWarning("Swagger is ENABLED outside Development (EnableSwagger=true): the whole API surface is browsable.");
 }
+
+StartupChecks.Warn(app, allowedOrigins, originPatterns.Length);
 
 // NOTE: schema creation/upgrade and seeding no longer happen inline here. They are handled by
 // DatabaseInitializer (EF migrations + one-time seed steps), which runs in the background so the
@@ -286,6 +359,7 @@ forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
 app.UseCors("ReactPolicy");
+if (securityOptions.RateLimit.Enabled) app.UseRateLimiter();
 
 if (!app.Environment.IsDevelopment())
 {

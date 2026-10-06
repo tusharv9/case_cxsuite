@@ -1,39 +1,46 @@
 namespace CaseManagement.Api.Services;
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using CaseManagement.Api.Data;
 using CaseManagement.Api.DTOs;
 using CaseManagement.Api.Models;
+using CaseManagement.Api.Configuration;
+using CaseManagement.Api.HostIntegration;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 public class NotificationService : INotificationService
 {
-    private static DateTime _lastSlaCheckTime = DateTime.MinValue;
-    private static readonly TimeSpan SlaCheckInterval = TimeSpan.FromMinutes(2);
-    private static readonly object _slaLock = new();
-
-    private const double SlaApproachingThresholdHours = 2;
-
-    // Fixed SLA notification behaviour. These used to be editable "Notification Rules" in
-    // Configurable Settings; that screen was removed, so the previous default values apply.
     private sealed record SlaNotificationPolicy(string Priority, int CooldownMinutes, int MaxReminders, bool EnableAggregation, int AggregationThreshold);
-    private static readonly SlaNotificationPolicy BreachPolicy = new("High", 60, 3, true, 3);
-    private static readonly SlaNotificationPolicy ApproachingPolicy = new("Medium", 120, 2, true, 3);
 
     private readonly AppDbContext _context;
+    private readonly IPermissionProvider _permissions;
+    private readonly NotificationOptions _options;
+    private readonly ILogger<NotificationService> _logger;
+    private readonly SlaNotificationPolicy BreachPolicy;
 
-    public NotificationService(AppDbContext context)
+    public NotificationService(AppDbContext context, IPermissionProvider permissions, IOptions<NotificationOptions> options, ILogger<NotificationService>? logger = null)
     {
         _context = context;
+        _logger = logger ?? NullLogger<NotificationService>.Instance;
+        _permissions = permissions;
+        _options = options.Value;
+        BreachPolicy = new SlaNotificationPolicy(_options.BreachPriority, _options.BreachReminderCooldownMinutes, _options.BreachMaxReminders,
+            _options.BreachGroupingThreshold > 0, Math.Max(1, _options.BreachGroupingThreshold));
     }
 
-    public async Task CreateNotificationAsync(Guid recipientUserId, string type, string title, string message, Guid? caseId = null, string? caseNumber = null, string priority = "High", int reminderCount = 0, CancellationToken ct = default)
+    public async Task CreateNotificationAsync(Guid recipientUserId, string type, string title, string message, Guid? caseId = null, string? caseNumber = null, string priority = "High", int reminderCount = 0, CancellationToken ct = default, string? eventKey = null)
     {
-        var cutoff = DateTime.UtcNow.AddMinutes(-5);
-        var exists = await _context.Notifications.AnyAsync(n =>
-            n.RecipientUserId == recipientUserId &&
-            n.Type == type &&
-            n.CaseId == caseId &&
-            n.CreatedAt >= cutoff, ct);
+        // An event with a key is reported once, ever. Without a key, an identical notification inside the duplicate window (Notifications:DuplicateWindowMinutes) is treated as a duplicate.
+        var cutoff = DateTime.UtcNow.AddMinutes(-Math.Max(0, _options.DuplicateWindowMinutes));
+        var exists = eventKey != null
+            ? await _context.Notifications.AnyAsync(n => n.RecipientUserId == recipientUserId && n.EventKey == eventKey, ct)
+            : await _context.Notifications.AnyAsync(n =>
+                n.RecipientUserId == recipientUserId &&
+                n.Type == type &&
+                n.CaseId == caseId &&
+                n.CreatedAt >= cutoff, ct);
 
         if (exists) return;
 
@@ -49,7 +56,8 @@ public class NotificationService : INotificationService
             IsRead = false,
             Priority = string.IsNullOrWhiteSpace(priority) ? "High" : priority,
             ReminderCount = reminderCount,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            EventKey = eventKey
         };
 
         _context.Notifications.Add(notification);
@@ -60,8 +68,7 @@ public class NotificationService : INotificationService
     {
         if (page < 1) page = 1;
         if (pageSize < 1) pageSize = 15;
-
-        await CheckAndGenerateSlaNotificationsAsync(ct);
+        if (pageSize > 100) pageSize = 100;
 
         var query = _context.Notifications
             .AsNoTracking()
@@ -145,53 +152,10 @@ public class NotificationService : INotificationService
         }
     }
 
-    public async Task CheckAndGenerateSlaNotificationsAsync(CancellationToken ct = default)
+    public async Task PublishSlaBreachNotificationsAsync(IReadOnlyList<SlaBreachCandidate> breached, DateTime now, CancellationToken ct = default)
     {
-        lock (_slaLock)
-        {
-            if (DateTime.UtcNow - _lastSlaCheckTime < SlaCheckInterval)
-            {
-                return;
-            }
-            _lastSlaCheckTime = DateTime.UtcNow;
-        }
-
-        var now = DateTime.UtcNow;
-
         var breachRule = BreachPolicy;
-        var approachingRule = ApproachingPolicy;
-
-        var activeCases = await _context.Cases
-            .AsNoTracking()
-            .Where(c => c.Status != CaseStatus.Resolved && c.Status != CaseStatus.Closed && c.Status != CaseStatus.Cancelled)
-            .Select(c => new SlaCandidate
-            {
-                Id = c.Id,
-                CaseNumber = c.CaseNumber,
-                Title = c.Title,
-                OwnerId = c.OwnerId,
-                SlaStartTime = c.SlaStartTime,
-                SlaTargetHours = c.SlaTargetHours
-            })
-            .ToListAsync(ct);
-
-        var dueBreaches = new List<SlaCandidate>();
-        var dueApproaching = new List<SlaCandidate>();
-
-        foreach (var c in activeCases)
-        {
-            var slaTargetTime = c.SlaStartTime.AddHours(c.SlaTargetHours);
-            var remainingHours = (slaTargetTime - now).TotalHours;
-
-            if (remainingHours <= 0)
-            {
-                dueBreaches.Add(c);
-            }
-            else if (remainingHours > 0 && remainingHours <= SlaApproachingThresholdHours)
-            {
-                dueApproaching.Add(c);
-            }
-        }
+        var dueBreaches = breached.ToList();
 
         var toInsert = new List<NotificationItem>();
 
@@ -319,51 +283,11 @@ public class NotificationService : INotificationService
             }
         }
 
-        // Process SLA Approaching Warnings
-        if (dueApproaching.Any())
-        {
-            var approachingCaseIds = dueApproaching.Select(b => b.Id).ToList();
-            var recentApproaching = await _context.Notifications
-                .AsNoTracking()
-                .Where(n => n.CaseId.HasValue && approachingCaseIds.Contains(n.CaseId.Value) && n.Type == "SLA_APPROACHING")
-                .Select(n => n.CaseId!.Value)
-                .ToListAsync(ct);
-
-            var set = new HashSet<Guid>(recentApproaching);
-            foreach (var c in dueApproaching)
-            {
-                if (set.Contains(c.Id)) continue;
-                toInsert.Add(new NotificationItem
-                {
-                    Id = Guid.NewGuid(),
-                    RecipientUserId = c.OwnerId,
-                    Type = "SLA_APPROACHING",
-                    Title = "SLA Approaching",
-                    Message = $"Case {c.CaseNumber} is approaching its SLA deadline.",
-                    CaseId = c.Id,
-                    CaseNumber = c.CaseNumber,
-                    Priority = approachingRule.Priority,
-                    IsRead = false,
-                    CreatedAt = now
-                });
-            }
-        }
-
         if (toInsert.Count > 0)
         {
             _context.Notifications.AddRange(toInsert);
             await _context.SaveChangesAsync(ct);
         }
-    }
-
-    private sealed class SlaCandidate
-    {
-        public Guid Id { get; init; }
-        public string CaseNumber { get; init; } = string.Empty;
-        public string Title { get; init; } = string.Empty;
-        public Guid OwnerId { get; init; }
-        public DateTime SlaStartTime { get; init; }
-        public int SlaTargetHours { get; init; }
     }
 
     public async Task CreateConfigChangedNotificationAsync(string title, string message, CancellationToken ct = default)
@@ -372,10 +296,16 @@ public class NotificationService : INotificationService
         {
             const string priority = "Info";
 
-            var adminUserIds = await _context.Users.AsNoTracking()
-                .Where(u => u.Role.Contains("Admin") || u.Role.Contains("Officer") || u.Role.Contains("Agent"))
-                .Select(u => u.Id)
-                .ToListAsync(ct);
+            // Only the people who can change configuration hear about configuration changes (matched on the exact roles the
+            // Host assigns that permission to), not every agent.
+            var roles = _permissions.RolesGranting(Permissions.ConfigManage);
+            var managers = _context.Users.AsNoTracking().Where(u => u.IsActive);
+            if (roles != null)
+            {
+                var roleList = roles.Select(r => r.ToLower()).ToList();
+                managers = managers.Where(u => roleList.Contains(u.Role.ToLower()));
+            }
+            var adminUserIds = await managers.Select(u => u.Id).ToListAsync(ct);
 
             if (!adminUserIds.Any()) return;
 
@@ -397,7 +327,16 @@ public class NotificationService : INotificationService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[CreateConfigChangedNotification Error] {ex.Message}");
+            _logger.LogWarning(ex, "CreateConfigChangedNotification Error");
         }
+    }
+
+    public async Task<int> PurgeExpiredAsync(DateTime nowUtc, CancellationToken ct = default)
+    {
+        var readCutoff = nowUtc.AddDays(-Math.Max(1, _options.ReadRetentionDays));
+        var maxCutoff = nowUtc.AddDays(-Math.Max(1, _options.MaxAgeDays));
+        return await _context.Notifications
+            .Where(n => (n.IsRead && n.CreatedAt < readCutoff) || n.CreatedAt < maxCutoff)
+            .ExecuteDeleteAsync(ct);
     }
 }

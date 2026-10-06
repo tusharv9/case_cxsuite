@@ -27,10 +27,6 @@ export const departmentService = {
     return departmentsRequest;
   },
 
-  /** Invalidate the in-memory cache (call after creating or editing a department) */
-  invalidateCache() {
-    departmentsCache = null;
-  },
 
   createDepartment(dto) {
     return api.post('/api/departments', dto).then((r) => {
@@ -55,17 +51,4 @@ export const departmentService = {
     });
   },
 
-  /**
-   * Set or update the owner of a department
-   * dto: { ownerId: guid }
-   */
-  setDepartmentOwner(id, dto) {
-    return api.put(`/api/departments/${id}/owner`, dto).then((r) => {
-      // Owner name is part of the cached department list, so it has to be dropped here too.
-      // Previously only createDepartment invalidated, leaving the UI showing the previous owner
-      // until a full reload.
-      departmentsCache = null;
-      return r.data;
-    });
-  },
 };

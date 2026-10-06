@@ -79,9 +79,32 @@ namespace CaseManagement.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DepartmentId");
+                    b.HasIndex("DepartmentId")
+                        .IsUnique()
+                        .HasFilter("\"DepartmentId\" IS NOT NULL");
 
                     b.ToTable("AssignmentConfigurations");
+                });
+
+            modelBuilder.Entity("CaseManagement.Api.Models.BusinessCalendarSetting", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("BusinessCalendarSettings");
                 });
 
             modelBuilder.Entity("CaseManagement.Api.Models.BusinessHour", b =>
@@ -205,26 +228,20 @@ namespace CaseManagement.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<bool>("Sla12hBreachedEscalated")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("Sla70ReminderSent")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("Sla90Escalated")
-                        .HasColumnType("boolean");
-
                     b.Property<DateTime?>("SlaBreachedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("SlaBreachedEscalated")
-                        .HasColumnType("boolean");
 
                     b.Property<int>("SlaConfigVersion")
                         .HasColumnType("integer");
 
+                    b.Property<string>("SlaOutcome")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("SlaPausedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("SlaReminderSent")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime>("SlaStartTime")
                         .HasColumnType("timestamp with time zone");
@@ -269,14 +286,28 @@ namespace CaseManagement.Api.Migrations
 
                     b.HasIndex("LinkedSourceCaseId");
 
-                    b.HasIndex("OwnerId");
-
                     b.HasIndex("ParentCaseId");
 
                     b.HasIndex("Severity");
 
+                    b.HasIndex("SlaOutcome")
+                        .HasDatabaseName("IX_Cases_SlaOutcome_Breached")
+                        .HasFilter("\"SlaOutcome\" = 'Breached'");
+
+                    b.HasIndex("SlaStartTime")
+                        .HasDatabaseName("IX_Cases_Open_SlaStart")
+                        .HasFilter("\"Status\" NOT IN ('Resolved', 'Closed', 'Cancelled')");
+
                     b.HasIndex("DepartmentId", "CreatedAt")
                         .IsDescending(false, true);
+
+                    b.HasIndex("DepartmentId", "Status")
+                        .HasDatabaseName("IX_Cases_Open_Department")
+                        .HasFilter("\"Status\" NOT IN ('Resolved', 'Closed', 'Cancelled')");
+
+                    b.HasIndex("OwnerId", "Status")
+                        .HasDatabaseName("IX_Cases_Open_Owner")
+                        .HasFilter("\"Status\" NOT IN ('Resolved', 'Closed', 'Cancelled')");
 
                     b.HasIndex("Status", "CreatedAt")
                         .IsDescending(false, true);
@@ -292,6 +323,9 @@ namespace CaseManagement.Api.Migrations
 
                     b.Property<Guid>("CaseId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ContentHash")
+                        .HasColumnType("text");
 
                     b.Property<string>("ContentType")
                         .HasColumnType("text");
@@ -676,10 +710,6 @@ namespace CaseManagement.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Channels")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1005,6 +1035,9 @@ namespace CaseManagement.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("EventKey")
+                        .HasColumnType("text");
+
                     b.Property<bool>("IsRead")
                         .HasColumnType("boolean");
 
@@ -1044,6 +1077,11 @@ namespace CaseManagement.Api.Migrations
 
                     b.HasIndex("RecipientUserId", "CreatedAt")
                         .IsDescending(false, true);
+
+                    b.HasIndex("RecipientUserId", "EventKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Notifications_Recipient_EventKey")
+                        .HasFilter("\"EventKey\" IS NOT NULL");
 
                     b.ToTable("Notifications");
                 });
@@ -1203,9 +1241,6 @@ namespace CaseManagement.Api.Migrations
                     b.Property<Guid>("TargetDepartmentId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("TargetQueueName")
-                        .HasColumnType("text");
-
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1230,6 +1265,42 @@ namespace CaseManagement.Api.Migrations
                     b.HasKey("Key");
 
                     b.ToTable("SeedHistory", (string)null);
+                });
+
+            modelBuilder.Entity("CaseManagement.Api.Models.SkillRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MatchField")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("MatchType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("MatchValue")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SkillName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SkillRules");
                 });
 
             modelBuilder.Entity("CaseManagement.Api.Models.TeamAssignmentPointer", b =>
@@ -1265,14 +1336,13 @@ namespace CaseManagement.Api.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsAssignable")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("JoinedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("MemberRole")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("PrimaryChannel")
                         .IsRequired()
                         .HasColumnType("text");
 

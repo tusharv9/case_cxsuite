@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Plus, Phone, MessageSquare, Mail, Megaphone, Users, AlertTriangle, X } from 'lucide-react';
+import { Plus, Users, AlertTriangle, X, Pencil } from 'lucide-react';
 import { Button } from '../../components/common/Button/Button.jsx';
 import { Avatar } from '../../components/common/Avatar/Avatar.jsx';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
-import { CreateTeamDrawer } from '../../components/drawer/CreateTeamDrawer/CreateTeamDrawer.jsx';
+import { CreateTeamDrawer, ALGORITHM_LABELS } from '../../components/drawer/CreateTeamDrawer/CreateTeamDrawer.jsx';
 import { teamService } from '../../services/teamService.js';
 import { useToast } from '../../hooks/useToast.js';
 import { useApp } from '../../contexts/AppContext.jsx';
@@ -16,6 +16,7 @@ export function TeamsPage() {
   const [teams, setTeams] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [editingTeam, setEditingTeam] = useState(null);
   const [confirmRemove, setConfirmRemove] = useState(null); // { team, member }
   const [isRemoving, setIsRemoving] = useState(false);
 
@@ -43,37 +44,19 @@ export function TeamsPage() {
   };
 
   const formatSinceDate = (dateStr) => {
-    if (!dateStr) return 'since 01 Jul 2026';
+    if (!dateStr) return '';
     const d = new Date(dateStr);
     return `since ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
   };
 
-  const renderChannelIcons = (channelsStr) => {
-    const raw = (channelsStr || 'Voice,Chat,Email').toLowerCase();
-    return (
-      <div className="team-card__channels-icons">
-        {(raw.includes('voice') || raw.includes('phone')) && (
-          <span className="channel-icon-pill" title="Voice / Phone">
-            <Phone size={13} />
-          </span>
-        )}
-        {(raw.includes('chat') || raw.includes('whatsapp')) && (
-          <span className="channel-icon-pill" title="Chat / Messaging">
-            <MessageSquare size={13} />
-          </span>
-        )}
-        {raw.includes('email') && (
-          <span className="channel-icon-pill" title="Email">
-            <Mail size={13} />
-          </span>
-        )}
-        {raw.includes('social') && (
-          <span className="channel-icon-pill" title="Social Channels">
-            <Megaphone size={13} />
-          </span>
-        )}
-      </div>
-    );
+  const openCreate = () => {
+    setEditingTeam(null);
+    setIsDrawerOpen(true);
+  };
+
+  const openEdit = (team) => {
+    setEditingTeam(team);
+    setIsDrawerOpen(true);
   };
 
   const handleToggleTeam = async (team) => {
@@ -117,7 +100,7 @@ export function TeamsPage() {
             <Button
               variant="primary"
               icon={<Plus size={16} />}
-              onClick={() => setIsDrawerOpen(true)}
+              onClick={openCreate}
               id="btn-create-team"
             >
               Create Team
@@ -138,7 +121,7 @@ export function TeamsPage() {
             <h3>No Teams Configured</h3>
             <p>Create your first operational squad to begin managing cases and agent queues.</p>
             {canManage && (
-              <Button variant="primary" icon={<Plus size={16} />} onClick={() => setIsDrawerOpen(true)}>
+              <Button variant="primary" icon={<Plus size={16} />} onClick={openCreate}>
                 Create Team
               </Button>
             )}
@@ -164,6 +147,17 @@ export function TeamsPage() {
                     </div>
                     {/* Active / Inactive Status Management */}
                     <div className="team-card__status-toggle-wrap">
+                      {canManage && (
+                        <button
+                          type="button"
+                          className="team-card__edit-btn"
+                          onClick={() => openEdit(team)}
+                          title={`Edit ${team.name}`}
+                          aria-label={`Edit ${team.name}`}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
                       <span className={`team-status-badge ${isActive ? 'team-status-badge--active' : 'team-status-badge--inactive'}`}>
                         {isActive ? 'Active' : 'Inactive'}
                       </span>
@@ -199,6 +193,8 @@ export function TeamsPage() {
                             <div className="team-card__member-badge-wrap">
                               {isLead ? (
                                 <span className="member-badge member-badge--lead">Lead</span>
+                              ) : member.isAssignable === false ? (
+                                <span className="member-badge member-badge--offline" title="On the team, but cases are not routed to them">no cases</span>
                               ) : (
                                 <span className={`member-badge member-badge--${statusLower}`}>
                                   {statusLower === 'available' ? 'online' : statusLower}
@@ -227,12 +223,12 @@ export function TeamsPage() {
 
                   {/* Card Footer */}
                   <div className="team-card__footer">
-                    <div className="team-card__channels-label">
-                      <span>Channels:</span>
-                      {renderChannelIcons(team.channels)}
+                    <div className="team-card__channels-label" title={team.hasOwnAssignmentSettings ? 'This team has its own assignment settings' : 'Follows the global assignment settings'}>
+                      <span>{(ALGORITHM_LABELS[team.assignmentAlgorithm] || team.assignmentAlgorithm || '').split(' — ')[0]}</span>
+                      <span className="team-card__since">· up to {team.maxConcurrentCapacity} each{team.hasOwnAssignmentSettings ? '' : ' (global)'}</span>
                     </div>
                     <div className="team-card__since">
-                      {formatSinceDate(team.createdAt)}
+                      {team.queueCount} open · {formatSinceDate(team.createdAt)}
                     </div>
                   </div>
                 </div>
@@ -281,6 +277,7 @@ export function TeamsPage() {
       {/* Create Team Drawer */}
       <CreateTeamDrawer
         isOpen={isDrawerOpen}
+        team={editingTeam}
         onClose={() => setIsDrawerOpen(false)}
         onSuccess={fetchTeams}
       />

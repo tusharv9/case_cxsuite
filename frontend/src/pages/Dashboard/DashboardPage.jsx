@@ -23,11 +23,9 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext.jsx';
 import { caseService } from '../../services/caseService.js';
-import { departmentService } from '../../services/departmentService.js';
-import { configurableSettingsService } from '../../services/configurableSettingsService.js';
+import { dashboardService } from '../../services/dashboardService.js';
 import { ErrorState } from '../../components/common/Loader/Loader.jsx';
 import { DeptBadge } from '../../components/common/Badge/Badge.jsx';
-import { useNow } from '../../hooks/useNow.js';
 import { EmptyState } from '../../components/common/Loader/Loader.jsx';
 import { Skeleton } from '../../components/common/Skeleton/Skeleton.jsx';
 import { ActivityFeed } from './components/ActivityFeed.jsx';
@@ -66,23 +64,17 @@ function getSplinePath(points) {
 }
 
 export function DashboardPage() {
-  const now = useNow(10000);
   const { currentUser } = useApp();
   const navigate = useNavigate();
 
   // Core Data States
   const [summaryData, setSummaryData] = useState(null);
-  const [departments, setDepartments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
-  // Configurable master data states
-  const [quickActionsConfig, setQuickActionsConfig] = useState([]);
-  const [dateRangesConfig, setDateRangesConfig] = useState([]);
-  const [statusConfig, setStatusConfig] = useState([]);
-  const [caseTypesConfig, setCaseTypesConfig] = useState([]);
-  const [severityConfig, setSeverityConfig] = useState([]);
-  const [slaStatusConfig, setSlaStatusConfig] = useState([]);
+  // The filter bar's options, from one request (null until loaded; there are no built-in fallbacks)
+  const [filters, setFilters] = useState(null);
+  const [filtersError, setFiltersError] = useState(null);
 
   // Quick Action & Drawer States
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
@@ -109,31 +101,15 @@ export function DashboardPage() {
   const [resolvedTimeframe, setResolvedTimeframe] = useState('daily');
   const [activeChartPoint, setActiveChartPoint] = useState(null);
 
-  // Fetch initial configuration lookups
-  useEffect(() => {
-    Promise.all([
-      departmentService.getAllDepartments(true).catch((err) => {
-        console.error('Failed to load departments:', err);
-        return [];
-      }),
-      configurableSettingsService.getLookupValues('DASHBOARD_QUICK_ACTION', true).catch(() => []),
-      configurableSettingsService.getLookupValues('DASHBOARD_DATE_RANGE', true).catch(() => []),
-      configurableSettingsService.getLookupValues('CASE_STATUS', true).catch(() => []),
-      configurableSettingsService.getCaseTypes().catch(() => []),
-      configurableSettingsService.getSeverities().catch(() => []),
-      configurableSettingsService.getLookupValues('SLA_STATUS', true).catch(() => []),
-    ])
-      .then(([deptData, qaData, drData, csData, ctData, sevData, slaData]) => {
-        setDepartments(Array.isArray(deptData) ? deptData : []);
-        if (Array.isArray(qaData) && qaData.length > 0) setQuickActionsConfig(qaData);
-        if (Array.isArray(drData) && drData.length > 0) setDateRangesConfig(drData);
-        if (Array.isArray(csData) && csData.length > 0) setStatusConfig(csData);
-        if (Array.isArray(ctData) && ctData.length > 0) setCaseTypesConfig(ctData);
-        if (Array.isArray(sevData) && sevData.length > 0) setSeverityConfig(sevData);
-        if (Array.isArray(slaData) && slaData.length > 0) setSlaStatusConfig(slaData);
-      })
-      .catch((err) => console.error('Failed to load dashboard configuration:', err));
+  // The filter options come from one request.
+  const loadFilters = useCallback(() => {
+    setFiltersError(null);
+    dashboardService.getFilters()
+      .then(setFilters)
+      .catch((err) => setFiltersError(err?.message || 'The dashboard filters could not be loaded.'));
   }, []);
+
+  useEffect(() => { loadFilters(); }, [loadFilters]);
 
   // Fetch server-side aggregated summary
   const fetchDashboardData = useCallback(() => {
@@ -265,13 +241,9 @@ export function DashboardPage() {
     if (!summaryData?.attentionCases) return [];
     let list = summaryData.attentionCases;
     if (slaFilter !== 'all') {
-      list = list.filter((c) => {
-        const isBreached = Boolean(c.slaBreachedAt);
-        if (slaFilter === 'breached') return isBreached;
-        if (slaFilter === 'approaching') return !isBreached;
-        if (slaFilter === 'healthy') return false;
-        return true;
-      });
+      // The server's verdict for each case (the same one the board and the worker use).
+      list = list.filter((c) => (c.sla?.health || '').toLowerCase() === slaFilter.toLowerCase()
+        || (slaFilter === 'healthy' && ['paused', 'met'].includes((c.sla?.health || '').toLowerCase())));
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -323,85 +295,18 @@ export function DashboardPage() {
 
   const welcomeName = currentUser?.name || 'Super Admin';
 
-  // Derived Config Lists with Safe Defaults & Active Filter
-  const visibleDepartments = useMemo(() => {
-    return (departments || []).filter((d) => d.isActive !== false);
-  }, [departments]);
-
-  const quickActionsList = useMemo(() => {
-    const raw = quickActionsConfig.length > 0 ? quickActionsConfig : [
-      { id: 'qa-1', value: 'create_case', label: 'Create Case', isActive: true },
-      { id: 'qa-2', value: 'create_customer', label: 'Create Customer', isActive: true },
-      { id: 'qa-3', value: 'assign_case', label: 'Assign Case', isActive: true },
-      { id: 'qa-4', value: 'search_cases', label: 'Search Cases', isActive: true },
-      { id: 'qa-5', value: 'my_cases_toggle', label: 'My Cases Only', isActive: true },
-    ];
-    return raw.filter((qa) => qa.isActive !== false);
-  }, [quickActionsConfig]);
-
-  const dateRangesList = useMemo(() => {
-    const raw = dateRangesConfig.length > 0 ? dateRangesConfig : [
-      { id: 'dr-1', value: 'today', label: 'Today', isActive: true },
-      { id: 'dr-2', value: 'this_week', label: 'This Week', isActive: true },
-      { id: 'dr-3', value: 'last_week', label: 'Last Week', isActive: true },
-      { id: 'dr-4', value: 'this_month', label: 'This Month', isActive: true },
-      { id: 'dr-5', value: 'last_month', label: 'Last Month', isActive: true },
-      { id: 'dr-6', value: 'this_quarter', label: 'This Quarter', isActive: true },
-      { id: 'dr-7', value: 'this_year', label: 'This Year', isActive: true },
-      { id: 'dr-8', value: 'all', label: 'All Time', isActive: true },
-      { id: 'dr-9', value: 'custom', label: 'Custom Range', isActive: true },
-    ];
-    return raw.filter((dr) => dr.isActive !== false);
-  }, [dateRangesConfig]);
-
-  const statusesList = useMemo(() => {
-    const raw = statusConfig.length > 0 ? statusConfig : [
-      { id: 'st-1', value: 'Open', label: 'Open', isActive: true },
-      { id: 'st-2', value: 'InProgress', label: 'In Progress', isActive: true },
-      { id: 'st-3', value: 'Escalated', label: 'Escalated', isActive: true },
-      { id: 'st-4', value: 'Closed', label: 'Closed', isActive: true },
-      { id: 'st-5', value: 'Resolved', label: 'Resolved', isActive: true },
-    ];
-    return raw.filter((st) => st.isActive !== false && st.value?.toLowerCase() !== 'within customer');
-  }, [statusConfig]);
-
-  const caseTypesList = useMemo(() => {
-    const raw = caseTypesConfig.length > 0 ? caseTypesConfig : [
-      { id: 'ct-1', code: 'Complaint', name: 'Complaints', isActive: true },
-      { id: 'ct-2', code: 'Service', name: 'Service', isActive: true },
-      { id: 'ct-3', code: 'Inquiry', name: 'Inquiry', isActive: true },
-    ];
-    return raw.filter((ct) => ct.isActive !== false && ct.code !== 'InfoReq' && ct.name?.toLowerCase() !== 'info request');
-  }, [caseTypesConfig]);
-
-  const severitiesList = useMemo(() => {
-    const raw = severityConfig;
-    return raw.filter((sv) => sv.isActive !== false);
-  }, [severityConfig]);
-
-  const slaStatusesList = useMemo(() => {
-    const raw = slaStatusConfig.length > 0 ? slaStatusConfig : [
-      { id: 'sla-1', value: 'healthy', label: 'Within SLA', isActive: true },
-      { id: 'sla-2', value: 'approaching', label: 'Approaching SLA', isActive: true },
-      { id: 'sla-3', value: 'breached', label: 'SLA Breached', isActive: true },
-    ];
-    return raw.filter((sla) => sla.isActive !== false);
-  }, [slaStatusConfig]);
+  // Options for the filter bar, exactly as the server offers them.
+  const visibleDepartments = filters?.departments ?? [];
+  const quickActionsList = filters?.quickActions ?? [];
+  const dateRangesList = filters?.dateRanges ?? [];
+  const statusesList = filters?.statuses ?? [];
+  const caseTypesList = filters?.caseTypes ?? [];
+  const severitiesList = (filters?.priorities ?? []).map((name) => ({ name }));
+  const slaStatusesList = filters?.slaStatuses ?? [];
 
   const getDateRangeLabel = () => {
-    const match = dateRangesList.find((dr) => dr.value === dateRange || dr.label?.toLowerCase() === dateRange.toLowerCase());
-    if (match) return match.label || match.value;
-    switch (dateRange) {
-      case 'today': return 'Today';
-      case 'this_week': return 'This Week';
-      case 'last_week': return 'Last Week';
-      case 'this_month': return 'This Month';
-      case 'last_month': return 'Last Month';
-      case 'this_quarter': return 'This Quarter';
-      case 'this_year': return 'This Year';
-      case 'custom': return 'Custom Range';
-      default: return 'All Time';
-    }
+    const match = dateRangesList.find((dr) => dr.value === dateRange);
+    return match ? match.label || match.value : dateRange === 'all' ? 'All Time' : dateRange;
   };
 
   if (isLoading) {
@@ -602,6 +507,11 @@ export function DashboardPage() {
         </div>
 
         {/* 2. FILTER TOOLBAR */}
+        {filtersError && (
+          <div className="dashboard-filters-error" role="alert">
+            {filtersError} <button type="button" onClick={loadFilters}>Retry</button>
+          </div>
+        )}
         <div className="dashboard-filter-bar">
           <span className="filter-bar-label">
             <Filter size={14} /> Filters
@@ -614,7 +524,7 @@ export function DashboardPage() {
           >
             <option value="all">All Departments</option>
             {visibleDepartments.map((d) => (
-              <option key={d.id || d.name} value={d.name}>
+              <option key={d.id} value={d.id}>
                 {d.name}
               </option>
             ))}
@@ -627,8 +537,8 @@ export function DashboardPage() {
           >
             <option value="all">All Statuses</option>
             {statusesList.map((st) => (
-              <option key={st.id || st.value} value={st.value}>
-                {st.label || st.value}
+              <option key={st.value} value={st.value}>
+                {st.label}
               </option>
             ))}
           </select>
@@ -640,8 +550,8 @@ export function DashboardPage() {
           >
             <option value="all">All Case Types</option>
             {caseTypesList.map((ct) => (
-              <option key={ct.id || ct.code || ct.value} value={ct.code || ct.value || ct.name}>
-                {ct.name || ct.label || ct.code || ct.value}
+              <option key={ct.value} value={ct.value}>
+                {ct.label}
               </option>
             ))}
           </select>
@@ -653,8 +563,8 @@ export function DashboardPage() {
           >
             <option value="all">All Severities</option>
             {severitiesList.map((sev) => (
-              <option key={sev.id || sev.name || sev.value} value={sev.name || sev.value}>
-                {sev.name || sev.label || sev.value}
+              <option key={sev.name} value={sev.name}>
+                {sev.name}
               </option>
             ))}
           </select>
@@ -666,8 +576,8 @@ export function DashboardPage() {
           >
             <option value="all">All SLA Statuses</option>
             {slaStatusesList.map((sla) => (
-              <option key={sla.id || sla.value} value={sla.value}>
-                {sla.label || sla.value}
+              <option key={sla.value} value={sla.value}>
+                {sla.label}
               </option>
             ))}
           </select>

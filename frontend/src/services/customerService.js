@@ -77,6 +77,13 @@ export const customerService = {
       .then((r) => r.data);
   },
 
+  /** The customer's timeline across all their cases (milestones and customer-visible messages), newest first. */
+  getCustomerTimeline(customerId, { page = 1, pageSize = 20, signal } = {}) {
+    return api
+      .get(`/api/customers/${customerId}/timeline`, { params: { page, pageSize }, signal })
+      .then((r) => r.data);
+  },
+
   clearCache() {
     allCustomersCache = null;
     allCustomersRequest = null;

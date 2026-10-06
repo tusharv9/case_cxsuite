@@ -21,4 +21,7 @@ public interface ICustomerRepository
 
     /// <summary>Server-side paginated list of cases belonging to a customer.</summary>
     Task<PagedResponseDto<CaseSummaryDto>> GetCustomerCasesAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default);
+
+    /// <summary>The customer's timeline across all their cases: case milestones and customer-visible messages, newest first.</summary>
+    Task<PagedResponseDto<CustomerTimelineItemDto>> GetCustomerTimelineAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default);
 }

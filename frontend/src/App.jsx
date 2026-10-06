@@ -1,6 +1,8 @@
 // ===== APP.JSX — Root React component =====
 
-import { BrowserRouter } from 'react-router-dom';
+import { useMemo } from 'react';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { ErrorBoundary } from './components/common/ErrorBoundary/ErrorBoundary.jsx';
 import { AppProvider } from './contexts/AppContext.jsx';
 import { CaseProvider } from './contexts/CaseContext.jsx';
 import { HostProvider } from './remote/HostContext.jsx';
@@ -16,7 +18,7 @@ import { configureHost } from './services/hostBridge.js';
  *   HostProvider (what the Host gave us)
  *     └── AppProvider (user session, toasts)
  *           └── CaseProvider (board state)
- *                 └── BrowserRouter (honours the Host-supplied basename)
+ *                 └── data router (honours the Host-supplied basename; a data router is what lets screens guard unsaved changes)
  *                       └── AppRoutes (layout + pages)
  */
 export default function App(props) {
@@ -27,15 +29,21 @@ export default function App(props) {
   // Host token or the standalone dev identity applies.
   configureHost(resolved);
 
+  // One router for the life of this basename (a Host pushing new props must not rebuild it and lose the current page).
+  const router = useMemo(
+    () => createBrowserRouter([{ path: '*', element: <AppRoutes /> }], { basename: basename || undefined }),
+    [basename]
+  );
+
   return (
-    <HostProvider hostProps={props}>
-      <AppProvider>
-        <CaseProvider>
-          <BrowserRouter basename={basename || undefined}>
-            <AppRoutes />
-          </BrowserRouter>
-        </CaseProvider>
-      </AppProvider>
-    </HostProvider>
+    <ErrorBoundary title="Case Management could not be displayed">
+      <HostProvider hostProps={props}>
+        <AppProvider>
+          <CaseProvider>
+            <RouterProvider router={router} />
+          </CaseProvider>
+        </AppProvider>
+      </HostProvider>
+    </ErrorBoundary>
   );
 }

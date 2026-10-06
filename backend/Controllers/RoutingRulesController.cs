@@ -90,22 +90,27 @@ public class RoutingRulesController : BaseApiController
         return Ok(new { success = true, message = "Rules reordered successfully." });
     }
 
+    /// <summary>The global assignment settings, or those in force for one team (<c>?departmentId=</c>).</summary>
     [HttpGet("assignment-config")]
-    public async Task<IActionResult> GetAssignmentConfig(CancellationToken ct)
+    public async Task<IActionResult> GetAssignmentConfig([FromQuery] Guid? departmentId, CancellationToken ct)
     {
-        var config = await _routingEngine.GetAssignmentConfigAsync(ct);
+        var config = await _routingEngine.GetAssignmentConfigAsync(departmentId, ct);
         return Ok(config);
     }
 
     [HttpPut("assignment-config")]
-    public async Task<IActionResult> UpdateAssignmentConfig([FromBody] UpdateAssignmentConfigDto dto, CancellationToken ct)
+    public async Task<IActionResult> UpdateAssignmentConfig([FromBody] UpdateAssignmentConfigDto dto, [FromQuery] Guid? departmentId, CancellationToken ct)
     {
         if (dto == null || string.IsNullOrWhiteSpace(dto.Algorithm))
         {
             return BadRequest(new { error = "Assignment algorithm is required." });
         }
 
-        var updated = await _routingEngine.UpdateAssignmentConfigAsync(dto, CurrentUserId, ct);
+        var updated = await _routingEngine.UpdateAssignmentConfigAsync(dto, CurrentUserId, departmentId, ct);
         return Ok(updated);
     }
+
+    /// <summary>What a routing rule can look at and the valid values for each (so editors never hard-code option lists).</summary>
+    [HttpGet("vocabulary")]
+    public async Task<IActionResult> GetVocabulary(CancellationToken ct) => Ok(await _routingEngine.GetVocabularyAsync(ct));
 }

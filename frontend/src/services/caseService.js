@@ -3,26 +3,6 @@
 import api from './api.js';
 
 export const caseService = {
-  /**
-   * Get all cases for the board, optionally filtered by departmentId and caseType.
-   *
-   * Note: there is no client-side cache here. A `boardCasesCache` variable used to exist
-   * alongside `hasBoardCasesCache()` and `clearCache()`, but nothing ever wrote to it — the
-   * cache was always empty, the "has cache" check always returned false, and every
-   * `clearCache()` call was a no-op. They have been removed rather than left as misleading
-   * scaffolding; every call below already hits the API.
-   */
-  getBoardCases(departmentId, caseType) {
-    if (typeof caseType === 'boolean') {
-      caseType = null;
-    }
-
-    const params = {};
-    if (departmentId && departmentId !== 'all') params.departmentId = departmentId;
-    if (caseType && caseType !== 'all' && typeof caseType === 'string') params.caseType = caseType;
-    
-    return api.get('/api/cases', { params }).then((r) => r.data);
-  },
 
   /**
    * Get paginated cases for a specific Kanban column with server-side filtering
@@ -259,11 +239,4 @@ export const caseService = {
     return api.post(`/api/cases/${caseId}/escalate`, dto).then((r) => r.data);
   },
 
-  /**
-   * Get 4-level escalation matrix configuration and dynamic next target for a case
-   */
-  getEscalationMatrix(caseId) {
-    const params = caseId ? { caseId } : {};
-    return api.get('/api/cases/escalation-matrix', { params }).then((r) => r.data);
-  },
 };

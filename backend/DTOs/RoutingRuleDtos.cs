@@ -11,7 +11,6 @@ public class RoutingRuleDto
     public RuleConditionsDto Conditions { get; set; } = new();
     public Guid TargetDepartmentId { get; set; }
     public string TargetDepartmentName { get; set; } = string.Empty;
-    public string? TargetQueueName { get; set; }
     public string ActionDescription { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
 }
@@ -25,7 +24,7 @@ public class RuleConditionsDto
     public string? Priority { get; set; } // "Critical", "High", "Medium", "Low"
     public string? CustomerSegment { get; set; } // "Premier", "Mass Retail", "Gold", "SME"
     public string? Channel { get; set; } // "Voice", "Email", "WhatsApp"
-    public List<string>? Keywords { get; set; } // Deprecated; retained for backwards-deserialization safety
+    public List<string>? Keywords { get; set; } // Ignored: kept only so old stored rules still deserialize
 }
 
 public class CreateRoutingRuleDto
@@ -36,7 +35,6 @@ public class CreateRoutingRuleDto
     public bool IsActive { get; set; } = true;
     public RuleConditionsDto? Conditions { get; set; }
     public Guid TargetDepartmentId { get; set; }
-    public string? TargetQueueName { get; set; }
     public string? ActionDescription { get; set; }
 }
 
@@ -48,20 +46,23 @@ public class UpdateRoutingRuleDto
     public bool? IsActive { get; set; }
     public RuleConditionsDto? Conditions { get; set; }
     public Guid? TargetDepartmentId { get; set; }
-    public string? TargetQueueName { get; set; }
     public string? ActionDescription { get; set; }
 }
 
 public class AssignmentConfigDto
 {
-    public string Algorithm { get; set; } = "RoundRobin"; // "RoundRobin", "SkillBased", "LeastOccupancy"
-    public int MaxConcurrentCapacity { get; set; } = 5;
+    public Guid? DepartmentId { get; set; }                // null = the global default
+    public string Algorithm { get; set; } = string.Empty;  // RoundRobin | SkillBased | LeastOccupancy
+    public int MaxConcurrentCapacity { get; set; }
+
+    /// <summary>True when this team has its own settings; false when it follows the global default.</summary>
+    public bool IsTeamOverride { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
 
 public class UpdateAssignmentConfigDto
 {
-    public string Algorithm { get; set; } = "RoundRobin";
+    public string Algorithm { get; set; } = string.Empty;
     public int? MaxConcurrentCapacity { get; set; }
 }
 
@@ -78,6 +79,45 @@ public class RoutingDecisionResult
     public string? AssignedUserName { get; set; }
     public Guid? MatchedRuleId { get; set; }
     public string? MatchedRuleName { get; set; }
-    public string AlgorithmUsed { get; set; } = "RoundRobin";
+    public string AlgorithmUsed { get; set; } = string.Empty;
     public string RoutingLogMessage { get; set; } = string.Empty;
+
+    /// <summary>Set when no agent could take the case: why, and who is holding it meanwhile (the team lead, if the team has one).</summary>
+    public string? HeldReason { get; set; }
+    public Guid? HeldByUserId { get; set; }
+}
+
+public class SkillRuleDto
+{
+    public Guid? Id { get; set; }
+    public string SkillName { get; set; } = string.Empty;
+    public string MatchField { get; set; } = "Title";
+    public string MatchType { get; set; } = "Contains";
+    public string MatchValue { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class AgentSkillDto
+{
+    public string SkillName { get; set; } = string.Empty;
+    public int ProficiencyLevel { get; set; } = 1;
+}
+
+/// <summary>What a routing rule can look at, and the values that are valid for each — so editors never hard-code option lists.</summary>
+public class RoutingVocabularyDto
+{
+    public List<string> MatchTypes { get; set; } = new() { "ALL", "ANY" };
+    public List<NamedOptionDto> Departments { get; set; } = new();
+    public List<string> SubCategories { get; set; } = new();
+    public List<string> CaseTypes { get; set; } = new();
+    public List<string> Priorities { get; set; } = new();
+    public List<string> Channels { get; set; } = new();
+    public List<string> CustomerSegments { get; set; } = new();
+    public List<string> Algorithms { get; set; } = new();
+}
+
+public class NamedOptionDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
 }

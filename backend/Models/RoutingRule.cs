@@ -15,6 +15,5 @@ public class RoutingRule : AuditableEntity
     public Guid TargetDepartmentId { get; set; }
     public Department TargetDepartment { get; set; } = null!;
     
-    public string? TargetQueueName { get; set; }
     public string ActionDescription { get; set; } = string.Empty;
 }

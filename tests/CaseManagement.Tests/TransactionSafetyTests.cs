@@ -74,7 +74,7 @@ public class TransactionSafetyTests
         };
 
         // Transfer should fail because the target department doesn't exist
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             service.TransferDepartmentAsync(testCase.Id, transferDto, user.Id));
 
         // Verify case department did not change
@@ -132,7 +132,7 @@ public class TransactionSafetyTests
             Reason = "Reassigning"
         };
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             service.AssignCaseAsync(testCase.Id, assignDto));
 
         var caseInDb = await db.Cases.FindAsync(testCase.Id);
@@ -231,12 +231,18 @@ public class TransactionSafetyTests
         var mockEnv = new Mock<IWebHostEnvironment>();
         mockEnv.Setup(e => e.ContentRootPath).Returns(Path.GetTempPath());
 
+        db.EscalationLevelConfigs.AddRange(
+            new EscalationLevelConfig { LevelNumber = 1, Name = "Level 1", AssignmentType = "Owner", TriggerType = "SlaPercentage", TriggerValue = 70, ReassignOwner = false, IsActive = true },
+            new EscalationLevelConfig { LevelNumber = 2, Name = "Level 2", AssignmentType = "Role", TargetRole = supervisor.Role, TriggerType = "SlaPercentage", TriggerValue = 90, ReassignOwner = true, IsActive = true });
+        await db.SaveChangesAsync();
+
         var service = new CaseService(
             new CaseRepository(db),
             new Mock<INotificationService>().Object,
             new Mock<IConfigurableSettingsService>().Object,
             db,
-            mockEnv.Object
+            mockEnv.Object,
+            escalation: new EscalationService(db, new ConfigCache(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions())))
         );
 
         var escalateDto = new EscalateCaseDto

@@ -16,4 +16,7 @@ public class NotificationItem
     public DateTime? LastReminderAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ReadAt { get; set; }
+
+    /// <summary>Identifies the event this notification reports (e.g. "escalation:{case}:{level}"); the same key is never notified twice to one recipient.</summary>
+    public string? EventKey { get; set; }
 }

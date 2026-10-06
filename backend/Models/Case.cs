@@ -24,28 +24,36 @@ public class Case : AuditableEntity
     public int SlaTargetHours { get; set; }
     public DateTime? ResolvedAt { get; set; }
     public DateTime? SlaPausedAt { get; set; }
+    /// <summary>Total time spent paused (Waiting on Customer), in BUSINESS minutes — the same unit the targets are in.</summary>
     public int SlaTotalPausedMinutes { get; set; } = 0;
 
     // Resolution SLA Targets (Snapshot)
-    public int InternalResolutionTargetMinutes { get; set; } = 120;
-    public int ExternalResolutionTargetMinutes { get; set; } = 240;
+    public int InternalResolutionTargetMinutes { get; set; }
+    public int ExternalResolutionTargetMinutes { get; set; }
     public DateTime? InternalResolutionDueAt { get; set; }
     public DateTime? ExternalResolutionDueAt { get; set; }
     public int SlaConfigVersion { get; set; } = 1;
     
     // First Response SLA Tracking
-    public int FirstResponseTargetMinutes { get; set; } = 240;
+    public int FirstResponseTargetMinutes { get; set; }
     public DateTime? FirstResponseDueAt { get; set; }
     public DateTime? FirstResponseActualAt { get; set; }
     public string FirstResponseStatus { get; set; } = "Pending"; // Met, Breached, Pending
 
     // Escalation Matrix Tracking
     public int EscalationLevel { get; set; } = 1; // 1 = Assigned Agent, 2 = Team Lead, 3 = CX Supervisor, 4 = Head of CX
-    public bool Sla70ReminderSent { get; set; } = false;
-    public bool Sla90Escalated { get; set; } = false;
-    public bool SlaBreachedEscalated { get; set; } = false;
-    public bool Sla12hBreachedEscalated { get; set; } = false;
+
+    /// <summary>True once the "approaching SLA" reminder (the first escalation level's trigger) has been sent for this case.</summary>
+    public bool SlaReminderSent { get; set; } = false;
+
+    /// <summary>When the INTERNAL resolution target was first found breached (the clock escalation runs on).</summary>
     public DateTime? SlaBreachedAt { get; set; }
+
+    /// <summary>
+    /// How the case ended against its external target: "Met" or "Breached". Set once, when the case is resolved (null while open).
+    /// Recorded so reports can COUNT outcomes in the database instead of re-running the SLA clock over every historical case.
+    /// </summary>
+    public string? SlaOutcome { get; set; }
     
     // Resolution Details
     public string? Disposition { get; set; }

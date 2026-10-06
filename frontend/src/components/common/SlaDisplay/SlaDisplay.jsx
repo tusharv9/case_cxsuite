@@ -1,56 +1,37 @@
-import { calculateDualSla } from '../../../utils/slaUtils.js';
+import { getSlaDisplay } from '../../../utils/slaUtils.js';
 import { useNow } from '../../../hooks/useNow.js';
-import { useApp } from '../../../contexts/AppContext.jsx';
 import { Clock, ShieldAlert, Pause } from 'lucide-react';
 import './SlaDisplay.css';
 
 /**
- * Dual SLA Display
+ * SLA badge for a case. The numbers come from the server's SLA clock (caseItem.sla); this only formats them.
  * @param {Object} props
- * @param {Object} props.caseItem - Case object
+ * @param {Object} props.caseItem - Case object as returned by the API
  * @param {string} props.size - 'sm' | 'md' | 'lg'
  */
 export function SlaDisplay({ caseItem, size = 'md' }) {
   const now = useNow(1000);
-  const appContext = useApp();
-  const effectiveHolidayToday = caseItem?.isHolidayToday ?? appContext?.isHolidayToday ?? false;
-  const effectiveHolidayName = caseItem?.holidayName || appContext?.todayHolidayName || null;
-  const effectiveBusinessHoursActive = caseItem?.isBusinessHoursActive ?? appContext?.isBusinessHoursActive ?? true;
-  const sla = calculateDualSla(caseItem, now, effectiveHolidayToday, effectiveHolidayName, effectiveBusinessHoursActive);
-  if (!sla) return null;
+  if (!caseItem) return null;
 
-  const isResolved = caseItem?.status === 'Resolved' || caseItem?.status === 'Closed';
+  const view = getSlaDisplay(caseItem, now);
+  const isPaused = view.status === 'paused';
 
   let badgeVariant = 'sla-badge--internal';
-  if (sla.isInternalBreached) {
-    badgeVariant = 'sla-badge--breached';
-  } else if (sla.isHoliday) {
-    badgeVariant = 'sla-badge--holiday-paused';
-  } else if (sla.isBusinessHoursPaused) {
-    badgeVariant = 'sla-badge--bh-paused';
-  } else if (sla.isPaused) {
-    badgeVariant = 'sla-badge--paused';
-  }
+  if (view.isBreached) badgeVariant = 'sla-badge--breached';
+  else if (view.status === 'holiday-paused') badgeVariant = 'sla-badge--holiday-paused';
+  else if (view.status === 'bh-paused') badgeVariant = 'sla-badge--bh-paused';
+  else if (isPaused) badgeVariant = 'sla-badge--paused';
 
   return (
     <div className={`sla-display sla-display--${size}`}>
-      <div
-        className={`sla-badge ${badgeVariant}`}
-        title={
-          sla.isHoliday
-            ? `SLA clock paused today for ${sla.holidayName || 'Public Holiday'}`
-            : sla.isBusinessHoursPaused
-            ? 'SLA clock paused (Outside Business Hours / Business Hours Disabled)'
-            : undefined
-        }
-      >
+      <div className={`sla-badge ${badgeVariant}`} title={view.tooltip}>
         <span className="sla-badge__value">
-          {sla.isPaused ? <Pause size={11} strokeWidth={2.5} /> : <Clock size={12} />}
-          {sla.internalRemainingFormatted}
+          {isPaused || view.status.endsWith('paused') ? <Pause size={11} strokeWidth={2.5} /> : <Clock size={12} />}
+          {view.label}
         </span>
-        {sla.isInternalBreached && !isResolved && (
-          <span className="sla-badge__alert" title="SLA breached - Supervisor notified">
-            <ShieldAlert size={12} /> Supervisor Alerted
+        {view.isBreached && caseItem.sla?.isStopped !== true && (
+          <span className="sla-badge__alert" title="SLA breached - escalation applies">
+            <ShieldAlert size={12} /> Escalated by SLA
           </span>
         )}
       </div>

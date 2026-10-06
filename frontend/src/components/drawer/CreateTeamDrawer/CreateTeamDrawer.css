@@ -264,3 +264,12 @@
     width: 100vw;
   }
 }
+
+/* Assignment settings & per-member "gets cases" */
+.form-hint { display: block; margin-top: 4px; font-size: 12px; color: #64748b; }
+.team-assignment-global { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1e293b; cursor: pointer; }
+.team-assignment-global em { font-style: normal; color: #64748b; }
+.team-assignment-own { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.team-assignment-capacity { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: #475569; }
+.team-assignment-capacity .input-field { width: 90px; }
+.team-member-receives { display: flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; color: #475569; white-space: nowrap; cursor: pointer; }

@@ -3,6 +3,7 @@
 import { memo } from 'react';
 import { AlertTriangle, ShieldCheck } from 'lucide-react';
 import { SeverityBadge, StatusBadge } from '../../../components/common/Badge/Badge.jsx';
+import { getSlaDisplay } from '../../../utils/slaUtils.js';
 
 /**
  * Extracted from DashboardPage and memoized. This list is genuinely time-dependent, so it does
@@ -40,6 +41,12 @@ export const AttentionCasesList = memo(function AttentionCasesList({ cases, onSe
                 </span>
               </div>
               <div className="attention-case-right">
+                <span
+                  className={`attention-sla attention-sla--${(c.sla?.health || 'unknown').toLowerCase()}`}
+                  title={`SLA: ${c.sla?.health || 'unknown'}`}
+                >
+                  {getSlaDisplay(c).label}
+                </span>
                 <SeverityBadge severity={c.severity} size="sm" />
                 <StatusBadge status={c.status} size="sm" />
               </div>

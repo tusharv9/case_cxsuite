@@ -9,17 +9,28 @@ public class CustomerService : ICustomerService
     private readonly ICustomerRepository _customerRepository;
     private readonly IPiiMaskingService _piiMasking;
     private readonly IFieldValidationEngine _fieldValidation;
+    private readonly ISlaClockProvider? _slaClock;
 
-    public CustomerService(ICustomerRepository customerRepository, IPiiMaskingService piiMasking, IFieldValidationEngine fieldValidation)
+    public CustomerService(ICustomerRepository customerRepository, IPiiMaskingService piiMasking, IFieldValidationEngine fieldValidation, ISlaClockProvider? slaClock = null)
     {
         _customerRepository = customerRepository;
         _piiMasking = piiMasking;
         _fieldValidation = fieldValidation;
+        _slaClock = slaClock;
+    }
+
+    /// <summary>Adds the SLA clock's verdict to cases shown on a customer's pages, so they read exactly like the case board.</summary>
+    private async Task EnrichSlaAsync(IEnumerable<CaseSummaryDto?>? cases, CancellationToken ct)
+    {
+        if (_slaClock == null || cases == null) return;
+        (await _slaClock.GetAsync(ct)).Enrich(cases);
     }
 
     public async Task<CustomerDetailDto?> GetCustomer360Async(Guid id, CancellationToken ct = default)
     {
-        return await _customerRepository.GetCustomerDetailAsync(id, ct);
+        var detail = await _customerRepository.GetCustomerDetailAsync(id, ct);
+        if (detail != null) await EnrichSlaAsync(detail.Cases, ct);
+        return detail;
     }
 
     public async Task<Customer> CreateCustomerAsync(CreateCustomerDto dto, Guid userId)
@@ -177,7 +188,9 @@ public class CustomerService : ICustomerService
 
     public async Task<CustomerDetailDto?> SearchCustomerAsync(CustomerSearchDto dto, CancellationToken ct = default)
     {
-        return await _customerRepository.SearchCustomerAsync(dto, ct);
+        var detail = await _customerRepository.SearchCustomerAsync(dto, ct);
+        if (detail != null) await EnrichSlaAsync(detail.Cases, ct);
+        return detail;
     }
 
     public async Task<IEnumerable<SearchCustomerHitDto>> SearchCustomersAsync(string query, int limit, CancellationToken ct = default)
@@ -206,6 +219,11 @@ public class CustomerService : ICustomerService
 
     public async Task<PagedResponseDto<CaseSummaryDto>> GetCustomerCasesAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default)
     {
-        return await _customerRepository.GetCustomerCasesAsync(customerId, page, pageSize, ct);
+        var paged = await _customerRepository.GetCustomerCasesAsync(customerId, page, pageSize, ct);
+        await EnrichSlaAsync(paged.Items, ct);
+        return paged;
     }
+
+    public Task<PagedResponseDto<CustomerTimelineItemDto>> GetCustomerTimelineAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default) =>
+        _customerRepository.GetCustomerTimelineAsync(customerId, Math.Max(1, page), Math.Clamp(pageSize, 1, 100), ct);
 }

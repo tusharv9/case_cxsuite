@@ -6,6 +6,9 @@ using System.Threading.Tasks;
 
 public interface IBusinessTimeService
 {
+    /// <summary>The configured working calendar (cached until configuration changes).</summary>
+    Task<BusinessCalendar> GetCalendarAsync(CancellationToken ct = default);
+
     /// <summary>
     /// Calculates a target deadline in UTC by adding business minutes to startUtc,
     /// strictly adhering to configured business hours and pausing for non-working days and public holidays.

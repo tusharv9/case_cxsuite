@@ -213,6 +213,10 @@ public class PostgresIntegrationTests
         Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"Departments\""));
         Assert.Equal(0L, await db.ScalarAsync<long>("SELECT count(*) FROM \"LookupValues\""));
         Assert.Equal(0L, await db.ScalarAsync<long>("SELECT count(*) FROM \"RoutingRules\""));
+        // Membership: the legacy user was eligible through their home team, so they now have a real, assignable membership row
+        // (nobody silently drops out of rotation), and the global assignment settings exist as visible data.
+        Assert.Equal(1L, await db.ScalarAsync<long>($"SELECT count(*) FROM \"TeamMembers\" WHERE \"DepartmentId\" = '{deptId}' AND \"IsActive\" AND \"IsAssignable\""));
+        Assert.Equal(1L, await db.ScalarAsync<long>("SELECT count(*) FROM \"AssignmentConfigurations\" WHERE \"DepartmentId\" IS NULL AND \"Algorithm\" = 'RoundRobin'"));
         // The seed steps are recorded as "adopted" so they can never run later either.
         Assert.True(await db.ScalarAsync<long>("SELECT count(*) FROM \"SeedHistory\"") >= 10);
 

@@ -64,12 +64,12 @@ public class EscalationLevelConfigDto
     public int LevelNumber { get; set; }
     public string Name { get; set; } = string.Empty;
 
-    public string AssignmentType { get; set; } = "Role"; // "Role" | "User" | "DepartmentOwner"
+    public string AssignmentType { get; set; } = "Role"; // Role | User | DepartmentOwner | Owner
     public string TargetRole { get; set; } = string.Empty;
     public Guid? TargetUserId { get; set; }
     public string? TargetUserName { get; set; }
 
-    public string TriggerType { get; set; } = "SlaPercentage"; // "SlaPercentage" | "SlaBreached" | "SlaPostBreachHours" | "ManualOnly"
+    public string TriggerType { get; set; } = "SlaPercentage"; // SlaPercentage | SlaBreached | SlaPostBreachHours | FirstResponseBreached | ManualOnly
     public decimal? TriggerValue { get; set; }
     public string TriggerDescription { get; set; } = string.Empty;
 
@@ -82,17 +82,42 @@ public class CreateEscalationLevelDto
 {
     public int? LevelNumber { get; set; }
     public string? Name { get; set; }
+
+    /// <summary>Role | User | DepartmentOwner | Owner</summary>
+    public string AssignmentType { get; set; } = "Role";
     public string TargetRole { get; set; } = string.Empty;
-    public string? TriggerCondition { get; set; }
+    public Guid? TargetUserId { get; set; }
+
+    /// <summary>One of the triggers the engine executes (see <see cref="SlaRoutingConfigResponseDto.TriggerTypes"/>).</summary>
+    public string TriggerType { get; set; } = "SlaBreached";
+    public decimal? TriggerValue { get; set; }
     public string? ActionDescription { get; set; }
+    public bool ReassignOwner { get; set; } = true;
 }
 
+/// <summary>Only the fields that are supplied change.</summary>
 public class UpdateEscalationLevelDto
 {
     public string? Name { get; set; }
-    public string TargetRole { get; set; } = string.Empty;
-    public string? TriggerCondition { get; set; }
+    public string? AssignmentType { get; set; }
+    public string? TargetRole { get; set; }
+    public Guid? TargetUserId { get; set; }
+    public string? TriggerType { get; set; }
+    public decimal? TriggerValue { get; set; }
     public string? ActionDescription { get; set; }
+    public bool? ReassignOwner { get; set; }
+    public bool? IsActive { get; set; }
+}
+
+/// <summary>A trigger the escalation engine can execute — what the editor offers, so nothing unexecutable can be configured.</summary>
+public class EscalationTriggerOptionDto
+{
+    public string Type { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public bool NeedsValue { get; set; }
+    public string? Unit { get; set; }
+    public decimal Min { get; set; }
+    public decimal Max { get; set; }
 }
 
 public class CategoryOptionDto
@@ -133,10 +158,18 @@ public class SlaRoutingConfigResponseDto
     public List<EscalationLevelConfigDto> EscalationLevels { get; set; } = new();
     public List<string> AvailableRoles { get; set; } = new();
     public List<UserOptionDto> AvailableUsers { get; set; } = new();
+
+    /// <summary>The zone the business hours are written in (IANA id).</summary>
+    public string TimeZoneId { get; set; } = string.Empty;
+    public List<string> AvailableTimeZones { get; set; } = new();
+    public List<EscalationTriggerOptionDto> TriggerTypes { get; set; } = new();
+    public List<string> AssignmentTypes { get; set; } = new();
 }
 
 public class UpdateSlaRoutingConfigRequestDto
 {
+    /// <summary>When supplied, replaces the calendar's time zone. Omitted = unchanged.</summary>
+    public string? TimeZoneId { get; set; }
     public List<PrioritySlaRuleDto> PriorityRules { get; set; } = new();
     public List<BusinessHourDto> BusinessHours { get; set; } = new();
     public List<EscalationLevelConfigDto> EscalationLevels { get; set; } = new();

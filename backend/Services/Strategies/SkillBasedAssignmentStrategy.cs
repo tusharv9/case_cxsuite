@@ -7,128 +7,48 @@ using Microsoft.EntityFrameworkCore;
 public class SkillBasedAssignmentStrategy : IAssignmentStrategy
 {
     private readonly AppDbContext _context;
+    private readonly ISkillService _skills;
 
-    public SkillBasedAssignmentStrategy(AppDbContext context)
+    public SkillBasedAssignmentStrategy(AppDbContext context, ISkillService skills)
     {
         _context = context;
+        _skills = skills;
     }
 
     public string AlgorithmName => "SkillBased";
 
-    public async Task<User?> SelectEligibleAgentAsync(Guid departmentId, Case newCase, Customer? customer, int maxCapacity, CancellationToken ct = default)
+    public async Task<AssignmentChoice?> SelectAsync(AssignmentRequest request, CancellationToken ct = default)
     {
-        // 1. Determine required skills based on case attributes
-        var requiredSkills = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (request.Eligible.Count == 0) return null;
 
-        if (!string.IsNullOrWhiteSpace(newCase.SourceChannel))
-            requiredSkills.Add(newCase.SourceChannel.Trim());
+        // Which skills does THIS case need? Decided by the configured skill rules — nothing is guessed from the case's text in code.
+        var required = await _skills.RequiredSkillsAsync(request.Case, request.Customer, ct);
 
-        if (!string.IsNullOrWhiteSpace(newCase.CommunicationChannel))
-            requiredSkills.Add(newCase.CommunicationChannel.Trim());
+        var ids = request.Eligible.Select(c => c.User.Id).ToList();
+        var skills = await _context.AgentSkills.AsNoTracking().Where(s => ids.Contains(s.UserId)).ToListAsync(ct);
+        var byUser = skills.GroupBy(s => s.UserId).ToDictionary(g => g.Key, g => g.ToList());
 
-        if (!string.IsNullOrWhiteSpace(newCase.CaseType))
-            requiredSkills.Add(newCase.CaseType.Trim());
-
-        if (customer != null && !string.IsNullOrWhiteSpace(customer.CustomerSegment))
-            requiredSkills.Add(customer.CustomerSegment.Trim());
-
-        if (!string.IsNullOrWhiteSpace(newCase.Title))
+        var scored = request.Eligible.Select(c =>
         {
-            var titleLower = newCase.Title.ToLowerInvariant();
-            if (titleLower.Contains("fraud") || titleLower.Contains("unauthorised") || titleLower.Contains("stolen"))
-                requiredSkills.Add("Fraud");
-            if (titleLower.Contains("loan") || titleLower.Contains("financing") || titleLower.Contains("asb"))
-                requiredSkills.Add("Loans");
-            if (titleLower.Contains("card") || titleLower.Contains("atm"))
-                requiredSkills.Add("Cards");
-        }
-
-        // 2. Get eligible squad members
-        var teamMembers = await _context.TeamMembers
-            .AsNoTracking()
-            .Include(tm => tm.User)
-            .Where(tm => tm.DepartmentId == departmentId && tm.IsActive)
-            .Select(tm => tm.User)
-            .ToListAsync(ct);
-
-        var directUsers = await _context.Users
-            .AsNoTracking()
-            .Where(u => u.DepartmentId == departmentId)
-            .ToListAsync(ct);
-
-        var allUsers = teamMembers.Concat(directUsers)
-            .GroupBy(u => u.Id)
-            .Select(g => g.First())
-            .ToList();
-
-        if (!allUsers.Any())
-        {
-            var dept = await _context.Departments.Include(d => d.Owner).FirstOrDefaultAsync(d => d.Id == departmentId, ct);
-            return dept?.Owner;
-        }
-
-        var onlineUsers = allUsers
-            .Where(u => u.Status == UserStatus.Available || u.Status == UserStatus.Busy)
-            .ToList();
-
-        var candidates = onlineUsers.Any() ? onlineUsers : allUsers;
-        var candidateIds = candidates.Select(c => c.Id).ToList();
-
-        // 3. Load skills for candidates
-        var agentSkills = await _context.AgentSkills
-            .AsNoTracking()
-            .Where(s => candidateIds.Contains(s.UserId))
-            .ToListAsync(ct);
-
-        var skillsByUser = agentSkills
-            .GroupBy(s => s.UserId)
-            .ToDictionary(g => g.Key, g => g.ToList());
-
-        // 4. Compute skill matching scores
-        var scoredCandidates = candidates.Select(u =>
-        {
-            int score = 0;
-            if (skillsByUser.TryGetValue(u.Id, out var userSkills))
-            {
-                foreach (var req in requiredSkills)
-                {
-                    var match = userSkills.FirstOrDefault(s => string.Equals(s.SkillName, req, StringComparison.OrdinalIgnoreCase) ||
-                                                               req.Contains(s.SkillName, StringComparison.OrdinalIgnoreCase));
-                    if (match != null)
-                    {
-                        score += match.ProficiencyLevel * 10;
-                    }
-                }
-            }
-
-            // Also check User.Role for keywords if skills table row wasn't explicitly populated
-            if (score == 0 && !string.IsNullOrWhiteSpace(u.Role))
-            {
-                foreach (var req in requiredSkills)
-                {
-                    if (u.Role.Contains(req, StringComparison.OrdinalIgnoreCase))
-                    {
-                        score += 5;
-                    }
-                }
-            }
-
-            return new { User = u, Score = score };
+            var score = 0;
+            if (byUser.TryGetValue(c.User.Id, out var mine))
+                score = required.Sum(req => mine.Where(s => string.Equals(s.SkillName, req, StringComparison.OrdinalIgnoreCase)).Sum(s => s.ProficiencyLevel * 10));
+            return new { Candidate = c, Score = score };
         }).ToList();
 
-        // If at least one candidate has matching skills, pick the highest score
-        var bestMatches = scoredCandidates.Where(c => c.Score > 0).OrderByDescending(c => c.Score).ToList();
-
-        if (bestMatches.Any())
+        var top = scored.Where(x => x.Score > 0).OrderByDescending(x => x.Score).ToList();
+        if (top.Count > 0)
         {
-            var topScore = bestMatches.First().Score;
-            var topTier = bestMatches.Where(c => c.Score == topScore).Select(c => c.User).ToList();
-            
-            // Prefer Available over Busy
-            return topTier.OrderByDescending(u => u.Status == UserStatus.Available).ThenBy(u => u.Id).First();
+            var best = top[0].Score;
+            var chosen = top.Where(x => x.Score == best).Select(x => x.Candidate)
+                .OrderBy(c => c.OpenCases).ThenByDescending(c => c.User.Status == UserStatus.Available).ThenBy(c => c.User.Id).First();
+            return new AssignmentChoice(chosen.User, $"matched skills: {string.Join(", ", required)}");
         }
 
-        // 5. Graceful fallback: return least occupied or available agent
-        return candidates.OrderByDescending(u => u.Status == UserStatus.Available).ThenBy(u => u.Id).First();
+        // No required skill, or nobody holds one: say so, and share the work by load rather than pretending to match.
+        var fallback = request.Eligible.OrderBy(c => c.OpenCases).ThenByDescending(c => c.User.Status == UserStatus.Available).ThenBy(c => c.User.Id).First();
+        return new AssignmentChoice(fallback.User, required.Count == 0
+            ? "no skills required by the configured skill rules; chosen by lowest load"
+            : $"nobody available holds the required skills ({string.Join(", ", required)}); chosen by lowest load");
     }
 }

@@ -1,42 +1,15 @@
 // ===== CASE CARD — OmniConnect Reference System =====
 
 import { Clock, AlertTriangle, CheckCircle2, Pause } from 'lucide-react';
-import { getSlaDisplay, getSlaConfig } from '../../../utils/slaUtils.js';
+import { getSlaDisplay } from '../../../utils/slaUtils.js';
 import { useNow } from '../../../hooks/useNow.js';
-import { useApp } from '../../../contexts/AppContext.jsx';
 import { getInitials, getAvatarColor } from '../../../utils/avatarUtils.js';
 import { ChannelBadge } from '../ChannelBadge/ChannelBadge.jsx';
 import './CaseCard.css';
 
-function SlaBadge({
-  status,
-  severity,
-  slaStartTime,
-  slaTargetHours,
-  slaPausedAt,
-  slaTotalPausedMinutes,
-  isHolidayToday,
-  holidayName,
-  isBusinessHoursActive,
-}) {
+function SlaBadge({ caseItem }) {
   const now = useNow(1000);
-  const appContext = useApp();
-  const effectiveHolidayToday = isHolidayToday ?? appContext?.isHolidayToday ?? false;
-  const effectiveHolidayName = holidayName || appContext?.todayHolidayName || null;
-  const effectiveBusinessHoursActive = isBusinessHoursActive ?? appContext?.isBusinessHoursActive ?? true;
-
-  const { internalHours } = getSlaConfig(severity, slaTargetHours);
-  const sla = getSlaDisplay(
-    slaStartTime,
-    internalHours,
-    status,
-    now,
-    slaPausedAt,
-    slaTotalPausedMinutes,
-    effectiveHolidayToday,
-    effectiveHolidayName,
-    effectiveBusinessHoursActive
-  );
+  const sla = getSlaDisplay(caseItem, now);
 
   if (sla.status === 'within') {
     return (
@@ -136,18 +109,10 @@ export function CaseCard({ caseData, isSelected, onClick }) {
     ownerName,
     caseNumber,
     createdAt,
-    slaStartTime,
-    slaTargetHours,
-    slaPausedAt,
-    slaTotalPausedMinutes,
-    isHolidayToday,
-    holidayName,
-    isBusinessHoursActive,
     sourceChannel,
     communicationChannel,
   } = caseData;
 
-  const resolvedSlaStartTime = slaStartTime || createdAt;
   const isAssigned = Boolean(ownerName && ownerName.trim() && ownerName.toLowerCase() !== 'unassigned');
   const ownerInitials = isAssigned ? getInitials(ownerName) : '';
   const ownerColor = isAssigned ? getAvatarColor(ownerName) : null;
@@ -164,17 +129,7 @@ export function CaseCard({ caseData, isSelected, onClick }) {
       {/* 1. Header: Priority & SLA Status */}
       <div className="case-card__header">
         <PriorityBadge severity={severity} />
-        <SlaBadge
-          status={status}
-          severity={severity}
-          slaStartTime={resolvedSlaStartTime}
-          slaTargetHours={slaTargetHours}
-          slaPausedAt={slaPausedAt}
-          slaTotalPausedMinutes={slaTotalPausedMinutes}
-          isHolidayToday={isHolidayToday}
-          holidayName={holidayName}
-          isBusinessHoursActive={isBusinessHoursActive}
-        />
+        <SlaBadge caseItem={caseData} />
       </div>
 
       {/* 2. Body: Case ID & Title */}

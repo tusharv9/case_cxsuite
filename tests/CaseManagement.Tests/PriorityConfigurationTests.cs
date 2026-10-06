@@ -55,7 +55,8 @@ public class PriorityConfigurationTests
             w.Ctx.Users.Add(new User { Id = w.Actor, Name = "Admin", Email = "admin@example.test", Role = "Admin", DepartmentId = w.DeptA, CreatedAt = DateTime.UtcNow });
             await w.Ctx.SaveChangesAsync();
 
-            w.Sla = new SlaRoutingService(w.Ctx, NullLogger<SlaRoutingService>.Instance);
+            w.Sla = new SlaRoutingService(w.Ctx, NullLogger<SlaRoutingService>.Instance,
+                new EscalationService(w.Ctx, new ConfigCache(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()))));
             w.Settings = new ConfigurableSettingsService(new ConfigurableSettingsRepository(w.Ctx), w.Ctx,
                 new Mock<INotificationService>().Object, new Mock<IHttpContextAccessor>().Object);
             return w;

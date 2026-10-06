@@ -7,24 +7,12 @@ export const teamService = {
     return api.get('/api/teams').then((r) => r.data);
   },
 
-  getTeamById(id) {
-    return api.get(`/api/teams/${id}`).then((r) => r.data);
-  },
-
   createTeam(dto) {
     return api.post('/api/teams', dto).then((r) => r.data);
   },
 
   updateTeam(id, dto) {
     return api.put(`/api/teams/${id}`, dto).then((r) => r.data);
-  },
-
-  deleteTeam(id) {
-    return api.delete(`/api/teams/${id}`).then((r) => r.data);
-  },
-
-  addMember(teamId, dto) {
-    return api.post(`/api/teams/${teamId}/members`, dto).then((r) => r.data);
   },
 
   removeMember(teamId, userId) {

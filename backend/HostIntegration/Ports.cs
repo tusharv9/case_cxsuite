@@ -23,6 +23,12 @@ public interface IHostUserDirectory
 public interface IPermissionProvider
 {
     IReadOnlySet<string> Resolve(HostPrincipal principal);
+
+    /// <summary>
+    /// The Host roles that carry <paramref name="permission"/> (exact names), or null when permissions do not depend on a
+    /// role (Standalone development, where every user gets the configured set) — meaning "everybody".
+    /// </summary>
+    IReadOnlySet<string>? RolesGranting(string permission);
 }
 
 /// <summary>The authenticated caller for the current request, as resolved by <c>HostIdentityMiddleware</c>.</summary>

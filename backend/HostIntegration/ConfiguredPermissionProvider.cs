@@ -28,6 +28,17 @@ public sealed class ConfiguredPermissionProvider : IPermissionProvider
 
         return result;
     }
+
+    public IReadOnlySet<string>? RolesGranting(string permission)
+    {
+        var map = _options.RolePermissions.Count > 0
+            ? _options.RolePermissions
+            : (IReadOnlyDictionary<string, string[]>)Permissions.DefaultRolePermissions;
+
+        return map.Where(kv => kv.Value.Contains(permission, StringComparer.OrdinalIgnoreCase) || kv.Value.Contains(Permissions.Everything))
+                  .Select(kv => kv.Key)
+                  .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>The development stand-in has no roles; it simply gets the configured standalone permissions.</summary>
@@ -39,4 +50,6 @@ public sealed class StandalonePermissionProvider : IPermissionProvider
 
     public IReadOnlySet<string> Resolve(HostPrincipal principal) =>
         new HashSet<string>(_options.StandalonePermissions, StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlySet<string>? RolesGranting(string permission) => null;   // no roles in standalone: everyone has the same set
 }

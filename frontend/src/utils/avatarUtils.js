@@ -1,7 +1,5 @@
 // ===== AVATAR UTILITIES =====
 
-import { DEPT_COLOR_COUNT } from '../constants/index.js';
-
 const AVATAR_COLORS = [
   { bg: '#1d4ed8', text: '#ffffff' },
   { bg: '#7c3aed', text: '#ffffff' },
@@ -36,29 +34,4 @@ export function getAvatarColor(name) {
   }
   const idx = Math.abs(hash) % AVATAR_COLORS.length;
   return AVATAR_COLORS[idx];
-}
-
-/**
- * Get department color index (cycling 0–9)
- */
-export function getDeptColorIndex(deptName) {
-  if (!deptName) return 0;
-  let hash = 0;
-  for (let i = 0; i < deptName.length; i++) {
-    hash = deptName.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return Math.abs(hash) % DEPT_COLOR_COUNT;
-}
-
-/**
- * Get short initials for a department (e.g., "Micro-Finance" → "MF")
- */
-export function getDeptInitials(name) {
-  if (!name) return '?';
-  return name
-    .split(/[\s\-/]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join('');
 }

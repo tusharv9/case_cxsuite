@@ -1,7 +1,5 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import { userService } from '../services/userService.js';
-import { slaRoutingService } from '../services/slaRoutingService.js';
-import { checkIsPublicHolidayToday, checkIsBusinessHoursActive } from '../utils/slaUtils.js';
 import {
   getApiBaseUrl,
   isHostManaged,
@@ -22,11 +20,6 @@ const initialState = {
   toasts: [],
   isLoadingUser: true,
   isSidebarOpen: true,
-  publicHolidays: [],
-  isHolidayToday: false,
-  todayHolidayName: null,
-  businessHours: [],
-  isBusinessHoursActive: true,
 };
 
 // --- Reducer ---
@@ -48,30 +41,6 @@ function appReducer(state, action) {
       return { ...state, currentUser: action.payload, isLoadingUser: false };
     case 'SET_LOADING_USER':
       return { ...state, isLoadingUser: action.payload };
-    case 'SET_PUBLIC_HOLIDAYS': {
-      const holidays = action.payload || [];
-      const { isHoliday, holidayName } = checkIsPublicHolidayToday(holidays);
-      return {
-        ...state,
-        publicHolidays: holidays,
-        isHolidayToday: isHoliday,
-        todayHolidayName: holidayName,
-      };
-    }
-    case 'SET_BUSINESS_HOURS': {
-      const hours = action.payload || [];
-      const isActive = checkIsBusinessHoursActive(hours);
-      return {
-        ...state,
-        businessHours: hours,
-        isBusinessHoursActive: isActive,
-      };
-    }
-    case 'EVALUATE_BUSINESS_HOURS': {
-      const isActive = checkIsBusinessHoursActive(state.businessHours);
-      if (isActive === state.isBusinessHoursActive) return state;
-      return { ...state, isBusinessHoursActive: isActive };
-    }
     case 'ADD_TOAST':
       return { ...state, toasts: [...state.toasts, action.payload] };
     case 'REMOVE_TOAST':
@@ -170,13 +139,7 @@ export function AppProvider({ children }) {
 
         // Secondary data: failures here must not block the app.
         userService.getAllUsers().then((users) => !cancelled && dispatch({ type: 'SET_USERS', payload: users })).catch(() => {});
-        slaRoutingService.getConfiguration()
-          .then((cfg) => {
-            if (cancelled) return;
-            if (cfg?.publicHolidays) dispatch({ type: 'SET_PUBLIC_HOLIDAYS', payload: cfg.publicHolidays });
-            if (cfg?.businessHours) dispatch({ type: 'SET_BUSINESS_HOURS', payload: cfg.businessHours });
-          })
-          .catch(() => {});
+        // (SLA state — holidays, working hours, pauses — is computed by the server and arrives on each case.)
       } catch (error) {
         if (cancelled) return;
         dispatch({

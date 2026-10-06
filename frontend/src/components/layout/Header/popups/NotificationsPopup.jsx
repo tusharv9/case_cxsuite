@@ -84,8 +84,8 @@ export function NotificationsPopup({ onClose, onRefreshUnread }) {
 
   const getNotificationIcon = (type) => {
     const t = (type || '').toUpperCase();
-    if (t.includes('SLA_BREACH') || t.includes('ESCALAT')) return <AlertTriangle size={15} color="#dc2626" />;
-    if (t.includes('SLA_APPROACH')) return <Clock size={15} color="#d97706" />;
+    if (t.includes('SLA_BREACH') || t.includes('ESCALAT') || t.includes('UNASSIGNED')) return <AlertTriangle size={15} color="#dc2626" />;
+    if (t.includes('SLA_APPROACH') || t.includes('SLA_REMINDER')) return <Clock size={15} color="#d97706" />;
     if (t.includes('ASSIGN')) return <UserCheck size={15} color="#2563eb" />;
     if (t.includes('REOPEN')) return <RefreshCw size={15} color="#0284c7" />;
     if (t.includes('SUBCASE') || t.includes('LINK')) return <LinkIcon size={15} color="#7c3aed" />;

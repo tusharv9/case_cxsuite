@@ -14,6 +14,9 @@ public class CaseAttachment : AuditableEntity
     public long? FileSize { get; set; }
 
     public string StoragePath { get; set; } = string.Empty;
+
+    /// <summary>SHA-256 of the stored bytes (hex), for integrity checks. Null for files uploaded before it was recorded.</summary>
+    public string? ContentHash { get; set; }
     public string? Note { get; set; }
 
     public Guid UploadedByUserId { get; set; }

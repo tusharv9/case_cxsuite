@@ -364,4 +364,375 @@ public class ConfigurationEndToEndTests
         Assert.EndsWith("4321", created.GetProperty("phoneNumber").GetString());
         Assert.DoesNotContain("198-765", created.GetProperty("phoneNumber").GetString());
     }
+
+    // ------------------------------------------------------------------------------------------------- SLA
+
+    [PostgresFact]
+    public async Task TheApi_ReportsTheSlaClocksVerdict_OnEveryCaseList_AndTheClockIsNotResetByReassignment()
+    {
+        await using var env = await Env.StartAsync();
+        var (created, body) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        Assert.Equal(HttpStatusCode.Created, created);
+        var id = body.GetProperty("id").GetGuid();
+
+        var (_, detail) = await env.Send(HttpMethod.Get, $"/api/cases/{id}", env.Admin);
+        var sla = detail.GetProperty("sla");
+        Assert.Equal("Healthy", sla.GetProperty("health").GetString());
+        Assert.False(sla.GetProperty("isPaused").GetBoolean());
+        Assert.Equal(240, sla.GetProperty("external").GetProperty("targetMinutes").GetInt32());     // Critical's rule
+        Assert.True(sla.GetProperty("internal").GetProperty("targetMinutes").GetInt32() > 0);
+        Assert.True(sla.GetProperty("external").GetProperty("dueAt").ValueKind != JsonValueKind.Null);
+
+        // The same verdict is on the paged board/list responses.
+        var (_, page) = await env.Send(HttpMethod.Get, "/api/cases?page=1&pageSize=10", env.Admin);
+        Assert.Contains("\"sla\"", page.GetRawText());
+
+        // Reassigning keeps the clock where it was.
+        await env.Send(HttpMethod.Get, "/api/users/me", env.Agent);   // provisions the agent's local projection
+        var agentId = await env.Db.ScalarAsync<Guid>("SELECT \"Id\" FROM \"Users\" WHERE \"ExternalUserId\" = 'agt-1'");
+        var startBefore = await env.Db.ScalarAsync<DateTime>($"SELECT \"SlaStartTime\" FROM \"Cases\" WHERE \"Id\" = '{id}'");
+        var (assigned, _) = await env.Send(HttpMethod.Put, $"/api/cases/{id}/assign", env.Admin, new { ownerId = agentId, reason = "load" });
+        Assert.Equal(HttpStatusCode.OK, assigned);
+        Assert.Equal(startBefore, await env.Db.ScalarAsync<DateTime>($"SELECT \"SlaStartTime\" FROM \"Cases\" WHERE \"Id\" = '{id}'"));
+    }
+
+    [PostgresFact]
+    public async Task WaitingOnCustomer_PausesTheClock_AndResolvingSettlesTheVerdict()
+    {
+        await using var env = await Env.StartAsync();
+        var (_, body) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        var id = body.GetProperty("id").GetGuid();
+
+        Assert.Equal(HttpStatusCode.OK, (await env.Send(HttpMethod.Put, $"/api/cases/{id}/status", env.Admin, new { status = "WaitingOnCustomer" })).Status);
+        var (_, paused) = await env.Send(HttpMethod.Get, $"/api/cases/{id}", env.Admin);
+        Assert.True(paused.GetProperty("sla").GetProperty("isPaused").GetBoolean());
+        Assert.Equal("Paused", paused.GetProperty("sla").GetProperty("health").GetString());
+        Assert.Equal(JsonValueKind.Null, paused.GetProperty("sla").GetProperty("external").GetProperty("dueAt").ValueKind);   // no due date while paused
+
+        Assert.Equal(HttpStatusCode.OK, (await env.Send(HttpMethod.Put, $"/api/cases/{id}/status", env.Admin, new { status = "InProgress" })).Status);
+        var (_, resumed) = await env.Send(HttpMethod.Get, $"/api/cases/{id}", env.Admin);
+        Assert.False(resumed.GetProperty("sla").GetProperty("isPaused").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, resumed.GetProperty("slaPausedAt").ValueKind);
+
+        var (resolvedStatus, _) = await env.Send(HttpMethod.Put, $"/api/cases/{id}/resolve", env.Admin, new { disposition = "Resolved on First Contact", resolutionNote = "done" });
+        Assert.Equal(HttpStatusCode.OK, resolvedStatus);
+        var (_, resolved) = await env.Send(HttpMethod.Get, $"/api/cases/{id}", env.Admin);
+        Assert.Equal("Met", resolved.GetProperty("sla").GetProperty("health").GetString());
+        Assert.True(resolved.GetProperty("sla").GetProperty("isStopped").GetBoolean());
+    }
+
+    [PostgresFact]
+    public async Task TheEscalationMatrix_OnlyAcceptsTriggersTheEngineCanRun_AndShowsDerivedText()
+    {
+        await using var env = await Env.StartAsync();
+
+        var (_, config) = await env.Send(HttpMethod.Get, "/api/sla-routing/configuration", env.Admin);
+        Assert.Equal("Asia/Kuala_Lumpur", config.GetProperty("timeZoneId").GetString());
+        Assert.Contains(config.GetProperty("triggerTypes").EnumerateArray(), t => t.GetProperty("type").GetString() == "SlaPostBreachHours" && t.GetProperty("needsValue").GetBoolean());
+        Assert.Equal(new[] { "Role", "User", "DepartmentOwner", "Owner" }, config.GetProperty("assignmentTypes").EnumerateArray().Select(a => a.GetString()!).ToArray());
+
+        // Free text is not a trigger.
+        var (bad, badBody) = await env.Send(HttpMethod.Post, "/api/sla-routing/escalation-levels", env.Admin,
+            new { triggerType = "When the customer is angry", targetRole = "Director" });
+        Assert.Equal(HttpStatusCode.BadRequest, bad);
+        Assert.Contains("not an escalation trigger", badBody.GetProperty("error").GetString());
+
+        // A threshold is required where one makes sense.
+        var (noValue, _) = await env.Send(HttpMethod.Post, "/api/sla-routing/escalation-levels", env.Admin,
+            new { triggerType = "SlaPercentage", targetRole = "Director" });
+        Assert.Equal(HttpStatusCode.BadRequest, noValue);
+
+        var (ok, level) = await env.Send(HttpMethod.Post, "/api/sla-routing/escalation-levels", env.Admin,
+            new { triggerType = "SlaPercentage", triggerValue = 150, targetRole = "Director", actionDescription = "Executive review" });
+        Assert.True(ok is HttpStatusCode.OK or HttpStatusCode.Created);
+        Assert.Equal("SLA consumption reaches 150%", level.GetProperty("triggerDescription").GetString());
+
+        // An unknown time zone is refused; a real one is stored and used.
+        var (zoneBad, _) = await env.Send(HttpMethod.Put, "/api/sla-routing/configuration", env.Admin,
+            new { timeZoneId = "Mars/Olympus_Mons", priorityRules = Array.Empty<object>(), businessHours = Array.Empty<object>(), escalationLevels = Array.Empty<object>() });
+        Assert.True((int)zoneBad >= 400);
+    }
+
+    [PostgresFact]
+    public async Task SavingTheSlaConfiguration_PersistsStructuredLevels_TheTimeZone_AndTakesEffectImmediately()
+    {
+        await using var env = await Env.StartAsync();
+        var (_, config) = await env.Send(HttpMethod.Get, "/api/sla-routing/configuration", env.Admin);
+
+        // Edit what the page edits: time zone, a threshold, an inactive level, and a role by exact name.
+        var levels = config.GetProperty("escalationLevels").EnumerateArray().Select(l => new Dictionary<string, object?>
+        {
+            ["levelNumber"] = l.GetProperty("levelNumber").GetInt32(),
+            ["name"] = l.GetProperty("name").GetString(),
+            ["assignmentType"] = l.GetProperty("assignmentType").GetString(),
+            ["targetRole"] = l.GetProperty("targetRole").GetString(),
+            ["targetUserId"] = null,
+            ["triggerType"] = l.GetProperty("triggerType").GetString(),
+            ["triggerValue"] = l.GetProperty("triggerValue").ValueKind == JsonValueKind.Null ? null : (decimal?)l.GetProperty("triggerValue").GetDecimal(),
+            ["actionDescription"] = l.GetProperty("actionDescription").GetString(),
+            ["reassignOwner"] = l.GetProperty("reassignOwner").GetBoolean(),
+            ["isActive"] = l.GetProperty("levelNumber").GetInt32() != 4,    // switch level 4 off
+        }).ToList();
+        levels.Single(l => (int)l["levelNumber"]! == 2)["triggerValue"] = 95m;
+
+        var payload = new
+        {
+            timeZoneId = "Europe/London",
+            priorityRules = config.GetProperty("priorityRules").EnumerateArray().Select(r => JsonSerializer.Deserialize<object>(r.GetRawText())).ToList(),
+            businessHours = config.GetProperty("businessHours").EnumerateArray().Select(h => JsonSerializer.Deserialize<object>(h.GetRawText())).ToList(),
+            escalationLevels = levels,
+        };
+        var (status, saved) = await env.Send(HttpMethod.Put, "/api/sla-routing/configuration", env.Admin, payload);
+        Assert.Equal(HttpStatusCode.OK, status);
+
+        Assert.Equal("Europe/London", saved.GetProperty("timeZoneId").GetString());
+        var level2 = saved.GetProperty("escalationLevels").EnumerateArray().Single(l => l.GetProperty("levelNumber").GetInt32() == 2);
+        Assert.Equal(95m, level2.GetProperty("triggerValue").GetDecimal());
+        Assert.Equal("SLA consumption reaches 95%", level2.GetProperty("triggerDescription").GetString());   // derived, not typed
+        Assert.False(saved.GetProperty("escalationLevels").EnumerateArray().Single(l => l.GetProperty("levelNumber").GetInt32() == 4).GetProperty("isActive").GetBoolean());
+
+        // The time zone is live for the clock straight away (no restart, no stale cache): a new case's due date follows it.
+        var (created, body) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        Assert.Equal(HttpStatusCode.Created, created);
+        var id = body.GetProperty("id").GetGuid();
+        var (_, detail) = await env.Send(HttpMethod.Get, $"/api/cases/{id}", env.Admin);
+        Assert.Equal(240, detail.GetProperty("sla").GetProperty("external").GetProperty("targetMinutes").GetInt32());
+    }
+
+    [PostgresFact]
+    public async Task OverTheApi_MembershipDecidesWhoGetsTheCase_AndAnUnstaffedTeamHoldsItWithAReason()
+    {
+        await using var env = await Env.StartAsync();
+
+        // The team has nobody yet: the case is created (never refused) and the creator keeps it, with the reason on its timeline.
+        var (s0, held) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        Assert.Equal(HttpStatusCode.Created, s0);
+        var heldTimeline = await env.Db.ScalarAsync<string>($"SELECT string_agg(\"Message\", ' | ') FROM \"CaseEvents\" WHERE \"CaseId\" = '{held.GetProperty("id").GetGuid()}'");
+        Assert.Contains("Pending agent assignment", heldTimeline);
+        Assert.Contains("no active members", heldTimeline);
+
+        // An agent signs in (their local projection is created) and is added to the team.
+        await env.Send(HttpMethod.Get, "/api/users/me", env.Agent);
+        var agentId = await env.Db.ScalarAsync<Guid>("SELECT \"Id\" FROM \"Users\" WHERE \"ExternalUserId\" = 'agt-1'");
+        var (added, _) = await env.Send(HttpMethod.Post, $"/api/teams/{env.Dept}/members", env.Admin, new { userId = agentId, isAssignable = true });
+        Assert.Equal(HttpStatusCode.OK, added);
+
+        var (s1, assigned) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        Assert.Equal(HttpStatusCode.Created, s1);
+        Assert.Equal(agentId, assigned.GetProperty("ownerId").GetGuid());
+
+        // The monitor sees the agent and their case — real numbers, filterable by team.
+        var (_, overview) = await env.Send(HttpMethod.Get, $"/api/team-monitoring/overview?teamId={env.Dept}", env.Admin);
+        var agentRow = overview.GetProperty("agents").EnumerateArray().Single(a => a.GetProperty("userId").GetGuid() == agentId);
+        Assert.Equal(1, agentRow.GetProperty("openCasesCount").GetInt32());
+        Assert.Equal("Contact Center", overview.GetProperty("teamName").GetString());
+        Assert.False(overview.GetProperty("summary").TryGetProperty("csatScore", out _));
+
+        // The team page shows the membership and the settings in force; the editor options come from the server.
+        var (_, teams) = await env.Send(HttpMethod.Get, "/api/teams", env.Admin);
+        var team = teams.EnumerateArray().Single(t => t.GetProperty("id").GetGuid() == env.Dept);
+        Assert.Equal("RoundRobin", team.GetProperty("assignmentAlgorithm").GetString());
+        Assert.False(team.GetProperty("hasOwnAssignmentSettings").GetBoolean());
+        Assert.False(team.TryGetProperty("channels", out _));
+
+        var (_, vocab) = await env.Send(HttpMethod.Get, "/api/routing-rules/vocabulary", env.Admin);
+        Assert.Contains(vocab.GetProperty("channels").EnumerateArray(), c => c.GetString() == "Voice");
+        Assert.Contains(vocab.GetProperty("priorities").EnumerateArray(), c => c.GetString() == "Critical");
+
+        // Skills: rules are replaced as a set and validated.
+        var (bad, _) = await env.Send(HttpMethod.Put, "/api/skills/rules", env.Admin, new[] { new { skillName = "X", matchField = "Mood", matchType = "Contains", matchValue = "angry" } });
+        Assert.Equal(HttpStatusCode.BadRequest, bad);
+        var (good, saved) = await env.Send(HttpMethod.Put, "/api/skills/rules", env.Admin, new[] { new { skillName = "Cards", matchField = "Title", matchType = "Contains", matchValue = "card" } });
+        Assert.Equal(HttpStatusCode.OK, good);
+        Assert.Equal("Cards", saved[0].GetProperty("skillName").GetString());
+
+        // Agents cannot manage teams, skills or routing.
+        Assert.Equal(HttpStatusCode.Forbidden, (await env.Send(HttpMethod.Put, "/api/skills/rules", env.Agent, Array.Empty<object>())).Status);
+    }
+
+    // ------------------------------------------------------------------------------------- attachments, dashboard, timeline
+
+    private static readonly byte[] PdfBytes = System.Text.Encoding.ASCII.GetBytes("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF");
+
+    private static async Task<(HttpStatusCode Status, JsonElement Body)> Upload(Env env, Guid caseId, string fileName, byte[] bytes, string clientContentType, string token)
+    {
+        using var form = new MultipartFormDataContent();
+        var part = new ByteArrayContent(bytes);
+        part.Headers.ContentType = new MediaTypeHeaderValue(clientContentType);
+        form.Add(part, "file", fileName);
+        form.Add(new StringContent("evidence"), "note");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/cases/{caseId}/attachments") { Content = form };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await env.Client.SendAsync(request);
+        var text = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "{}" : text);
+        return (response.StatusCode, doc.RootElement.Clone());
+    }
+
+    [PostgresFact]
+    public async Task Attachments_AreVerifiedByContent_AndOnlyEverServedAsADownload()
+    {
+        await using var env = await Env.StartAsync();
+        var (_, created) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        var caseId = created.GetProperty("id").GetGuid();
+
+        // A program renamed .pdf, and a web page renamed .txt, are refused — the client's content type is irrelevant.
+        Assert.Equal(HttpStatusCode.BadRequest, (await Upload(env, caseId, "invoice.pdf", System.Text.Encoding.ASCII.GetBytes("MZ\u0090\0\u0003\0"), "application/pdf", env.Admin)).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Upload(env, caseId, "notes.txt", System.Text.Encoding.UTF8.GetBytes("<html><script>alert(1)</script>"), "text/plain", env.Admin)).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Upload(env, caseId, "logo.svg", System.Text.Encoding.UTF8.GetBytes("<svg/>"), "image/svg+xml", env.Admin)).Status);
+
+        // A real PDF is accepted, even when the client mislabels it.
+        var (ok, saved) = await Upload(env, caseId, "statement.pdf", PdfBytes, "text/html", env.Admin);
+        Assert.Equal(HttpStatusCode.OK, ok);
+        Assert.Equal("application/pdf", saved.GetProperty("fileType").GetString());
+        var attachmentId = saved.GetProperty("id").GetGuid();
+
+        var download = env.Req(HttpMethod.Get, $"/api/cases/{caseId}/attachments/{attachmentId}/download", env.Agent);
+        var response = await env.Client.SendAsync(download);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/pdf", response.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("attachment", response.Content.Headers.ContentDisposition!.DispositionType);      // never rendered inline
+        Assert.Equal("statement.pdf", response.Content.Headers.ContentDisposition.FileName!.Trim('"'));
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Contains("no-store", response.Headers.GetValues("Cache-Control").Single());
+        Assert.Equal(PdfBytes, await response.Content.ReadAsByteArrayAsync());
+
+        // Another case's URL does not reach this attachment.
+        var (_, other) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        var wrongCase = await env.Client.SendAsync(env.Req(HttpMethod.Get, $"/api/cases/{other.GetProperty("id").GetGuid()}/attachments/{attachmentId}/download", env.Admin));
+        Assert.Equal(HttpStatusCode.NotFound, wrongCase.StatusCode);
+
+        // And the list shows exactly what was kept.
+        var (_, list) = await env.Send(HttpMethod.Get, $"/api/cases/{caseId}/attachments", env.Admin);
+        Assert.Single(list.EnumerateArray());
+    }
+
+    [PostgresFact]
+    public async Task TheDashboard_LoadsItsFiltersInOneRequest_AndHonoursRealRanges()
+    {
+        await using var env = await Env.StartAsync();
+        await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+
+        var (status, filters) = await env.Send(HttpMethod.Get, "/api/dashboard/filters", env.Admin);
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Contains(filters.GetProperty("departments").EnumerateArray(), d => d.GetProperty("name").GetString() == "Contact Center");
+        Assert.Contains(filters.GetProperty("priorities").EnumerateArray(), p => p.GetString() == "Critical");
+        Assert.Contains(filters.GetProperty("caseTypes").EnumerateArray(), t => t.GetProperty("value").GetString() == "Complaint");
+        Assert.NotEmpty(filters.GetProperty("statuses").EnumerateArray());
+        var ranges = filters.GetProperty("dateRanges").EnumerateArray().Select(r => r.GetProperty("value").GetString()!).ToList();
+        Assert.All(ranges, r => Assert.Contains(r, CaseManagement.Api.Services.DashboardService.SupportedDateRanges));   // never offers a range it cannot compute
+        Assert.Contains("last_week", ranges);
+
+        // Every offered range works; an unknown one is a clear error, not "all time".
+        foreach (var range in ranges.Where(r => r != "custom"))
+            Assert.Equal(HttpStatusCode.OK, (await env.Send(HttpMethod.Get, $"/api/dashboard/summary?dateRange={range}", env.Admin)).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await env.Send(HttpMethod.Get, "/api/dashboard/summary?dateRange=whenever", env.Admin)).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await env.Send(HttpMethod.Get, "/api/dashboard/summary?status=Imaginary", env.Admin)).Status);
+
+        // The summary carries the SLA clock's verdict on the cases that need attention, and activity belongs to cases.
+        var (_, summary) = await env.Send(HttpMethod.Get, "/api/dashboard/summary", env.Admin);
+        Assert.Equal(1, summary.GetProperty("totalCases").GetInt32());
+        var attention = summary.GetProperty("attentionCases").EnumerateArray().Single();
+        Assert.Equal("Healthy", attention.GetProperty("sla").GetProperty("health").GetString());
+        Assert.All(summary.GetProperty("recentActivities").EnumerateArray(), a => Assert.NotEqual(Guid.Empty, a.GetProperty("caseId").GetGuid()));
+
+        // A department filter that matches nothing yields an honest zero.
+        var (_, none) = await env.Send(HttpMethod.Get, $"/api/dashboard/summary?departmentId={Guid.NewGuid()}", env.Admin);
+        Assert.Equal(0, none.GetProperty("totalCases").GetInt32());
+    }
+
+    [PostgresFact]
+    public async Task CustomerTimeline_ShowsCaseMilestonesAndCustomerVisibleMessages_NotInternalWork()
+    {
+        await using var env = await Env.StartAsync();
+        var (_, created) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        var caseId = created.GetProperty("id").GetGuid();
+
+        // An internal working note and an internal escalation reminder must not appear; resolving the case does.
+        await env.Send(HttpMethod.Post, $"/api/cases/{caseId}/notes", env.Admin, new { message = "internal: customer sounded stressed" });
+        await env.Send(HttpMethod.Put, $"/api/cases/{caseId}/resolve", env.Admin, new { disposition = "Resolved on First Contact", resolutionNote = "done" });
+
+        var (status, page) = await env.Send(HttpMethod.Get, $"/api/customers/{env.Customer}/timeline?page=1&pageSize=20", env.Admin);
+        Assert.Equal(HttpStatusCode.OK, status);
+
+        var types = page.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("type").GetString()).ToList();
+        Assert.Contains("Create", types);
+        Assert.Contains("Resolve", types);
+        Assert.DoesNotContain(page.GetProperty("items").EnumerateArray(), i => i.GetProperty("message").GetString()!.Contains("stressed"));
+        Assert.All(page.GetProperty("items").EnumerateArray(), i => Assert.Equal(caseId, i.GetProperty("caseId").GetGuid()));
+
+        // A customer with no cases has an empty (not failing) timeline.
+        var (emptyStatus, empty) = await env.Send(HttpMethod.Get, $"/api/customers/{Guid.NewGuid()}/timeline", env.Admin);
+        Assert.Equal(HttpStatusCode.OK, emptyStatus);
+        Assert.Equal(0, empty.GetProperty("totalCount").GetInt32());
+    }
+
+    // ------------------------------------------------------------------------------------------- scale & refactor guards
+
+    [PostgresFact]
+    public async Task ListEndpoints_AreAlwaysPaged_AndPageSizesAreCapped()
+    {
+        await using var env = await Env.StartAsync();
+        for (var i = 0; i < 3; i++) await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+
+        // No page parameter used to return EVERY case in the database; it now returns the first page of a paged answer.
+        var (_, plain) = await env.Send(HttpMethod.Get, "/api/cases", env.Admin);
+        Assert.True(plain.TryGetProperty("items", out var items));
+        Assert.Equal(3, items.GetArrayLength());
+        Assert.Equal(30, plain.GetProperty("pageSize").GetInt32());
+
+        var (_, huge) = await env.Send(HttpMethod.Get, "/api/cases?page=1&pageSize=100000", env.Admin);
+        Assert.Equal(100, huge.GetProperty("pageSize").GetInt32());
+
+        var (_, nonsense) = await env.Send(HttpMethod.Get, "/api/cases?page=-5&pageSize=0", env.Admin);
+        Assert.Equal(1, nonsense.GetProperty("page").GetInt32());
+        Assert.InRange(nonsense.GetProperty("pageSize").GetInt32(), 1, 100);
+
+        var (_, notes) = await env.Send(HttpMethod.Get, "/api/notifications?pageSize=100000", env.Admin);
+        Assert.True(notes.GetProperty("pageSize").GetInt32() <= 100);
+    }
+
+    [PostgresFact]
+    public async Task ResolvingACase_RecordsItsSlaOutcome_AndTheDashboardCountsOutcomesInTheDatabase()
+    {
+        await using var env = await Env.StartAsync();
+        var (_, made) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        var id = made.GetProperty("id").GetGuid();
+
+        Assert.Equal(0L, await env.Db.ScalarAsync<long>($"SELECT count(*) FROM \"Cases\" WHERE \"Id\" = '{id}' AND \"SlaOutcome\" IS NOT NULL"));   // open: no outcome yet
+        await env.Send(HttpMethod.Put, $"/api/cases/{id}/resolve", env.Admin, new { disposition = "Resolved on First Contact", resolutionNote = "done" });
+        Assert.Equal("Met", await env.Db.ScalarAsync<string>($"SELECT \"SlaOutcome\" FROM \"Cases\" WHERE \"Id\" = '{id}'"));
+
+        // A finished case that breached is counted from its recorded outcome (no clock re-run over history).
+        await env.Db.ScalarAsync<long>($"WITH u AS (UPDATE \"Cases\" SET \"SlaOutcome\" = 'Breached' WHERE \"Id\" = '{id}' RETURNING 1) SELECT count(*) FROM u");
+        var (_, summary) = await env.Send(HttpMethod.Get, "/api/dashboard/summary", env.Admin);
+        Assert.Equal(1, summary.GetProperty("slaBreachedCases").GetInt32());
+        Assert.Equal(0m, summary.GetProperty("slaAdherencePercent").GetDecimal());
+    }
+
+    [PostgresFact]
+    public async Task MentionsNotifyActiveColleaguesOnly_NeverTheAuthor_AndNeverEveryone()
+    {
+        await using var env = await Env.StartAsync();
+        var (_, made) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        var id = made.GetProperty("id").GetGuid();
+
+        await env.Send(HttpMethod.Get, "/api/users/me", env.Agent);   // "Agent User" now exists locally
+        var agentId = await env.Db.ScalarAsync<Guid>("SELECT \"Id\" FROM \"Users\" WHERE \"ExternalUserId\" = 'agt-1'");
+
+        // The same shared mention logic serves collaboration notes and internal timeline notes.
+        await env.Send(HttpMethod.Post, $"/api/cases/{id}/collaboration/notes", env.Admin, new { content = "please look @agent" });
+        await env.Send(HttpMethod.Post, $"/api/cases/{id}/timeline-interaction", env.Admin, new { message = "internal ping @agent", isInternal = true });
+        await env.Send(HttpMethod.Post, $"/api/cases/{id}/collaboration/notes", env.Admin, new { content = "talking to myself @admin" });   // the author is never notified
+
+        Assert.True(await env.Db.ScalarAsync<long>($"SELECT count(*) FROM \"Notifications\" WHERE \"RecipientUserId\" = '{agentId}' AND \"Type\" = 'USER_MENTIONED'") >= 1);
+        Assert.Equal(0L, await env.Db.ScalarAsync<long>("SELECT count(*) FROM \"Notifications\" n JOIN \"Users\" u ON u.\"Id\" = n.\"RecipientUserId\" WHERE u.\"ExternalUserId\" = 'adm-1' AND n.\"Type\" = 'USER_MENTIONED'"));
+
+        // A deactivated colleague is not pinged.
+        await env.Db.ScalarAsync<long>($"WITH u AS (UPDATE \"Users\" SET \"IsActive\" = false WHERE \"Id\" = '{agentId}' RETURNING 1) SELECT count(*) FROM u");
+        var before = await env.Db.ScalarAsync<long>($"SELECT count(*) FROM \"Notifications\" WHERE \"RecipientUserId\" = '{agentId}'");
+        await env.Send(HttpMethod.Post, $"/api/cases/{id}/collaboration/notes", env.Admin, new { content = "again @agent" });
+        Assert.Equal(before, await env.Db.ScalarAsync<long>($"SELECT count(*) FROM \"Notifications\" WHERE \"RecipientUserId\" = '{agentId}'"));
+    }
 }

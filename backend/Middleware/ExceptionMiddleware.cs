@@ -1,20 +1,23 @@
 namespace CaseManagement.Api.Middleware;
 
-using Microsoft.AspNetCore.Http;
 using System.Text.Json;
-using System.Threading.Tasks;
-using System;
 using CaseManagement.Api.Services;
-using System.Linq;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
+/// <summary>
+/// Turns exceptions into consistent JSON errors: <c>{ "error": "…", "correlationId": "…", "errors": { field: [messages] } }</c>
+/// ("errors" only for field validation). The mapping is by exception TYPE — never by looking for words in a message — and an
+/// unexpected failure never leaks its message or stack to the caller, only a correlation id that finds it in the log.
+/// </summary>
 public class ExceptionMiddleware
 {
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
     private readonly RequestDelegate _next;
 
-    public ExceptionMiddleware(RequestDelegate next)
-    {
-        _next = next;
-    }
+    public ExceptionMiddleware(RequestDelegate next) => _next = next;
 
     public async Task InvokeAsync(HttpContext context, Microsoft.Extensions.Logging.ILogger<ExceptionMiddleware> logger)
     {
@@ -22,49 +25,61 @@ public class ExceptionMiddleware
         {
             await _next(context);
         }
-        catch (KeyNotFoundException ex)
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
-            context.Response.ContentType = "application/json";
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
-            await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message }));
-        }
-        catch (FieldValidationException ex)
-        {
-            // Every failing field, so the UI can mark each one. "error" keeps the single-message contract
-            // existing clients read; "errors" follows the RFC 7807 shape the frontend already understands.
-            context.Response.ContentType = "application/json";
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            var errors = ex.Errors.GroupBy(e => e.Field).ToDictionary(g => g.Key, g => g.Select(e => e.Message).ToArray());
-            await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message, errors }));
-        }
-        catch (ArgumentException ex)
-        {
-            context.Response.ContentType = "application/json";
-            context.Response.StatusCode = ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase)
-                ? StatusCodes.Status404NotFound
-                : StatusCodes.Status400BadRequest;
-            await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message }));
-        }
-        catch (InvalidOperationException ex)
-        {
-            context.Response.ContentType = "application/json";
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message }));
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            context.Response.ContentType = "application/json";
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = ex.Message }));
+            // The caller went away. Nothing to report and nobody to report it to.
         }
         catch (Exception ex)
         {
-            // Unexpected failures were previously swallowed without a trace; they are now logged
-            // with the request path so they can be diagnosed.
-            logger.LogError(ex, "Unhandled exception for {Method} {Path}", context.Request.Method, context.Request.Path);
+            if (context.Response.HasStarted)
+            {
+                logger.LogError(ex, "Exception after the response started for {Method} {Path}; the connection will be aborted.", context.Request.Method, context.Request.Path);
+                context.Abort();
+                return;
+            }
+
+            var (status, message, errors) = Classify(ex);
+
+            if (status >= 500)
+                logger.LogError(ex, "Unhandled exception for {Method} {Path}", context.Request.Method, context.Request.Path);
+            else
+                logger.LogInformation("{Method} {Path} -> {Status}: {Message}", context.Request.Method, context.Request.Path, status, message);
+
+            context.Response.Clear();
+            context.Response.StatusCode = status;
             context.Response.ContentType = "application/json";
-            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-            await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = "An unexpected error occurred." }));
+
+            var correlationId = context.Items[CorrelationIdMiddleware.Header]?.ToString() ?? string.Empty;
+            object body = errors == null
+                ? new { error = message, correlationId }
+                : new { error = message, correlationId, errors };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(body, Json));
         }
     }
+
+    private static (int Status, string Message, Dictionary<string, string[]>? Errors) Classify(Exception ex) => ex switch
+    {
+        FieldValidationException fv => (400, fv.Message,
+            fv.Errors.GroupBy(e => e.Field).ToDictionary(g => g.Key, g => g.Select(e => e.Message).ToArray())),
+
+        KeyNotFoundException => (404, ex.Message, null),
+        FileNotFoundException => (404, ex.Message, null),
+
+        // Nobody is signed in (the permission filters answer 403 themselves for "signed in but not allowed").
+        UnauthorizedAccessException => (401, ex.Message, null),
+
+        ArgumentException or InvalidOperationException or FormatException => (400, ex.Message, null),
+
+        // Two people changed the same thing, or a unique/foreign-key rule was hit.
+        DbUpdateConcurrencyException => (409, "This record was changed by someone else. Reload and try again.", null),
+        DbUpdateException { InnerException: PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } } =>
+            (409, "That already exists.", null),
+        DbUpdateException { InnerException: PostgresException { SqlState: PostgresErrorCodes.ForeignKeyViolation } } =>
+            (409, "This is still in use or refers to something that no longer exists.", null),
+
+        // Oversized bodies, malformed requests and the like carry their own status.
+        BadHttpRequestException bad => (bad.StatusCode, bad.Message, null),
+
+        _ => (500, "An unexpected error occurred. If it keeps happening, quote the correlation id.", null),
+    };
 }

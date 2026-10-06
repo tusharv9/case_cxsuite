@@ -11,4 +11,5 @@ public interface ICustomerService
     Task<IEnumerable<SearchCustomerHitDto>> SearchCustomersAsync(string query, int limit, CancellationToken ct = default);
     Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedCustomersAsync(string? search, string? preferredLanguage, string? branch, int page, int pageSize, CancellationToken ct = default);
     Task<PagedResponseDto<CaseSummaryDto>> GetCustomerCasesAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default);
+    Task<PagedResponseDto<CustomerTimelineItemDto>> GetCustomerTimelineAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default);
 }

@@ -939,3 +939,9 @@
     grid-template-columns: 1fr;
   }
 }
+
+.attention-sla { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: #475569; white-space: nowrap; }
+.attention-sla--breached { background: #fee2e2; color: #b91c1c; }
+.attention-sla--approaching { background: #fef3c7; color: #92400e; }
+.dashboard-filters-error { margin-bottom: 8px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 13px; }
+.dashboard-filters-error button { margin-left: 8px; border: 0; background: none; color: #1d4ed8; cursor: pointer; font-weight: 600; }

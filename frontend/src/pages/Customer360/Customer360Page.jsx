@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import { Users } from 'lucide-react';
 import { Avatar } from '../../components/common/Avatar/Avatar.jsx';
 import { DeptBadge, SeverityBadge } from '../../components/common/Badge/Badge.jsx';
-import { getSlaConfig } from '../../utils/slaUtils.js';
+import { getSlaDisplay } from '../../utils/slaUtils.js';
 import { useNow } from '../../hooks/useNow.js';
 import { Tabs } from '../../components/common/Tabs/Tabs.jsx';
 import { EmptyState, ErrorState, Loader } from '../../components/common/Loader/Loader.jsx';
@@ -15,23 +15,21 @@ import { useCustomer } from '../../hooks/useCustomer.js';
 import { formatDate } from '../../utils/dateUtils.js';
 import { customerService } from '../../services/customerService.js';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
-import { ProductHoldingCards } from '../../components/customer360/ProductHoldingCards/ProductHoldingCards.jsx';
-import { BankingTimeline } from '../../components/customer360/BankingTimeline/BankingTimeline.jsx';
-import { TransactionTable } from '../../components/customer360/TransactionTable/TransactionTable.jsx';
-import { ReferralChain } from '../../components/customer360/ReferralChain/ReferralChain.jsx';
+import { CustomerTimeline } from '../../components/customer360/CustomerTimeline/CustomerTimeline.jsx';
 import { RefreshStatusButton } from '../../components/customer360/RefreshStatusButton/RefreshStatusButton.jsx';
 import './Customer360Page.css';
 
-function OverviewTab({ customer }) {
+function OverviewTab({ customer, customerId }) {
+  const total = customer?.totalCasesCount ?? 0;
   return (
     <div style={{ padding: '0 4px' }}>
-      {/* Products Holding */}
-      <p className="overview-section-title">PRODUCT HOLDING (SHARIAH-AWARE)</p>
-      <ProductHoldingCards products={customer?.products} />
+      <p className="overview-section-title">CASES</p>
+      <p style={{ margin: '0 0 16px', fontSize: 14, color: '#1e293b' }}>
+        {total === 0 ? 'No cases yet.' : `${total} case${total === 1 ? '' : 's'} on record — see the Cases tab.`}
+      </p>
 
-      {/* Recent Interactions */}
-      <p className="overview-section-title">RECENT INTERACTIONS TIMELINE</p>
-      <BankingTimeline events={customer?.timelineEvents} />
+      <p className="overview-section-title">RECENT ACTIVITY</p>
+      <CustomerTimeline customerId={customerId} pageSize={5} compact />
     </div>
   );
 }
@@ -219,14 +217,7 @@ function CasesList({ customerId, initialCases = [], totalCases = 0 }) {
         </div>
         {cases.map((c) => {
           const isResolved = c.status === 'Resolved';
-          const created = new Date(c.slaStartTime || c.createdAt || Date.now()).getTime();
-          const { internalHours } = getSlaConfig(c.severity, c.slaTargetHours);
-          const remainingMs = Math.max(0, created + (internalHours * 3600 * 1000) - now);
-          const absMs = Math.abs(remainingMs);
-          const hours = String(Math.floor(absMs / 3600000)).padStart(2, '0');
-          const minutes = String(Math.floor((absMs % 3600000) / 60000)).padStart(2, '0');
-          const seconds = String(Math.floor((absMs % 60000) / 1000)).padStart(2, '0');
-          const slaText = isResolved ? 'WITHIN' : `${hours}h ${minutes}m ${seconds}s`;
+          const slaText = getSlaDisplay(c, now).label;
 
           return (
             <div key={c.id} className="case-list-item">
@@ -323,26 +314,16 @@ export function Customer360Page() {
     return <EmptyState title="Customer not found" />;
   }
 
-  const products = customer.products || [];
-  const timelineEvents = customer.timelineEvents || [];
-  const transactions = customer.transactions || [];
-  const referrals = customer.referrals || [];
-
   const tabs = [
     {
       key: 'overview',
       label: 'Overview',
-      content: <OverviewTab customer={customer} />,
-    },
-    {
-      key: 'products',
-      label: `Products (${products.length})`,
-      content: <div style={{ padding: '8px 0' }}><ProductHoldingCards products={products} /></div>,
+      content: <OverviewTab customer={customer} customerId={customerId} />,
     },
     {
       key: 'timeline',
       label: 'Timeline',
-      content: <div style={{ padding: '8px 0' }}><BankingTimeline events={timelineEvents} /></div>,
+      content: <div style={{ padding: '8px 0' }}><CustomerTimeline customerId={customerId} /></div>,
     },
     {
       key: 'cases',
@@ -354,20 +335,6 @@ export function Customer360Page() {
             initialCases={customerCases}
             totalCases={customer?.totalCasesCount ?? customerCases.length}
           />
-        </div>
-      ),
-    },
-    {
-      key: 'transaction',
-      label: 'Transaction',
-      content: <div style={{ padding: '8px 0' }}><TransactionTable transactions={transactions} /></div>,
-    },
-    {
-      key: 'referral',
-      label: `Referral chain (${referrals.length})`,
-      content: (
-        <div style={{ padding: '8px 0' }}>
-          <ReferralChain referrals={referrals} referralStatus={customer.referralStatus} />
         </div>
       ),
     },

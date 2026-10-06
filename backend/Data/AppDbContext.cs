@@ -33,12 +33,14 @@ public class AppDbContext : DbContext
     public DbSet<PriorityCategoryMapping> PriorityCategoryMappings { get; set; } = null!;
     public DbSet<BusinessHour> BusinessHours { get; set; } = null!;
     public DbSet<PublicHoliday> PublicHolidays { get; set; } = null!;
+    public DbSet<BusinessCalendarSetting> BusinessCalendarSettings { get; set; } = null!;
     public DbSet<EscalationLevelConfig> EscalationLevelConfigs { get; set; } = null!;
 
     // Case Routing & Automatic Assignment Engine
     public DbSet<RoutingRule> RoutingRules { get; set; } = null!;
     public DbSet<AssignmentConfiguration> AssignmentConfigurations { get; set; } = null!;
     public DbSet<AgentSkill> AgentSkills { get; set; } = null!;
+    public DbSet<SkillRule> SkillRules { get; set; } = null!;
     public DbSet<TeamAssignmentPointer> TeamAssignmentPointers { get; set; } = null!;
 
     // Bookkeeping for one-time seed steps (see DbSeeder)
@@ -217,6 +219,13 @@ public class AppDbContext : DbContext
             .HasFilter(@"""IsRead"" = false")
             .HasDatabaseName("IX_Notifications_Unread");
 
+        // An event is notified to a recipient at most once, however many times the monitor sees it.
+        modelBuilder.Entity<NotificationItem>()
+            .HasIndex(n => new { n.RecipientUserId, n.EventKey })
+            .IsUnique()
+            .HasFilter("\"EventKey\" IS NOT NULL")
+            .HasDatabaseName("UX_Notifications_Recipient_EventKey");
+
         modelBuilder.Entity<CaseChildRelation>()
             .HasOne(cr => cr.ParentCase)
             .WithMany(c => c.ChildRelations)
@@ -383,6 +392,25 @@ public class AppDbContext : DbContext
             .HasForeignKey(ac => ac.DepartmentId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Most reads about "work in progress" (an agent's load, a team's queue, the monitor, the worker) touch only OPEN cases, which are
+        // a small, bounded slice of a table that grows forever. Indexing just that slice keeps those reads flat as history piles up.
+        const string openOnly = "\"Status\" NOT IN ('Resolved', 'Closed', 'Cancelled')";
+        modelBuilder.Entity<Case>().HasIndex(c => new { c.OwnerId, c.Status }).HasFilter(openOnly).HasDatabaseName("IX_Cases_Open_Owner");
+        modelBuilder.Entity<Case>().HasIndex(c => new { c.DepartmentId, c.Status }).HasFilter(openOnly).HasDatabaseName("IX_Cases_Open_Department");
+        modelBuilder.Entity<Case>().HasIndex(c => c.SlaStartTime).HasFilter(openOnly).HasDatabaseName("IX_Cases_Open_SlaStart");
+
+        // The dashboard counts breached outcomes; they are few, so a partial index keeps that count instant.
+        modelBuilder.Entity<Case>()
+            .HasIndex(c => c.SlaOutcome)
+            .HasFilter("\"SlaOutcome\" = 'Breached'")
+            .HasDatabaseName("IX_Cases_SlaOutcome_Breached");
+
+        // At most one settings row per team (the row without a team is the global default).
+        modelBuilder.Entity<AssignmentConfiguration>()
+            .HasIndex(ac => ac.DepartmentId)
+            .IsUnique()
+            .HasFilter("\"DepartmentId\" IS NOT NULL");
 
         modelBuilder.Entity<AgentSkill>()
             .HasIndex(s => new { s.UserId, s.SkillName })

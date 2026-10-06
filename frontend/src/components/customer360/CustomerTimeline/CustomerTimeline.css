@@ -1,0 +1,13 @@
+.customer-timeline__list { list-style: none; margin: 0; padding: 0 0 0 8px; border-left: 2px solid #e2e8f0; }
+.customer-timeline__item { position: relative; padding: 0 0 18px 18px; }
+.customer-timeline__dot { position: absolute; left: -14px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; border: 2px solid #fff; }
+.customer-timeline__item--create .customer-timeline__dot { background: #1d4ed8; }
+.customer-timeline__item--resolve .customer-timeline__dot { background: #16a34a; }
+.customer-timeline__item--escalate .customer-timeline__dot { background: #dc2626; }
+.customer-timeline__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.customer-timeline__type { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #475569; }
+.customer-timeline__case { font-size: 13px; font-weight: 600; color: #1d4ed8; text-decoration: none; }
+.customer-timeline__title { font-size: 13px; color: #64748b; }
+.customer-timeline__message { margin: 4px 0; font-size: 13px; color: #1e293b; }
+.customer-timeline__meta { font-size: 12px; color: #94a3b8; }
+.customer-timeline__more { margin: 4px 0 0 26px; padding: 6px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; font-size: 13px; color: #1d4ed8; cursor: pointer; }

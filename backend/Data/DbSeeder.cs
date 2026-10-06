@@ -50,11 +50,15 @@ public static class DbSeeder
             // ExecuteSqlRaw treats { } as format placeholders; the SQL contains a regex quantifier like {10}.
             ctx => ctx.Database.ExecuteSqlRaw(FieldMetadataDefaults.ApplySql.Replace("{", "{{").Replace("}", "}}"))),
 
+        new("bootstrap.assignment-settings.v1", SeedKind.Bootstrap, EnsureGlobalAssignmentSettings),
+
         new("development.users-and-departments.v1", SeedKind.Development, SeedDevUsers),
+        new("development.team-memberships.v1", SeedKind.Development, EnsureDevTeamMemberships),
         new("development.sample-customers.v1", SeedKind.Development, ctx => { SeedPassportCustomer(ctx); SeedAccountNumberCustomer(ctx); }),
         new("development.sample-subcategories-and-priority-mappings.v1", SeedKind.Development, SeedSampleSubCategoriesAndPriorityMappings),
         new("development.teams-and-squads.v1", SeedKind.Development, EnsureTeamsAndSquads),
         new("development.routing-rules-and-skills.v1", SeedKind.Development, EnsureRoutingRulesAndSkills),
+        new("development.skill-rules.v1", SeedKind.Development, EnsureDevSkillRules),
         new("development.customer360-standardization.v1", SeedKind.Development, EnsureCustomer360Standardization),
 
         new("legacy.first-response-backfill.v1", SeedKind.LegacyOnly, EnsureFirstResponseAndEscalationMatrix),
@@ -930,24 +934,17 @@ public static class DbSeeder
             // 5. Seed EscalationLevelConfigs (default 4 levels) if empty
             if (!context.EscalationLevelConfigs.Any())
             {
-                var allUsers = context.Users.ToList();
-                var lvl1User = allUsers.FirstOrDefault(u => u.Role.Contains("Agent", StringComparison.OrdinalIgnoreCase));
-                var lvl2User = allUsers.FirstOrDefault(u => u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase));
-                var lvl3User = allUsers.FirstOrDefault(u => u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase));
-                var lvl4User = allUsers.FirstOrDefault(u => u.Role.Contains("Head", StringComparison.OrdinalIgnoreCase));
-
                 context.EscalationLevelConfigs.AddRange(
                     new EscalationLevelConfig
                     {
                         Id = Guid.NewGuid(),
                         LevelNumber = 1,
                         Name = "Level 1",
-                        AssignmentType = "Role",
+                        AssignmentType = "Owner",
                         TargetRole = "Assigned Agent",
-                        TargetUserId = lvl1User?.Id,
                         TriggerType = "SlaPercentage",
                         TriggerValue = 70,
-                        TriggerDescription = "SLA 70% consumed",
+                        TriggerDescription = "SLA consumption reaches 70%",
                         ActionDescription = "Reminder to assigned agent",
                         ReassignOwner = false,
                         DisplayOrder = 1,
@@ -961,10 +958,9 @@ public static class DbSeeder
                         Name = "Level 2",
                         AssignmentType = "Role",
                         TargetRole = "Team Lead",
-                        TargetUserId = lvl2User?.Id,
                         TriggerType = "SlaPercentage",
                         TriggerValue = 90,
-                        TriggerDescription = "SLA 90% consumed",
+                        TriggerDescription = "SLA consumption reaches 90%",
                         ActionDescription = "Reassign to team lead",
                         ReassignOwner = true,
                         DisplayOrder = 2,
@@ -978,10 +974,9 @@ public static class DbSeeder
                         Name = "Level 3",
                         AssignmentType = "Role",
                         TargetRole = "CX Supervisor",
-                        TargetUserId = lvl3User?.Id,
                         TriggerType = "SlaBreached",
-                        TriggerValue = 100,
-                        TriggerDescription = "SLA Breached",
+                        TriggerValue = null,
+                        TriggerDescription = "SLA is breached",
                         ActionDescription = "Breach review and customer callback",
                         ReassignOwner = true,
                         DisplayOrder = 3,
@@ -995,10 +990,9 @@ public static class DbSeeder
                         Name = "Level 4",
                         AssignmentType = "Role",
                         TargetRole = "Head of Customer Experience",
-                        TargetUserId = lvl4User?.Id,
                         TriggerType = "SlaPostBreachHours",
                         TriggerValue = 12,
-                        TriggerDescription = "SLA 12h Breached",
+                        TriggerDescription = "SLA has been breached for 12 hours",
                         ActionDescription = "Executive escalation and RCA required",
                         ReassignOwner = true,
                         DisplayOrder = 4,
@@ -1127,6 +1121,54 @@ public static class DbSeeder
         }
     }
 
+    /// <summary>The global default for how cases are given to agents. Every team follows it unless it has its own settings.</summary>
+    private static void EnsureGlobalAssignmentSettings(AppDbContext context)
+    {
+        if (context.AssignmentConfigurations.Any(c => c.DepartmentId == null)) return;
+        context.AssignmentConfigurations.Add(new AssignmentConfiguration
+        {
+            Id = Guid.NewGuid(), DepartmentId = null, Algorithm = "RoundRobin", MaxConcurrentCapacity = 5, IsActive = true, CreatedAt = DateTime.UtcNow
+        });
+        context.SaveChanges();
+    }
+
+    /// <summary>DEVELOPMENT DATA: the sample users belong to their team, because membership is what makes someone eligible for its cases.</summary>
+    private static void EnsureDevTeamMemberships(AppDbContext context)
+    {
+        var now = DateTime.UtcNow;
+        var users = context.Users.Where(u => u.DepartmentId != null).ToList();
+        var existing = context.TeamMembers.Select(m => new { m.DepartmentId, m.UserId }).ToList().Select(m => (m.DepartmentId, m.UserId)).ToHashSet();
+        foreach (var u in users)
+        {
+            if (existing.Contains((u.DepartmentId!.Value, u.Id))) continue;
+            context.TeamMembers.Add(new TeamMember
+            {
+                Id = Guid.NewGuid(), DepartmentId = u.DepartmentId.Value, UserId = u.Id,
+                MemberRole = string.IsNullOrWhiteSpace(u.Role) ? "Service Agent" : u.Role, IsAssignable = true, IsActive = true, JoinedAt = now, CreatedAt = now
+            });
+        }
+        context.SaveChanges();
+    }
+
+    /// <summary>DEVELOPMENT DATA: sample (banking) skill rules. A new installation starts with none and defines its own.</summary>
+    private static void EnsureDevSkillRules(AppDbContext context)
+    {
+        if (context.SkillRules.Any()) return;
+        var now = DateTime.UtcNow;
+        (string Skill, string Field, string Value)[] rules =
+        {
+            ("Fraud", "Title", "fraud"), ("Fraud", "Title", "unauthorised"), ("Fraud", "Title", "stolen"),
+            ("Loans", "Title", "loan"), ("Loans", "Title", "financing"),
+            ("Cards", "Title", "card"), ("Cards", "Title", "atm"),
+            ("Social", "Channel", "Social"), ("Voice", "Channel", "Voice"), ("Email", "Channel", "Email"),
+        };
+        context.SkillRules.AddRange(rules.Select(r => new SkillRule
+        {
+            Id = Guid.NewGuid(), SkillName = r.Skill, MatchField = r.Field, MatchType = r.Field == "Channel" ? "Equals" : "Contains", MatchValue = r.Value, IsActive = true, CreatedAt = now
+        }));
+        context.SaveChanges();
+    }
+
     private static void EnsureTeamsAndSquads(AppDbContext context)
     {
         try
@@ -1184,7 +1226,6 @@ public static class DbSeeder
                     Name = "Service Desk — Retail",
                     Code = "SDR",
                     Function = "Case handling (retail banking)",
-                    Channels = "Voice,Chat,Email,Social",
                     LeadName = "Nurul Aisyah",
                     MemberNames = new[] { "Farid Rahman", "Mei Ling Tan", "Siti Hajar", "Priya Nair" }
                 },
@@ -1192,7 +1233,6 @@ public static class DbSeeder
                     Name = "Sales Pursuit",
                     Code = "SP",
                     Function = "Lead qualification & conversion",
-                    Channels = "Phone,WhatsApp,Email",
                     LeadName = "Grace Wong",
                     MemberNames = new[] { "Rajesh Kumar", "Hafiz Osman" }
                 }
@@ -1211,7 +1251,6 @@ public static class DbSeeder
                         Name = sq.Name,
                         Code = sq.Code,
                         Function = sq.Function,
-                        Channels = sq.Channels,
                         OwnerId = lead?.Id,
                         IsActive = true,
                         CreatedAt = now
@@ -1222,7 +1261,6 @@ public static class DbSeeder
                 else
                 {
                     dept.Function = sq.Function;
-                    dept.Channels = sq.Channels;
                     if (lead != null) dept.OwnerId = lead.Id;
                     context.SaveChanges();
                 }
@@ -1241,7 +1279,6 @@ public static class DbSeeder
                                 DepartmentId = dept.Id,
                                 UserId = memberUser.Id,
                                 MemberRole = memberUser.Role,
-                                PrimaryChannel = "Voice",
                                 IsActive = true,
                                 JoinedAt = now
                             });
@@ -1257,7 +1294,10 @@ public static class DbSeeder
             var farid = userMap.ContainsKey("Farid Rahman") ? userMap["Farid Rahman"] : null;
             var meiLing = userMap.ContainsKey("Mei Ling Tan") ? userMap["Mei Ling Tan"] : null;
 
-            if (sdrDept != null && cust != null && farid != null && meiLing != null)
+            // The sample cases carry the SLA snapshot of the configured "High" priority, like any case created through the app.
+            var highRule = context.PrioritySlaRules.FirstOrDefault(r => r.Priority == "High");
+
+            if (sdrDept != null && cust != null && farid != null && meiLing != null && highRule != null)
             {
                 if (!context.Cases.Any(c => c.CaseNumber == "C-01041"))
                 {
@@ -1276,11 +1316,8 @@ public static class DbSeeder
                         CustomerId = cust.Id,
                         OwnerId = meiLing.Id,
                         SlaStartTime = now.AddHours(-3.3),
-                        SlaTargetHours = 4,
-                        InternalResolutionDueAt = now.AddMinutes(41),
-                        ExternalResolutionDueAt = now.AddMinutes(90),
                         CreatedAt = now.AddHours(-3.3)
-                    });
+                    }.WithSlaSnapshot(highRule));
                 }
 
                 if (!context.Cases.Any(c => c.CaseNumber == "S-01042"))
@@ -1300,11 +1337,8 @@ public static class DbSeeder
                         CustomerId = cust.Id,
                         OwnerId = farid.Id,
                         SlaStartTime = now.AddHours(-3.6),
-                        SlaTargetHours = 4,
-                        InternalResolutionDueAt = now.AddMinutes(23),
-                        ExternalResolutionDueAt = now.AddMinutes(60),
                         CreatedAt = now.AddHours(-3.6)
-                    });
+                    }.WithSlaSnapshot(highRule));
                 }
                 context.SaveChanges();
             }
@@ -1331,7 +1365,6 @@ public static class DbSeeder
                     Name = "Risk & Fraud Dept",
                     Code = "RFD",
                     Function = "Fraud detection and dispute management",
-                    Channels = "Phone,Email,Internal",
                     IsActive = true,
                     CreatedAt = now
                 };
@@ -1348,7 +1381,6 @@ public static class DbSeeder
                     Name = "Premier Banking Squad",
                     Code = "PBS",
                     Function = "High net worth & priority customer desk",
-                    Channels = "Phone,WhatsApp,Email",
                     IsActive = true,
                     CreatedAt = now
                 };
@@ -1389,12 +1421,11 @@ public static class DbSeeder
                     {
                         Id = Guid.NewGuid(),
                         Name = "Fraud keywords → Critical queue",
-                        Description = "Type = Complaint • Channel = Any • Match: keywords 'fraud', 'unauthorised', 'stolen'...",
+                        Description = "Sub-category = Fraud",
                         EvaluationOrder = 1,
                         IsActive = true,
-                        ConditionsJson = "{\"MatchType\":\"ANY\",\"CaseType\":\"Complaint\",\"Keywords\":[\"fraud\",\"unauthorised\",\"stolen\",\"phishing\",\"chargeback\"]}",
+                        ConditionsJson = "{\"MatchType\":\"ALL\",\"Category\":\"Fraud\"}",
                         TargetDepartmentId = r1Target,
-                        TargetQueueName = "Risk & Fraud Dept",
                         ActionDescription = "Route to Risk & Fraud Dept (High Priority)",
                         CreatedAt = now
                     },
@@ -1407,7 +1438,6 @@ public static class DbSeeder
                         IsActive = true,
                         ConditionsJson = "{\"MatchType\":\"ALL\",\"Priority\":\"Critical\",\"CustomerSegment\":\"Priority\"}",
                         TargetDepartmentId = r2Target,
-                        TargetQueueName = "Premier Banking Squad",
                         ActionDescription = "Route to Premier Banking Squad",
                         CreatedAt = now
                     },
@@ -1420,7 +1450,6 @@ public static class DbSeeder
                         IsActive = true,
                         ConditionsJson = "{\"MatchType\":\"ALL\",\"Channel\":\"Social\"}",
                         TargetDepartmentId = r3Target,
-                        TargetQueueName = "Campaign Studio",
                         ActionDescription = "Route to Campaign Studio",
                         CreatedAt = now
                     },
@@ -1433,7 +1462,6 @@ public static class DbSeeder
                         IsActive = false,
                         ConditionsJson = "{\"MatchType\":\"ALL\",\"CaseType\":\"Complaint\",\"CustomerSegment\":\"SME\"}",
                         TargetDepartmentId = r4Target,
-                        TargetQueueName = "Service Desk — Retail",
                         ActionDescription = "Route to Service Desk — Retail",
                         CreatedAt = now
                     }
@@ -1583,3 +1611,19 @@ public static class DbSeeder
     }
 }
 
+internal static class SeedCaseExtensions
+{
+    /// <summary>Gives a seeded case the same SLA snapshot a case created through the app gets (round-the-clock due dates are fine for demo data).</summary>
+    public static Case WithSlaSnapshot(this Case c, PrioritySlaRule rule)
+    {
+        c.FirstResponseTargetMinutes = rule.FirstResponseMinutes;
+        c.InternalResolutionTargetMinutes = rule.InternalResolutionMinutes;
+        c.ExternalResolutionTargetMinutes = rule.ExternalResolutionMinutes;
+        c.SlaTargetHours = (int)Math.Ceiling(rule.ExternalResolutionMinutes / 60.0);
+        c.SlaConfigVersion = rule.Version;
+        c.FirstResponseDueAt = c.SlaStartTime.AddMinutes(rule.FirstResponseMinutes);
+        c.InternalResolutionDueAt = c.SlaStartTime.AddMinutes(rule.InternalResolutionMinutes);
+        c.ExternalResolutionDueAt = c.SlaStartTime.AddMinutes(rule.ExternalResolutionMinutes);
+        return c;
+    }
+}

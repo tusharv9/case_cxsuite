@@ -2,42 +2,15 @@
 
 import { useState } from 'react';
 import { Clock, AlertTriangle, CheckCircle2, Pause, Inbox } from 'lucide-react';
-import { getSlaDisplay, getSlaConfig } from '../../../utils/slaUtils.js';
+import { getSlaDisplay } from '../../../utils/slaUtils.js';
 import { useNow } from '../../../hooks/useNow.js';
-import { useApp } from '../../../contexts/AppContext.jsx';
 import { getInitials, getAvatarColor } from '../../../utils/avatarUtils.js';
 import { ChannelBadge } from '../ChannelBadge/ChannelBadge.jsx';
 import './CaseList.css';
 
-function SlaBadgeList({
-  status,
-  severity,
-  slaStartTime,
-  slaTargetHours,
-  slaPausedAt,
-  slaTotalPausedMinutes,
-  isHolidayToday,
-  holidayName,
-  isBusinessHoursActive,
-}) {
+function SlaBadgeList({ caseItem }) {
   const now = useNow(1000);
-  const appContext = useApp();
-  const effectiveHolidayToday = isHolidayToday ?? appContext?.isHolidayToday ?? false;
-  const effectiveHolidayName = holidayName || appContext?.todayHolidayName || null;
-  const effectiveBusinessHoursActive = isBusinessHoursActive ?? appContext?.isBusinessHoursActive ?? true;
-
-  const { internalHours } = getSlaConfig(severity, slaTargetHours);
-  const sla = getSlaDisplay(
-    slaStartTime,
-    internalHours,
-    status,
-    now,
-    slaPausedAt,
-    slaTotalPausedMinutes,
-    effectiveHolidayToday,
-    effectiveHolidayName,
-    effectiveBusinessHoursActive
-  );
+  const sla = getSlaDisplay(caseItem, now);
 
   if (sla.status === 'within') {
     return (
@@ -257,7 +230,6 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
             const agentColor = isAssigned ? getAvatarColor(c.ownerName) : null;
             const agentFirstName = isAssigned ? c.ownerName.split(' ')[0] : '';
 
-            const resolvedSlaStartTime = c.slaStartTime || c.createdAt;
 
             // Escalation level comes only from the case's escalationLevel. (A "-L01" suffix in
             // a case number marks a linked sub-case, not an escalation level.)
@@ -338,17 +310,7 @@ export function CaseList({ cases = [], selectedCaseId, onCaseClick }) {
 
                 {/* Resolution SLA */}
                 <td className="td-sla">
-                  <SlaBadgeList
-                    status={c.status}
-                    severity={c.severity}
-                    slaStartTime={resolvedSlaStartTime}
-                    slaTargetHours={c.slaTargetHours}
-                    slaPausedAt={c.slaPausedAt}
-                    slaTotalPausedMinutes={c.slaTotalPausedMinutes}
-                    isHolidayToday={c.isHolidayToday}
-                    holidayName={c.holidayName}
-                    isBusinessHoursActive={c.isBusinessHoursActive}
-                  />
+                  <SlaBadgeList caseItem={c} />
                 </td>
 
                 {/* Created Date */}

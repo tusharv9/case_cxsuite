@@ -60,10 +60,3 @@ export function DeptBadge({ name, size = 'md' }) {
     </span>
   );
 }
-
-/**
- * Owner Badge
- */
-export function OwnerBadge() {
-  return <span className="badge badge--owner">OWNER</span>;
-}
