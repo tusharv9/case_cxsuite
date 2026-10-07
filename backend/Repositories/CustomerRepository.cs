@@ -85,12 +85,36 @@ public class CustomerRepository : ICustomerRepository
             .ToListAsync(ct);
     }
 
+    /// <summary>The columns a list may be sorted by (a fixed whitelist: the client names one, never an expression). Ties break on Id so paging never repeats or skips a row.</summary>
+    public static readonly string[] SortableColumns = { "name", "idValue", "idType", "phone", "email", "language", "branch", "createdAt" };
+
+    private static IQueryable<Customer> ApplySort(IQueryable<Customer> q, string? sortBy, bool desc)
+    {
+        IOrderedQueryable<Customer> Order<TKey>(System.Linq.Expressions.Expression<Func<Customer, TKey>> key) =>
+            desc ? q.OrderByDescending(key) : q.OrderBy(key);
+
+        var ordered = (sortBy ?? "name").ToLowerInvariant() switch
+        {
+            "idvalue"   => Order(c => c.NRIC ?? c.Passport ?? c.AccountNumber),
+            "idtype"    => Order(c => c.IdType),
+            "phone"     => Order(c => c.PhoneNumber),
+            "email"     => Order(c => c.Email),
+            "language"  => Order(c => c.PreferredLanguage),
+            "branch"    => Order(c => c.Branch),
+            "createdat" => Order(c => c.CreatedAt),
+            _           => Order(c => c.FullName),
+        };
+        return ordered.ThenBy(c => c.Id);
+    }
+
     public async Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedAsync(
         string? search,
         string? preferredLanguage,
         string? branch,
         int page,
         int pageSize,
+        string? sortBy = null,
+        bool descending = false,
         CancellationToken ct = default)
     {
         var query = _context.Customers.AsNoTracking().AsQueryable();
@@ -103,6 +127,7 @@ public class CustomerRepository : ICustomerRepository
                                   || (c.Passport != null && EF.Functions.ILike(c.Passport, pattern))
                                   || (c.AccountNumber != null && EF.Functions.ILike(c.AccountNumber, pattern))
                                   || EF.Functions.ILike(c.PhoneNumber, pattern)
+                                  || (c.Email != null && EF.Functions.ILike(c.Email, pattern))
                                   || (c.Branch != null && EF.Functions.ILike(c.Branch, pattern)));
         }
 
@@ -118,8 +143,7 @@ public class CustomerRepository : ICustomerRepository
 
         var totalCount = await query.CountAsync(ct);
 
-        var items = await query
-            .OrderBy(c => c.FullName)
+        var items = await ApplySort(query, sortBy, descending)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(c => new CustomerSummaryDto
@@ -135,6 +159,8 @@ public class CustomerRepository : ICustomerRepository
                     .FirstOrDefault() ?? "NRIC Number"),
                 IdValue = c.IdType == "Passport Number" ? (c.Passport ?? c.NRIC ?? "") : (c.IdType == "Account Number" ? (c.AccountNumber ?? c.NRIC ?? "") : (c.NRIC ?? "")),
                 PhoneNumber = c.PhoneNumber,
+                Email = c.Email,
+                CreatedAt = c.CreatedAt,
                 DateOfBirth = c.DateOfBirth,
                 Branch = c.Branch,
                 PreferredLanguage = c.PreferredLanguage,

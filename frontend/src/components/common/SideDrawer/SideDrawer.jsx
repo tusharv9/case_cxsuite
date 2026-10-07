@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { ConfirmDialog } from '../ConfirmDialog/ConfirmDialog.jsx';
+import { ConfirmDialog, CONFIRM_CONTEXT } from '../ConfirmDialog/ConfirmDialog.jsx';
 
 /**
  * @param {boolean}  props.isOpen
@@ -17,13 +17,14 @@ import { ConfirmDialog } from '../ConfirmDialog/ConfirmDialog.jsx';
  * @param {string}  [props.subtitle]
  * @param {React.ReactNode | ((api: { requestClose: () => void }) => React.ReactNode)} [props.footer]  a function receives the guarded close (use it for Cancel)
  * @param {boolean} [props.isDirty]     ask before closing when true
+ * @param {string}  [props.discardLabel] what the discard confirmation calls the form's data (e.g. "Customer Information")
  * @param {boolean} [props.escapeEnabled=true] set false while another drawer is open on top, so Escape closes only the top one
  * @param {string}  [props.className]   extra class on the <aside>
  * @param {string}  [props.ariaLabel]
  * @param {'div'|'form'} [props.bodyAs] render the body as a <form> (pass id/onSubmit through bodyProps)
  * @param {object}  [props.bodyProps]
  */
-export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty = false, escapeEnabled = true, className = '', ariaLabel, bodyAs = 'div', bodyProps = {}, children }) {
+export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty = false, discardLabel = 'Form Information', escapeEnabled = true, className = '', ariaLabel, bodyAs = 'div', bodyProps = {}, children }) {
   const [confirmClose, setConfirmClose] = useState(false);
   const drawerRef = useRef(null);
   const openerRef = useRef(null);
@@ -32,6 +33,12 @@ export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty =
     if (isDirty) setConfirmClose(true);
     else onClose?.();
   }, [isDirty, onClose]);
+
+  // The key handler must always see the CURRENT close behaviour and flags without re-running the effect below: that effect
+  // moves focus into the drawer, so re-running it on every parent render (a new onClose each render, a field's blur
+  // validation…) would drag focus back to the first field every time someone opened a dropdown or started typing elsewhere.
+  const latest = useRef({ requestClose, confirmClose, escapeEnabled });
+  latest.current = { requestClose, confirmClose, escapeEnabled };
 
   // Focus in on open, back out on close; Escape closes; the page behind stays put.
   useEffect(() => {
@@ -44,9 +51,10 @@ export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty =
     focusTarget?.focus?.({ preventScroll: true });
 
     const onKey = (e) => {
-      if (e.key === 'Escape' && escapeEnabled && !confirmClose) {
+      const { requestClose: close, confirmClose: confirming, escapeEnabled: enabled } = latest.current;
+      if (e.key === 'Escape' && enabled && !confirming) {
         e.stopPropagation();
-        requestClose();
+        close();
       }
     };
     document.addEventListener('keydown', onKey);
@@ -56,7 +64,7 @@ export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty =
       document.body.style.overflow = previousOverflow;
       openerRef.current?.focus?.({ preventScroll: true });
     };
-  }, [isOpen, requestClose, confirmClose, escapeEnabled]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -87,7 +95,8 @@ export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty =
       <ConfirmDialog
         isOpen={confirmClose}
         title="Discard unsaved changes?"
-        message="What you have entered will be lost."
+        context={CONFIRM_CONTEXT.FORM_DISCARD}
+        itemDetails={{ name: discardLabel }}
         confirmLabel="Discard"
         variant="warning"
         onCancel={() => setConfirmClose(false)}

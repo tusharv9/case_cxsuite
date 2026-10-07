@@ -16,8 +16,9 @@ export const customerService = {
   /**
    * Get server-side paginated and searched customers
    */
-  getPaginatedCustomers({ search, preferredLanguage, branch, page = 1, pageSize = 20, signal } = {}) {
+  getPaginatedCustomers({ search, preferredLanguage, branch, page = 1, pageSize = 20, sortBy, sortDir, signal } = {}) {
     const params = { page, pageSize };
+    if (sortBy) { params.sortBy = sortBy; params.sortDir = sortDir === 'desc' ? 'desc' : 'asc'; }
     if (search && search.trim() !== '') params.search = search.trim();
     if (preferredLanguage && preferredLanguage.trim() !== '') params.preferredLanguage = preferredLanguage.trim();
     if (branch && branch.trim() !== '') params.branch = branch.trim();

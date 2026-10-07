@@ -414,41 +414,28 @@
   background-color: var(--color-white, #ffffff);
 }
 
+/* Up to 5 cards per row: each column is at least a fifth of the width (so never more than 5) and at least 220px (so it
+   falls to 4, 3, 2, 1 columns as the screen narrows, with no fixed breakpoints). */
 .customer-dir-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(max(220px, calc((100% - 4 * var(--space-4)) / 5)), 1fr));
   gap: var(--space-4);
+  align-items: start;
+  transition: opacity 0.15s;
 }
-
-@media (max-width: 1280px) {
-  .customer-dir-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-@media (max-width: 900px) {
-  .customer-dir-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 600px) {
-  .customer-dir-grid {
-    grid-template-columns: 1fr;
-  }
-}
+.customer-dir-grid--busy { opacity: 0.55; pointer-events: none; }
 
 /* Customer card */
 .customer-card {
   background-color: var(--color-white);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
-  padding: var(--space-5);
+  padding: var(--space-4);
   cursor: pointer;
   transition: all var(--transition-normal);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   position: relative;
   overflow: hidden;
   box-shadow: var(--shadow-sm);
@@ -523,7 +510,7 @@
 
 .customer-card__detail-label {
   color: var(--color-text-tertiary);
-  min-width: 60px;
+  min-width: 58px;
   flex-shrink: 0;
   font-size: 11px;
   text-transform: uppercase;
@@ -542,18 +529,42 @@
   color: #1d4ed8;
 }
 
-.customer-card__arrow {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  color: var(--color-text-tertiary);
-  transition: all var(--transition-fast);
+.customer-card__detail-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.customer-card:hover .customer-card__arrow {
-  color: var(--color-brand-primary);
-  transform: translateX(2px);
+.customer-card__detail-row--expand .customer-card__detail-value { flex: 1; }
+
+.customer-card__expand {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.customer-card__expand:hover { background: #eff6ff; color: var(--color-brand-primary); }
+.customer-card__expand:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
+.customer-card__expand svg { transition: transform var(--transition-fast); }
+.customer-card--expanded .customer-card__expand svg { transform: rotate(180deg); }
+
+.customer-card__more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--color-border);
 }
 
 /* Empty / loading states */

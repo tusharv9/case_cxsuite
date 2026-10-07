@@ -956,3 +956,28 @@
   width: 100%;
   min-width: 0;
 }
+
+/* ===== MASTER LOOKUP OVERVIEW (read-only) ===== */
+.master-overview__note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 var(--space-4, 16px);
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 6px);
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: var(--font-size-sm, 13px);
+}
+.master-overview__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.master-overview__chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.master-overview__chip--off { background: #f1f5f9; color: #94a3b8; text-decoration: line-through; }
+.input-cell-order--conflict { border-color: #ef4444 !important; background: #fef2f2; }
+.field-order-error { display: block; color: #dc2626; font-size: 11px; margin-top: 2px; }

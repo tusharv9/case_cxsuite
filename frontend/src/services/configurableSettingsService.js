@@ -24,16 +24,23 @@ export const configurableSettingsService = {
   },
 
   /**
-   * Batch update field configurations (Save Changes)
+   * Save Changes on a field tab. `update` = existing fields (matched by the id the server issued); `create` = new
+   * fields, which carry NO id: the server generates it. Resolves to the section as stored ({ fields }).
    */
-  async saveFields(moduleKey, sectionKey, fields) {
-    const payload = {
-      moduleKey,
-      sectionKey,
-      fields,
-    };
-    const response = await api.put('/api/ConfigurableSettings/fields', payload);
+  async saveFields(moduleKey, sectionKey, { update = [], create = [] }) {
+    const response = await api.put('/api/ConfigurableSettings/fields', { moduleKey, sectionKey, update, create });
     fieldsCache = {}; // invalidate cache
+    lookupsCache = {};
+    return response.data;
+  },
+
+  /**
+   * Saves every pending option change of one list in a single transaction. `values` without an id are new options.
+   * `name` is only used when the list does not exist yet (a new dropdown's own list).
+   */
+  async saveLookupValues(typeCode, values, name = null) {
+    const response = await api.put(`/api/ConfigurableSettings/lookups/${encodeURIComponent(typeCode)}`, { name, values });
+    lookupsCache = {};
     return response.data;
   },
 
@@ -52,6 +59,21 @@ export const configurableSettingsService = {
   async updateField(id, fieldDto) {
     const response = await api.put(`/api/ConfigurableSettings/fields/${id}`, fieldDto);
     fieldsCache = {}; // invalidate cache
+    return response.data;
+  },
+
+  /**
+   * Dry run: would this field be accepted with the proposed type/rules, given what is stored today?
+   * Resolves { ok, message, mismatched, allowedTypes }. The save runs the same check on the server.
+   */
+  async checkFieldType(id, proposal) {
+    const response = await api.post(`/api/ConfigurableSettings/fields/${id}/check-type`, proposal);
+    return response.data;
+  },
+
+  /** The format rules an ID type option can use: [{ key, label, description }]. */
+  async getIdFormatRules() {
+    const response = await api.get('/api/ConfigurableSettings/id-format-rules');
     return response.data;
   },
 

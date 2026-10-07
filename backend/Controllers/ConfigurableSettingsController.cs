@@ -23,6 +23,10 @@ public class ConfigurableSettingsController : BaseApiController
         return Ok(fields);
     }
 
+    /// <summary>
+    /// Save Changes: existing fields in <c>update</c> (matched by id), new ones in <c>create</c> (no id; the server
+    /// issues it). Atomic, and answers with the section as stored so the page shows exactly what was saved.
+    /// </summary>
     [HttpPut("fields")]
     public async Task<IActionResult> SaveFields([FromBody] UpdateFieldConfigurationsRequest request, CancellationToken ct = default)
     {
@@ -31,8 +35,8 @@ public class ConfigurableSettingsController : BaseApiController
             return BadRequest(new { message = "ModuleKey and SectionKey are required." });
         }
 
-        await _settingsService.SaveFieldConfigurationsAsync(request.ModuleKey, request.SectionKey, request.Fields, ct);
-        return Ok(new { message = "Field configurations saved successfully." });
+        var saved = await _settingsService.SaveFieldConfigurationsAsync(request, ct);
+        return Ok(new { message = "Field configurations saved successfully.", fields = saved });
     }
 
     [HttpPost("fields")]
@@ -60,6 +64,18 @@ public class ConfigurableSettingsController : BaseApiController
         return Ok(updated);
     }
 
+    /// <summary>Dry run of a type change (and rule changes) for the editor: would existing data still fit? The save runs the same check.</summary>
+    [HttpPost("fields/{id:guid}/check-type")]
+    public async Task<IActionResult> CheckFieldType(Guid id, [FromBody] FieldConfigurationDto proposal, CancellationToken ct = default)
+    {
+        var result = await _settingsService.CheckTypeChangeAsync(id, proposal, ct);
+        return result == null ? NotFound(new { message = "Field configuration not found." }) : Ok(result);
+    }
+
+    /// <summary>The format rules an ID type option can use.</summary>
+    [HttpGet("id-format-rules")]
+    public IActionResult GetIdFormatRules() => Ok(IdFormatRules.All);
+
     [HttpDelete("fields/{id:guid}")]
     public async Task<IActionResult> DeleteCustomField(Guid id, CancellationToken ct = default)
     {
@@ -78,6 +94,14 @@ public class ConfigurableSettingsController : BaseApiController
     {
         var values = await _settingsService.GetLookupValuesAsync(typeCode, activeOnly, ct);
         return Ok(values);
+    }
+
+    /// <summary>Saves all pending option changes of one list in a single transaction (used by the field drawer).</summary>
+    [HttpPut("lookups/{typeCode}")]
+    public async Task<IActionResult> SaveLookupValues(string typeCode, [FromBody] SaveLookupValuesRequest request, CancellationToken ct = default)
+    {
+        if (request == null) return BadRequest(new { message = "Values are required." });
+        return Ok(await _settingsService.SaveLookupValuesAsync(typeCode, request, ct));
     }
 
     [HttpPost("lookups")]

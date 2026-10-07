@@ -24,10 +24,11 @@ import { Input, Select } from '../../components/common/Input/Input.jsx';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
 import { departmentService } from '../../services/departmentService.js';
 import { useToast } from '../../hooks/useToast.js';
-import { AddFieldModal } from './AddFieldModal.jsx';
+import { FieldEditorDrawer } from './FieldEditorDrawer.jsx';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog/ConfirmDialog.jsx';
 import { Modal } from '../../components/common/Modal/Modal.jsx';
 import { MasterItem } from './MasterItem.jsx';
+import { MasterLookupOverview } from './MasterLookupOverview.jsx';
 import { UnsavedChangesModal } from './UnsavedChangesModal.jsx';
 import './ConfigurableSettingsPage.css';
 
@@ -55,6 +56,43 @@ const SEVERITY_BADGE_FALLBACK = {
 /** Tabs whose contents are a field-configuration table saved by the header Save button. */
 const FIELD_SECTIONS = ['AddNewCustomer', 'ExistingCustomer', 'Filters', 'CreateCase'];
 
+/** The key the server derives from a label for a new custom field (mirrors ConfigurableSettingsService.SanitizeApiField). */
+function previewApiField(label) {
+  const cleaned = String(label || '').replace(/[^A-Za-z0-9]/g, '');
+  return cleaned ? cleaned[0].toLowerCase() + cleaned.slice(1) : 'newField';
+}
+
+const sortByOrder = (list) => [...(list || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+const fieldKey = (f) => f.id || f.draftKey || f.apiField;
+const isSameField = (a, b) => fieldKey(a) === fieldKey(b);
+
+/**
+ * Display orders must be unique within a form. Mirrors the server's rule so the administrator is told before saving: only a
+ * NEW field or one whose order was just changed is checked (old duplicates among untouched fields never block a save).
+ * @returns {Record<string,string>} message per field key
+ */
+function findOrderConflicts(current, saved) {
+  const out = {};
+  for (const f of current) {
+    const orig = saved.find((s) => s.id && s.id === f.id);
+    const touched = !orig || Number(orig.displayOrder) !== Number(f.displayOrder);
+    if (touched && current.some((o) => o !== f && Number(o.displayOrder) === Number(f.displayOrder))) {
+      out[fieldKey(f)] = `Display order ${f.displayOrder} is already assigned to another field. Please choose a different display order.`;
+    }
+  }
+  return out;
+}
+
+/** Every per-field message the server returned, flattened (first few), falling back to the error's own text. */
+function serverMessages(err) {
+  const raw = err?.original?.response?.data?.errors;
+  if (raw && typeof raw === 'object') {
+    const all = [...new Set(Object.values(raw).flat().map(String))];
+    if (all.length) return all.slice(0, 3).join(' • ') + (all.length > 3 ? ` • (+${all.length - 3} more)` : '');
+  }
+  return err?.message || 'Failed to save settings.';
+}
+
 export function ConfigurableSettingsPage() {
   const toast = useToast();
   const navigate = useNavigate();
@@ -73,6 +111,11 @@ export function ConfigurableSettingsPage() {
   // Add / Edit field drawer
   const [isFieldDrawerOpen, setIsFieldDrawerOpen] = useState(false);
   const [editingField, setEditingField] = useState(null);
+  // Option changes made in the field drawer, per list: { [typeCode]: { name, values: [{ id?, value, label, displayOrder, isActive }] } }.
+  // They are saved together with the fields (one Save Changes) and reported in the unsaved-changes summary.
+  const [lookupDrafts, setLookupDrafts] = useState({});
+  const [serverLookups, setServerLookups] = useState({});   // list code -> options as stored, for the summary diff
+  const [fieldErrors, setFieldErrors] = useState({});         // field key -> message from the last failed save
 
   // Shared confirmation dialog — no browser confirm() anywhere on this page
   const [confirmState, setConfirmState] = useState({
@@ -91,22 +134,8 @@ export function ConfigurableSettingsPage() {
   const [savedBranches, setSavedBranches] = useState([]);
   const [idTypes, setIdTypes] = useState([]);
   const [savedIdTypes, setSavedIdTypes] = useState([]);
-  const [langSearch, setLangSearch] = useState('');
-  const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
-  const [branchSearch, setBranchSearch] = useState('');
-  const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
 
 
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (!e.target.closest('.smart-dropdown-wrapper')) {
-        setIsLangDropdownOpen(false);
-        setIsBranchDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   // Case Management master data
   const [caseTypes, setCaseTypes] = useState([]);
@@ -168,183 +197,94 @@ export function ConfigurableSettingsPage() {
   const hasUnsavedChanges = useMemo(() => {
     // 1. Field configuration tabs (Customer 360: AddNewCustomer, ExistingCustomer, Filters; Case Management: CreateCase, Filters)
     if (isFieldTab) {
-      return JSON.stringify(fields) !== JSON.stringify(savedFields);
-    }
-    // 2. Customer 360 Master Lookups drafts
-    if (topSelector === 'Customer360' && activeSection === 'MasterLookups') {
-      const langDirty = JSON.stringify(languages) !== JSON.stringify(savedLanguages);
-      const branchDirty = JSON.stringify(branches) !== JSON.stringify(savedBranches);
-      const idTypeDirty = JSON.stringify(idTypes) !== JSON.stringify(savedIdTypes);
-      return langDirty || branchDirty || idTypeDirty;
+      return JSON.stringify(fields) !== JSON.stringify(savedFields) || Object.keys(lookupDrafts).length > 0;
     }
     return false;
-  }, [
-    isFieldTab,
-    fields,
-    savedFields,
-    topSelector,
-    activeSection,
-    caseSection,
-    languages,
-    savedLanguages,
-    branches,
-    savedBranches,
-    idTypes,
-    savedIdTypes,
-  ]);
+  }, [isFieldTab, fields, savedFields, lookupDrafts]);
 
   // Dynamic Changes Summary calculation: compares draft states with saved snapshots
   const unsavedChangesList = useMemo(() => {
     const list = [];
-    const MASKING_MAP = {
-      None: 'No masking',
-      FullMask: 'Full mask',
-      HideMiddle: 'Hide Middle, Show Ends',
-      HideFirstShowLast: 'Hide first, show last',
-    };
+    if (!isFieldTab) return list;
 
-    if (isFieldTab) {
-      // 1. Check for added or modified fields
-      fields.forEach((f) => {
-        const orig = savedFields.find((sf) => (sf.id && sf.id === f.id) || sf.apiField === f.apiField);
+    const MASKING_MAP = Object.fromEntries(MASKING_OPTIONS.map((o) => [o.value, o.label]));
+    const same = (a, b) => (a ?? '') === (b ?? '');
+    const yesNo = (v) => (v ? 'Yes' : 'No');
+
+    fields.forEach((f) => {
+      const orig = savedFields.find((sf) => sf.id && sf.id === f.id);
+      if (!orig) {
+        // A field added in this session: described from its own settings, whatever it is called.
+        list.push({
+          id: f.draftKey || f.apiField,
+          title: f.displayLabel || f.apiField || 'New Field',
+          type: 'added',
+          badgeLabel: 'Added',
+          addedDetails: {
+            'Field': f.displayLabel || f.apiField,
+            'Status': 'New field',
+            'Type': f.fieldType || 'Text',
+            'Required': yesNo(f.isRequired),
+            'Visibility': f.isVisible ? 'Visible' : 'Hidden',
+            ...(f.fieldType === 'Dropdown' && f.lookupTypeCode ? { 'List': f.lookupTypeCode } : {}),
+            ...(f.maskingRule && f.maskingRule !== 'None' ? { 'Masking': MASKING_MAP[f.maskingRule] || f.maskingRule } : {}),
+          },
+        });
+        return;
+      }
+
+      const props = [];
+      const diff = (label, a, b) => { if (!same(a, b)) props.push({ label, oldVal: a === undefined || a === null || a === '' ? '—' : a, newVal: b === undefined || b === null || b === '' ? '—' : b }); };
+      diff('Display Label', orig.displayLabel, f.displayLabel);
+      diff('Field Type', orig.fieldType, f.fieldType);
+      if (Number(orig.displayOrder) !== Number(f.displayOrder)) props.push({ label: 'Order', oldVal: orig.displayOrder, newVal: f.displayOrder });
+      if (Boolean(orig.isVisible) !== Boolean(f.isVisible)) props.push({ label: 'Visibility', isVisibility: true, oldVal: orig.isVisible, newVal: f.isVisible });
+      if (Boolean(orig.isRequired) !== Boolean(f.isRequired)) props.push({ label: 'Required', oldVal: yesNo(orig.isRequired), newVal: yesNo(f.isRequired) });
+      if ((orig.maskingRule || 'None') !== (f.maskingRule || 'None')) {
+        props.push({ label: 'Masking Rule', oldVal: MASKING_MAP[orig.maskingRule] || orig.maskingRule || 'No masking', newVal: MASKING_MAP[f.maskingRule] || f.maskingRule || 'No masking' });
+      }
+      if (Number(orig.visibleChars ?? 4) !== Number(f.visibleChars ?? 4)) props.push({ label: 'Visible Chars', oldVal: orig.visibleChars ?? 4, newVal: f.visibleChars ?? 4 });
+      diff('Validation Pattern', orig.validationRegex, f.validationRegex);
+      diff('Validation Message', orig.validationMessage, f.validationMessage);
+      diff('Min Length', orig.minLength, f.minLength);
+      diff('Max Length', orig.maxLength, f.maxLength);
+      diff('Min Value', orig.minValue, f.minValue);
+      diff('Max Value', orig.maxValue, f.maxValue);
+      diff('List', orig.lookupTypeCode, f.lookupTypeCode);
+
+      if (props.length > 0) {
+        const onlyVisibility = props.length === 1 && props[0].isVisibility;
+        list.push({
+          id: f.id,
+          title: f.displayLabel || orig.displayLabel || f.apiField,
+          type: onlyVisibility ? 'visibility' : 'modified',
+          badgeLabel: onlyVisibility ? 'Visibility Changed' : 'Modified',
+          properties: props,
+        });
+      }
+    });
+
+    // Option changes made from a dropdown's "Manage options".
+    Object.entries(lookupDrafts).forEach(([code, draft]) => {
+      const stored = serverLookups[code] || [];
+      draft.values.forEach((v) => {
+        const orig = v.id ? stored.find((s) => s.id === v.id) : null;
+        const listName = draft.name || lookupTypes.find((t) => t.code === code)?.name || code;
         if (!orig) {
-          // Added field
-          list.push({
-            id: f.id || f.apiField,
-            title: f.displayLabel || f.apiField || 'New Field',
-            type: 'added',
-            badgeLabel: 'Added',
-            addedDetails: {
-              'Field': f.displayLabel || f.apiField,
-              'Status': 'New field',
-              'Type': f.fieldType || f.type || 'Text',
-              'Required': f.isRequired ? 'Yes' : 'No',
-              'Visibility': f.isVisible ? 'Visible' : 'Hidden',
-              ...(f.maskingRule && f.maskingRule !== 'None' ? { 'Masking': MASKING_MAP[f.maskingRule] || f.maskingRule } : {}),
-            },
-          });
-        } else {
-          // Existing field - check changed properties
-          const props = [];
-          if (orig.displayLabel !== f.displayLabel) {
-            props.push({ label: 'Display Label', oldVal: orig.displayLabel, newVal: f.displayLabel });
-          }
-          if (Number(orig.displayOrder) !== Number(f.displayOrder)) {
-            props.push({ label: 'Order', oldVal: orig.displayOrder, newVal: f.displayOrder });
-          }
-          if (Boolean(orig.isVisible) !== Boolean(f.isVisible)) {
-            props.push({ label: 'Visibility', isVisibility: true, oldVal: orig.isVisible, newVal: f.isVisible });
-          }
-          if (Boolean(orig.isRequired) !== Boolean(f.isRequired)) {
-            props.push({ label: 'Required', oldVal: orig.isRequired ? 'Yes' : 'No', newVal: f.isRequired ? 'Yes' : 'No' });
-          }
-          if (Boolean(orig.isEditable) !== Boolean(f.isEditable)) {
-            props.push({ label: 'Editable', oldVal: orig.isEditable ? 'Yes' : 'No', newVal: f.isEditable ? 'Yes' : 'No' });
-          }
-          if (Boolean(orig.isSensitive) !== Boolean(f.isSensitive)) {
-            props.push({ label: 'Sensitive Data', oldVal: orig.isSensitive ? 'Yes' : 'No', newVal: f.isSensitive ? 'Yes' : 'No' });
-          }
-          if ((orig.maskingRule || 'None') !== (f.maskingRule || 'None')) {
-            props.push({
-              label: 'Masking Rule',
-              oldVal: MASKING_MAP[orig.maskingRule] || orig.maskingRule || 'No masking',
-              newVal: MASKING_MAP[f.maskingRule] || f.maskingRule || 'No masking',
-            });
-          }
-          if (Number(orig.visibleChars ?? 4) !== Number(f.visibleChars ?? 4)) {
-            props.push({ label: 'Visible Chars', oldVal: orig.visibleChars ?? 4, newVal: f.visibleChars ?? 4 });
-          }
-
-          if (props.length > 0) {
-            const isOnlyVis = props.length === 1 && props[0].isVisibility;
-            list.push({
-              id: f.id || f.apiField,
-              title: f.displayLabel || orig.displayLabel || f.apiField,
-              type: isOnlyVis ? 'visibility' : 'modified',
-              badgeLabel: isOnlyVis ? 'Visibility Changed' : 'Modified',
-              properties: props,
-            });
-          }
+          list.push({ id: `${code}:${v.value}`, title: `${listName}: ${v.label || v.value}`, type: 'added', badgeLabel: 'Added', addedDetails: { Status: 'New option', List: listName } });
+          return;
         }
+        const props = [];
+        if (!same(orig.label, v.label)) props.push({ label: 'Label', oldVal: orig.label, newVal: v.label });
+        if (Boolean(orig.isActive) !== Boolean(v.isActive)) props.push({ label: 'Status', oldVal: orig.isActive ? 'Active' : 'Inactive', newVal: v.isActive ? 'Active' : 'Inactive' });
+        if (!same(orig.formatRule, v.formatRule)) props.push({ label: 'ID Format Rule', oldVal: orig.formatRule || 'Default', newVal: v.formatRule || 'Default' });
+        if (!same(orig.formatRegex, v.formatRegex)) props.push({ label: 'ID Format Pattern', oldVal: orig.formatRegex || '—', newVal: v.formatRegex || '—' });
+        if (props.length) list.push({ id: `${code}:${v.id}`, title: `${listName}: ${orig.label || orig.value}`, type: 'modified', badgeLabel: 'Modified', properties: props });
       });
-    } else if (topSelector === 'Customer360' && activeSection === 'MasterLookups') {
-      languages.forEach((l) => {
-        const orig = savedLanguages.find((sl) => sl.id === l.id);
-        if (l.isNew) {
-          list.push({
-            id: l.id || l.value,
-            title: `Preferred Language: ${l.value}`,
-            type: 'added',
-            badgeLabel: 'Added',
-            addedDetails: { Status: 'New lookup value' },
-          });
-        } else if (orig && orig.isActive !== l.isActive) {
-          list.push({
-            id: l.id,
-            title: `Preferred Language: ${l.value}`,
-            type: 'visibility',
-            badgeLabel: 'Status Changed',
-            properties: [{ label: 'Status', oldVal: orig.isActive ? 'Active' : 'Inactive', newVal: l.isActive ? 'Active' : 'Inactive' }],
-          });
-        }
-      });
-      branches.forEach((b) => {
-        const orig = savedBranches.find((sb) => sb.id === b.id);
-        if (b.isNew) {
-          list.push({
-            id: b.id || b.value,
-            title: `Home Branch: ${b.value}`,
-            type: 'added',
-            badgeLabel: 'Added',
-            addedDetails: { Status: 'New lookup value' },
-          });
-        } else if (orig && orig.isActive !== b.isActive) {
-          list.push({
-            id: b.id,
-            title: `Home Branch: ${b.value}`,
-            type: 'visibility',
-            badgeLabel: 'Status Changed',
-            properties: [{ label: 'Status', oldVal: orig.isActive ? 'Active' : 'Inactive', newVal: b.isActive ? 'Active' : 'Inactive' }],
-          });
-        }
-      });
-      idTypes.forEach((i) => {
-        const orig = savedIdTypes.find((si) => si.id === i.id);
-        if (i.isNew) {
-          list.push({
-            id: i.id || i.value,
-            title: `ID Type: ${i.value}`,
-            type: 'added',
-            badgeLabel: 'Added',
-            addedDetails: { Status: 'New lookup value' },
-          });
-        } else if (orig && orig.isActive !== i.isActive) {
-          list.push({
-            id: i.id,
-            title: `ID Type: ${i.value}`,
-            type: 'visibility',
-            badgeLabel: 'Status Changed',
-            properties: [{ label: 'Status', oldVal: orig.isActive ? 'Active' : 'Inactive', newVal: i.isActive ? 'Active' : 'Inactive' }],
-          });
-        }
-      });
-    }
+    });
 
     return list;
-  }, [
-    isFieldTab,
-    fields,
-    savedFields,
-    topSelector,
-    caseSection,
-    activeSection,
-    languages,
-    savedLanguages,
-    branches,
-    savedBranches,
-    idTypes,
-    savedIdTypes,
-  ]);
+  }, [isFieldTab, fields, savedFields, lookupDrafts, serverLookups, lookupTypes]);
 
   const getSectionName = useCallback(() => {
     if (topSelector === 'CaseManagement') {
@@ -518,10 +458,17 @@ export function ConfigurableSettingsPage() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const data = await configurableSettingsService.getFields(moduleKey, sectionKey, true);
-      const sorted = [...(data || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+      const [data, types] = await Promise.all([
+        configurableSettingsService.getFields(moduleKey, sectionKey, true),
+        configurableSettingsService.getLookupTypes().catch(() => null),   // lists a dropdown field can be bound to
+      ]);
+      const sorted = sortByOrder(data);
       setFields(sorted);
       setSavedFields(JSON.parse(JSON.stringify(sorted)));
+      setLookupDrafts({});
+      setServerLookups({});
+      setFieldErrors({});
+      if (types) setLookupTypes(types);
     } catch (err) {
       console.error('Failed to load field settings:', err);
       setFields([]);
@@ -642,79 +589,56 @@ export function ConfigurableSettingsPage() {
     });
   };
 
+  /** Live display-order conflicts, so the offending order boxes turn red while the administrator is still typing. */
+  const liveOrderConflicts = useMemo(() => (isFieldTab ? findOrderConflicts(fields, savedFields) : {}), [isFieldTab, fields, savedFields]);
+
   const handleSaveAllChanges = async () => {
+    if (!isFieldTab) return true;   // every other tab saves each change as it is made
+
+    const conflicts = findOrderConflicts(fields, savedFields);
+    if (Object.keys(conflicts).length > 0) {
+      setFieldErrors(conflicts);
+      toast.error(Object.values(conflicts)[0]);
+      return false;
+    }
+
     setIsSaving(true);
     try {
-      if (topSelector === 'Customer360') {
-        if (activeSection === 'MasterLookups') {
-          // Persist all pending master lookup changes (languages, branches, idTypes)
-          for (const lang of languages) {
-            const orig = savedLanguages.find((l) => l.id === lang.id);
-            if (lang.isNew) {
-              await configurableSettingsService.addLookupValue('PREFERRED_LANGUAGE', lang.value);
-            } else if (orig && (orig.isActive !== lang.isActive || orig.value !== lang.value)) {
-              await configurableSettingsService.updateLookupValue(
-                lang.id,
-                'PREFERRED_LANGUAGE',
-                lang.value,
-                lang.label || lang.value,
-                lang.displayOrder,
-                lang.isActive
-              );
-            }
-          }
-          for (const br of branches) {
-            const orig = savedBranches.find((b) => b.id === br.id);
-            if (br.isNew) {
-              await configurableSettingsService.addLookupValue('HOME_BRANCH', br.value);
-            } else if (orig && (orig.isActive !== br.isActive || orig.value !== br.value)) {
-              await configurableSettingsService.updateLookupValue(
-                br.id,
-                'HOME_BRANCH',
-                br.value,
-                br.label || br.value,
-                br.displayOrder,
-                br.isActive
-              );
-            }
-          }
-          for (const idt of idTypes) {
-            const orig = savedIdTypes.find((i) => i.id === idt.id);
-            if (idt.isNew) {
-              await configurableSettingsService.addLookupValue('ID_TYPE', idt.value);
-            } else if (orig && (orig.isActive !== idt.isActive || orig.value !== idt.value)) {
-              await configurableSettingsService.updateLookupValue(
-                idt.id,
-                'ID_TYPE',
-                idt.value,
-                idt.label || idt.value,
-                idt.displayOrder,
-                idt.isActive
-              );
-            }
-          }
-          await loadLookups();
-          toast.success('Master lookup settings saved successfully.');
-        } else {
-          // Field settings: AddNewCustomer, ExistingCustomer, Filters
-          await configurableSettingsService.saveFields('Customer360', activeSection, fields);
-          const data = await configurableSettingsService.getFields('Customer360', activeSection, true);
-          const sorted = [...(data || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-          setFields(sorted);
-          setSavedFields(JSON.parse(JSON.stringify(sorted)));
-          toast.success('Field settings saved successfully. Changes apply immediately.');
-        }
-      } else if (isFieldTab) {
-        await configurableSettingsService.saveFields(topSelector, currentSectionKey, fields);
-        const data = await configurableSettingsService.getFields(topSelector, currentSectionKey, true);
-        const sorted = [...(data || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-        setFields(sorted);
-        setSavedFields(JSON.parse(JSON.stringify(sorted)));
-        toast.success('Field settings saved successfully.');
+      // 1. Options first: a new dropdown's list has to exist before the field that uses it is saved.
+      const draftCodes = Object.keys(lookupDrafts);
+      for (const code of draftCodes) {
+        const draft = lookupDrafts[code];
+        await configurableSettingsService.saveLookupValues(
+          code,
+          draft.values.map(({ id, value, label, displayOrder, isActive }) => ({ id, value, label, displayOrder, isActive })),
+          draft.name
+        );
       }
+      if (draftCodes.length > 0) {
+        setLookupDrafts({});
+        setServerLookups({});
+        configurableSettingsService.getLookupTypes().then((types) => setLookupTypes(types || [])).catch(() => {});
+      }
+
+      // 2. Fields: existing ones are sent with the id the server issued; new ones carry NO id (the server generates it).
+      const update = fields.filter((f) => f.id);
+      const create = fields.filter((f) => !f.id).map(({ draftKey: _draftKey, apiField: _apiField, isCustomField: _custom, ...definition }) => definition);
+      const result = await configurableSettingsService.saveFields(topSelector, currentSectionKey, { update, create });
+
+      // 3. Show exactly what the server stored — not what the page assumes it stored.
+      const stored = sortByOrder(result?.fields);
+      setFields(stored);
+      setSavedFields(JSON.parse(JSON.stringify(stored)));
+      setFieldErrors({});
+      toast.success('Field settings saved successfully. Changes apply immediately.');
       return true;
     } catch (err) {
-      toast.error(err.message || 'Failed to save settings.');
+      // Everything the administrator entered stays on screen so it can be corrected and saved again.
+      const raw = err?.original?.response?.data?.errors;
+      if (raw && typeof raw === 'object') {
+        setFieldErrors(Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, [].concat(v)[0]])));
+      }
+      toast.error(serverMessages(err));
       return false;
     } finally {
       setIsSaving(false);
@@ -723,26 +647,25 @@ export function ConfigurableSettingsPage() {
 
   const handleSaveFields = handleSaveAllChanges;
 
-  const handleSubmitField = async (payload, editing) => {
+  /**
+   * The Add / Edit drawer hands over the field's settings (and, for a dropdown, any option changes). Both stay drafts until
+   * the page's Save Changes, so a field and the options it needs are saved together or not at all.
+   */
+  const handleSubmitField = async (payload, editing, lookupDraft) => {
+    if (lookupDraft) {
+      setLookupDrafts((prev) => ({ ...prev, [lookupDraft.typeCode]: { name: lookupDraft.name, values: lookupDraft.values } }));
+      setServerLookups((prev) => ({ ...prev, [lookupDraft.typeCode]: lookupDraft.stored || [] }));
+    }
+
     if (editing) {
-      setFields((prev) =>
-        prev.map((f) =>
-          (f.id && f.id === editing.id) || f.apiField === editing.apiField
-            ? { ...f, ...payload }
-            : f
-        )
-      );
+      setFields((prev) => prev.map((f) => (isSameField(f, editing) ? { ...f, ...payload } : f)));
       toast.info(`Updated "${payload.displayLabel}" in draft. Click "Save Changes" to persist.`);
       return;
     }
 
-    const newField = {
-      id: `custom-${Date.now()}`,
-      apiField: `custom_${payload.displayLabel.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
-      isCustomField: true,
-      ...payload,
-    };
-    setFields((prev) => [...prev, newField]);
+    // No id: a brand-new field is identified by the server once it is saved. `draftKey` only tells drafts apart on screen.
+    const { sectionKey: _ignored, ...definition } = payload;
+    setFields((prev) => [...prev, { draftKey: `new-${Date.now()}`, apiField: previewApiField(payload.displayLabel), isCustomField: true, ...definition }]);
     toast.info(`Added custom field "${payload.displayLabel}" to draft. Click "Save Changes" to persist.`);
   };
 
@@ -1303,8 +1226,6 @@ export function ConfigurableSettingsPage() {
             <th style={{ width: 80, textAlign: 'center' }}>ORDER</th>
             <th style={{ width: 70, textAlign: 'center' }}>VISIBLE</th>
             <th style={{ width: 80, textAlign: 'center' }}>REQUIRED</th>
-            <th style={{ width: 80, textAlign: 'center' }}>EDITABLE</th>
-            <th style={{ width: 80, textAlign: 'center' }}>SENSITIVE</th>
             <th>MASKING RULE</th>
             <th style={{ width: 100, textAlign: 'center' }}>VISIBLE CHARS</th>
             <th style={{ width: 110, textAlign: 'center' }}>ACTIONS</th>
@@ -1313,7 +1234,7 @@ export function ConfigurableSettingsPage() {
         <tbody>
           {fields.length === 0 ? (
             <tr>
-              <td colSpan={10}>
+              <td colSpan={8}>
                 <div className="master-card__empty">
                   {loadError || (showAddButton ? 'No fields configured for this section yet. Use “ADD NEW FIELD” to create one.' : 'No fields configured for this section yet.')}
                 </div>
@@ -1321,7 +1242,7 @@ export function ConfigurableSettingsPage() {
             </tr>
           ) : (
             fields.map((f, i) => (
-              <tr key={f.id || f.apiField}>
+              <tr key={fieldKey(f)}>
                 <td className="cell-api-field">
                   <code>{f.apiField}</code>
                   {f.isCustomField && <span className="custom-badge">CUSTOM</span>}
@@ -1333,15 +1254,21 @@ export function ConfigurableSettingsPage() {
                     value={f.displayLabel}
                     onChange={(e) => handleFieldChange(i, 'displayLabel', e.target.value)}
                   />
+                  {(fieldErrors[fieldKey(f)] || fieldErrors[f.apiField] || fieldErrors[f.displayLabel]) && (
+                    <span className="field-order-error" role="alert">{fieldErrors[fieldKey(f)] || fieldErrors[f.apiField] || fieldErrors[f.displayLabel]}</span>
+                  )}
                 </td>
                 <td style={{ textAlign: 'center' }}>
                   <input
                     type="number"
                     min={0}
-                    className="input-cell-order"
+                    className={`input-cell-order ${liveOrderConflicts[fieldKey(f)] ? 'input-cell-order--conflict' : ''}`}
                     value={f.displayOrder}
+                    title={liveOrderConflicts[fieldKey(f)]}
+                    aria-invalid={Boolean(liveOrderConflicts[fieldKey(f)])}
                     onChange={(e) => handleFieldChange(i, 'displayOrder', parseInt(e.target.value, 10) || 0)}
                   />
+                  {liveOrderConflicts[fieldKey(f)] && <span className="field-order-error" role="alert">Already used</span>}
                 </td>
                 <td style={{ textAlign: 'center' }}>
                   <button
@@ -1360,22 +1287,6 @@ export function ConfigurableSettingsPage() {
                     disabled={f.isSystemRequired}
                     title={f.isSystemRequired ? 'Required by the system: a case or customer cannot be created without it' : undefined}
                     onChange={(e) => handleFieldChange(i, 'isRequired', e.target.checked)}
-                  />
-                </td>
-                <td style={{ textAlign: 'center' }}>
-                  <input
-                    type="checkbox"
-                    className="checkbox-custom"
-                    checked={f.isEditable}
-                    onChange={(e) => handleFieldChange(i, 'isEditable', e.target.checked)}
-                  />
-                </td>
-                <td style={{ textAlign: 'center' }}>
-                  <input
-                    type="checkbox"
-                    className="checkbox-custom"
-                    checked={f.isSensitive}
-                    onChange={(e) => handleFieldChange(i, 'isSensitive', e.target.checked)}
                   />
                 </td>
                 <td>
@@ -1408,8 +1319,7 @@ export function ConfigurableSettingsPage() {
                       }}
                       title={`Edit ${f.displayLabel || f.apiField}`}
                       aria-label="Edit field"
-                      disabled={!f.id}
-                    >
+                                          >
                       <Pencil size={14} />
                     </button>
                   </div>
@@ -1428,7 +1338,7 @@ export function ConfigurableSettingsPage() {
         <div>
           <h2 className="config-card__title">{title}</h2>
           <p className="config-card__desc">
-            Configure label, visibility, requirement, editability, order, and masking per field.
+            Configure label, visibility, requirement, order, and masking per field.
             Use Edit for the full field definition, or Save Changes for inline edits.
           </p>
         </div>
@@ -1796,34 +1706,6 @@ export function ConfigurableSettingsPage() {
     );
   };
 
-  const filteredPredefinedLangs = useMemo(() => {
-    if (!langSearch.trim()) return languages;
-    return languages.filter((l) =>
-      (l.label || l.value || '').toLowerCase().includes(langSearch.trim().toLowerCase())
-    );
-  }, [languages, langSearch]);
-
-  const existingLangMatch = useMemo(() => {
-    if (!langSearch.trim()) return null;
-    return languages.find(
-      (l) => (l.label || l.value || '').toLowerCase() === langSearch.trim().toLowerCase()
-    );
-  }, [languages, langSearch]);
-
-  const filteredPredefinedBranches = useMemo(() => {
-    if (!branchSearch.trim()) return branches;
-    return branches.filter((b) =>
-      (b.label || b.value || '').toLowerCase().includes(branchSearch.trim().toLowerCase())
-    );
-  }, [branches, branchSearch]);
-
-  const existingBranchMatch = useMemo(() => {
-    if (!branchSearch.trim()) return null;
-    return branches.find(
-      (b) => (b.label || b.value || '').toLowerCase() === branchSearch.trim().toLowerCase()
-    );
-  }, [branches, branchSearch]);
-
   const showHeaderSave = isFieldTab;
 
   return (
@@ -1841,7 +1723,7 @@ export function ConfigurableSettingsPage() {
               </div>
               <h1 className="config-settings-banner__title">Configurable Settings</h1>
               <p className="config-settings-banner__subtitle">
-                Configure labels, visibility, requirements, editability, order, masking, SLA, and master lookups per module.
+                Configure labels, visibility, requirements, order, masking, SLA, and master lookups per module.
               </p>
             </div>
           </div>
@@ -2203,225 +2085,18 @@ export function ConfigurableSettingsPage() {
             <button className={`config-section-tab ${activeSection === 'AddNewCustomer' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('AddNewCustomer')} id="tab-add-new-customer">Add New Customer</button>
             <button className={`config-section-tab ${activeSection === 'ExistingCustomer' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('ExistingCustomer')} id="tab-existing-customer">Existing Customer</button>
             <button className={`config-section-tab ${activeSection === 'Filters' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('Filters')} id="tab-c360-filters">Customer 360 Filters</button>
-            <button className={`config-section-tab ${activeSection === 'MasterLookups' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('MasterLookups')} id="tab-master-lookups">Master Lookup Data</button>
+            <button className={`config-section-tab ${activeSection === 'MasterLookups' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('MasterLookups')} id="tab-master-lookups">Master Lookup Overview</button>
           </div>
 
           <div className="config-settings-body">
             {activeSection === 'MasterLookups' ? (
-              <div className="master-data-grid">
-                {/* 1. PREFERRED LANGUAGE OPTIONS */}
-                <div className="master-card">
-                  <div>
-                    <h3 className="master-card__title">Preferred Language Options</h3>
-                    <p className="master-card__desc">
-                      Single source of truth for Customer 360, Create Customer, and filter dropdowns. Search existing languages or add a new language.
-                    </p>
-                  </div>
-                  <div className="master-card__form">
-                    <div className="smart-dropdown-wrapper">
-                      <div className="smart-dropdown-input-box">
-                        <input
-                          type="text"
-                          className="input-field"
-                          placeholder="Search or add language (e.g. German)"
-                          value={langSearch}
-                          onChange={(e) => {
-                            setLangSearch(e.target.value);
-                            setIsLangDropdownOpen(true);
-                          }}
-                          onFocus={() => setIsLangDropdownOpen(true)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              if (langSearch.trim() && !existingLangMatch) {
-                                handleAddLookup('PREFERRED_LANGUAGE', langSearch, setLangSearch, 'Language');
-                                setIsLangDropdownOpen(false);
-                              }
-                            }
-                          }}
-                          disabled={isPending('add:PREFERRED_LANGUAGE')}
-                          id="input-search-add-language"
-                        />
-                        <ChevronDown size={16} className="smart-dropdown-icon" />
-                      </div>
-
-                      {isLangDropdownOpen && (
-                        <div className="smart-dropdown-menu scrollbar-thin">
-                          {filteredPredefinedLangs.map((item) => (
-                            <div
-                              key={item.id}
-                              className="smart-dropdown-item"
-                              onClick={() => {
-                                setLangSearch(item.label || item.value);
-                                setIsLangDropdownOpen(false);
-                              }}
-                            >
-                              <span>{item.label || item.value}</span>
-                              {!item.isActive && (
-                                <span className="not-visible-badge">
-                                  <EyeOff size={10} /> Not Visible
-                                </span>
-                              )}
-                            </div>
-                          ))}
-
-                          {langSearch.trim() && !existingLangMatch && (
-                            <div
-                              className="smart-dropdown-add-item"
-                              onClick={() => {
-                                handleAddLookup('PREFERRED_LANGUAGE', langSearch, setLangSearch, 'Language');
-                                setIsLangDropdownOpen(false);
-                              }}
-                            >
-                              <Plus size={14} />
-                              <span>Add "{langSearch.trim()}"</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="master-card__list scrollbar-thin">
-                    {renderListState(languages.length === 0, 'No language options configured yet.') ||
-                      languages.map((item) => (
-                        <MasterItem
-                          key={item.id}
-                          fields={[{ key: 'value', placeholder: 'Language' }]}
-                          initial={{ value: item.label || item.value }}
-                          onSave={(values) => handleUpdateLookup(item, 'PREFERRED_LANGUAGE', values, 'Language')}
-                          showDelete={false}
-                          showVisibility={true}
-                          isVisible={item.isActive}
-                          onToggleVisibility={() => handleToggleVisibility(item, 'PREFERRED_LANGUAGE', 'Language')}
-                          isTogglingVisibility={isPending(`toggle:${item.id}`)}
-                        >
-                          <span className="master-card__item-title">{item.label || item.value}</span>
-                        </MasterItem>
-                      ))}
-                  </div>
-                </div>
-
-                {/* 2. HOME BRANCH LOCATIONS */}
-                <div className="master-card">
-                  <div>
-                    <h3 className="master-card__title">Home Branch Locations</h3>
-                    <p className="master-card__desc">
-                      Branch directory lookup values for customer profiles. Search and select predefined branch locations from backend data.
-                    </p>
-                  </div>
-                  <div className="master-card__form">
-                    <div className="smart-dropdown-wrapper">
-                      <div className="smart-dropdown-input-box">
-                        <input
-                          type="text"
-                          className="input-field"
-                          placeholder="Search or select branch (e.g. Subang Branch)"
-                          value={branchSearch}
-                          onChange={(e) => {
-                            setBranchSearch(e.target.value);
-                            setIsBranchDropdownOpen(true);
-                          }}
-                          onFocus={() => setIsBranchDropdownOpen(true)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              if (branchSearch.trim() && !existingBranchMatch) {
-                                handleAddLookup('HOME_BRANCH', branchSearch, setBranchSearch, 'Branch');
-                                setIsBranchDropdownOpen(false);
-                              }
-                            }
-                          }}
-                          disabled={isPending('add:HOME_BRANCH')}
-                          id="input-search-add-branch"
-                        />
-                        <ChevronDown size={16} className="smart-dropdown-icon" />
-                      </div>
-
-                      {isBranchDropdownOpen && (
-                        <div className="smart-dropdown-menu scrollbar-thin">
-                          {filteredPredefinedBranches.map((item) => (
-                            <div
-                              key={item.id}
-                              className="smart-dropdown-item"
-                              onClick={() => {
-                                setBranchSearch(item.label || item.value);
-                                setIsBranchDropdownOpen(false);
-                              }}
-                            >
-                              <span>{item.label || item.value}</span>
-                              {!item.isActive && (
-                                <span className="not-visible-badge">
-                                  <EyeOff size={10} /> Not Visible
-                                </span>
-                              )}
-                            </div>
-                          ))}
-
-                          {branchSearch.trim() && !existingBranchMatch && (
-                            <div
-                              className="smart-dropdown-add-item"
-                              onClick={() => {
-                                handleAddLookup('HOME_BRANCH', branchSearch, setBranchSearch, 'Branch');
-                                setIsBranchDropdownOpen(false);
-                              }}
-                            >
-                              <Plus size={14} />
-                              <span>Add "{branchSearch.trim()}"</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="master-card__list scrollbar-thin">
-                    {renderListState(branches.length === 0, 'No branch locations configured yet.') ||
-                      branches.map((item) => (
-                        <MasterItem
-                          key={item.id}
-                          fields={[{ key: 'value', placeholder: 'Branch' }]}
-                          initial={{ value: item.label || item.value }}
-                          onSave={(values) => handleUpdateLookup(item, 'HOME_BRANCH', values, 'Branch')}
-                          showDelete={false}
-                          showVisibility={true}
-                          isVisible={item.isActive}
-                          onToggleVisibility={() => handleToggleVisibility(item, 'HOME_BRANCH', 'Branch')}
-                          isTogglingVisibility={isPending(`toggle:${item.id}`)}
-                        >
-                          <span className="master-card__item-title">{item.label || item.value}</span>
-                        </MasterItem>
-                      ))}
-                  </div>
-                </div>
-
-                {/* 3. CUSTOMER IDENTIFICATION (ID TYPES) */}
-                <div className="master-card">
-                  <div>
-                    <h3 className="master-card__title">Customer Identification (ID Types)</h3>
-                    <p className="master-card__desc">
-                      Fixed predefined identification options controlled by the backend (NRIC Number, Passport Number, Account Number).
-                    </p>
-                  </div>
-                  {/* NO ADD OPTION FORM OR BUTTON */}
-                  <div className="master-card__list scrollbar-thin">
-                    {renderListState(idTypes.length === 0, 'No identification options configured yet.') ||
-                      idTypes.map((item) => (
-                        <MasterItem
-                          key={item.id}
-                          fields={[{ key: 'value', placeholder: 'ID Type' }]}
-                          initial={{ value: item.label || item.value }}
-                          onSave={(values) => handleUpdateLookup(item, 'ID_TYPE', values, 'ID Type')}
-                          showDelete={false}
-                          showVisibility={true}
-                          isVisible={item.isActive}
-                          onToggleVisibility={() => handleToggleVisibility(item, 'ID_TYPE', 'ID Type')}
-                          isTogglingVisibility={isPending(`toggle:${item.id}`)}
-                        >
-                          <span className="master-card__item-title">{item.label || item.value}</span>
-                        </MasterItem>
-                      ))}
-                  </div>
-                </div>
-              </div>
+              <MasterLookupOverview
+                lists={[
+                  { typeCode: 'PREFERRED_LANGUAGE', title: 'Preferred Language', items: languages },
+                  { typeCode: 'HOME_BRANCH', title: 'Home Branch', items: branches },
+                  { typeCode: 'ID_TYPE', title: 'ID Type', items: idTypes },
+                ]}
+              />
             ) : (
               renderFieldCard(
                 activeSection === 'AddNewCustomer'
@@ -2437,7 +2112,7 @@ export function ConfigurableSettingsPage() {
       )}
 
       {/* ADD / EDIT FIELD SIDE DRAWER */}
-      <AddFieldModal
+      <FieldEditorDrawer
         isOpen={isFieldDrawerOpen}
         onClose={() => {
           setIsFieldDrawerOpen(false);
@@ -2446,8 +2121,10 @@ export function ConfigurableSettingsPage() {
         onAdd={handleSubmitField}
         editingField={editingField}
         sectionKey={currentSectionKey}
-        existingCount={fields.length}
+        existingFields={fields}
+        savedFields={savedFields}
         lookupTypes={lookupTypes}
+        lookupDrafts={lookupDrafts}
       />
 
       {/* SHARED CONFIRMATION DIALOG (never a browser confirm) */}

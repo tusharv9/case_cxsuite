@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect } from 'react';
 import { useBlocker } from 'react-router-dom';
-import { ConfirmDialog } from '../components/common/ConfirmDialog/ConfirmDialog.jsx';
+import { ConfirmDialog, CONFIRM_CONTEXT } from '../components/common/ConfirmDialog/ConfirmDialog.jsx';
 
 export function useUnsavedChangesGuard(isDirty, message = 'You have unsaved changes. If you leave now, they will be lost.') {
   // Closing / refreshing the tab.
@@ -28,6 +28,8 @@ export function useUnsavedChangesGuard(isDirty, message = 'You have unsaved chan
       isOpen={blocker.state === 'blocked'}
       title="Discard unsaved changes?"
       message={message}
+      context={CONFIRM_CONTEXT.FORM_DISCARD}
+      itemDetails={{ name: 'Page Changes' }}
       confirmLabel="Discard and leave"
       variant="warning"
       onCancel={() => blocker.reset?.()}

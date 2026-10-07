@@ -598,6 +598,57 @@ namespace CaseManagement.Api.Migrations
                     b.ToTable("CaseTypeConfigs");
                 });
 
+            modelBuilder.Entity("CaseManagement.Api.Models.Country", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DialCode")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Iso2")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<string>("Iso3")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<int>("MaxNationalDigits")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MinNationalDigits")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("NationalPattern")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Iso2")
+                        .IsUnique();
+
+                    b.ToTable("Countries");
+                });
+
             modelBuilder.Entity("CaseManagement.Api.Models.Customer", b =>
                 {
                     b.Property<Guid>("Id")
@@ -637,6 +688,13 @@ namespace CaseManagement.Api.Migrations
 
                     b.Property<string>("Passport")
                         .HasColumnType("text");
+
+                    b.Property<string>("PhoneCountryIso2")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasDefaultValue("MY");
 
                     b.Property<string>("PhoneNumber")
                         .IsRequired()
@@ -874,13 +932,7 @@ namespace CaseManagement.Api.Migrations
                     b.Property<bool>("IsCustomField")
                         .HasColumnType("boolean");
 
-                    b.Property<bool>("IsEditable")
-                        .HasColumnType("boolean");
-
                     b.Property<bool>("IsRequired")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsSensitive")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("IsSystemRequired")
@@ -899,8 +951,14 @@ namespace CaseManagement.Api.Migrations
                     b.Property<int?>("MaxLength")
                         .HasColumnType("integer");
 
+                    b.Property<string>("MaxValue")
+                        .HasColumnType("text");
+
                     b.Property<int?>("MinLength")
                         .HasColumnType("integer");
+
+                    b.Property<string>("MinValue")
+                        .HasColumnType("text");
 
                     b.Property<string>("ModuleKey")
                         .IsRequired()
@@ -951,6 +1009,9 @@ namespace CaseManagement.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("AllowAdd")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasColumnType("text");
@@ -968,6 +1029,9 @@ namespace CaseManagement.Api.Migrations
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("UsesFormatRules")
+                        .HasColumnType("boolean");
 
                     b.HasKey("Id");
 
@@ -988,6 +1052,15 @@ namespace CaseManagement.Api.Migrations
 
                     b.Property<int>("DisplayOrder")
                         .HasColumnType("integer");
+
+                    b.Property<string>("FormatMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FormatRegex")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FormatRule")
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -1422,6 +1495,39 @@ namespace CaseManagement.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("CaseManagement.Api.Models.UserPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("UserPreferences");
+                });
+
             modelBuilder.Entity("CaseManagement.Api.Models.AgentSkill", b =>
                 {
                     b.HasOne("CaseManagement.Api.Models.User", "User")
@@ -1761,6 +1867,17 @@ namespace CaseManagement.Api.Migrations
                         .HasForeignKey("DepartmentId");
 
                     b.Navigation("Department");
+                });
+
+            modelBuilder.Entity("CaseManagement.Api.Models.UserPreference", b =>
+                {
+                    b.HasOne("CaseManagement.Api.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("CaseManagement.Api.Models.Case", b =>

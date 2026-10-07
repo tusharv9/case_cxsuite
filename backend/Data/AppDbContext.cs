@@ -20,6 +20,8 @@ public class AppDbContext : DbContext
     public DbSet<FieldConfiguration> FieldConfigurations { get; set; } = null!;
     public DbSet<LookupType> LookupTypes { get; set; } = null!;
     public DbSet<LookupValue> LookupValues { get; set; } = null!;
+    public DbSet<Country> Countries { get; set; } = null!;
+    public DbSet<UserPreference> UserPreferences { get; set; } = null!;
     public DbSet<CustomerCustomAttribute> CustomerCustomAttributes { get; set; } = null!;
     public DbSet<CaseCustomAttribute> CaseCustomAttributes { get; set; } = null!;
     public DbSet<CaseAttachment> CaseAttachments { get; set; } = null!;
@@ -67,6 +69,22 @@ public class AppDbContext : DbContext
             .HasIndex(fc => new { fc.ModuleKey, fc.SectionKey, fc.ApiField })
             .IsUnique();
 
+        modelBuilder.Entity<UserPreference>(entity =>
+        {
+            entity.Property(p => p.Key).HasMaxLength(100);
+            entity.Property(p => p.Value).HasMaxLength(4000);
+            entity.HasIndex(p => new { p.UserId, p.Key }).IsUnique();
+            entity.HasOne(p => p.User).WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Country>(entity =>
+        {
+            entity.HasIndex(c => c.Iso2).IsUnique();
+            entity.Property(c => c.Iso2).HasMaxLength(2);
+            entity.Property(c => c.Iso3).HasMaxLength(3);
+            entity.Property(c => c.DialCode).HasMaxLength(8);
+        });
+
         modelBuilder.Entity<LookupType>()
             .HasIndex(lt => lt.Code)
             .IsUnique();
@@ -99,6 +117,8 @@ public class AppDbContext : DbContext
                 .IsUnique()
                 .HasFilter(@"""AccountNumber"" IS NOT NULL AND ""AccountNumber"" <> ''")
                 .HasDatabaseName("IX_Customers_AccountNumber_Unique");
+
+            entity.Property(c => c.PhoneCountryIso2).HasMaxLength(2).HasDefaultValue("MY");
 
             entity.HasIndex(c => c.PhoneNumber)
                 .IsUnique()

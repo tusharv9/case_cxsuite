@@ -116,6 +116,8 @@ public class CustomerSummaryDto
     public string IdType { get; set; } = "NRIC Number";
     public string IdValue { get; set; } = string.Empty;
     public string PhoneNumber { get; set; } = string.Empty;
+    public string? Email { get; set; }
+    public DateTime CreatedAt { get; set; }
     public DateTime? DateOfBirth { get; set; }
     public string? Branch { get; set; }
     public string? PreferredLanguage { get; set; }
@@ -126,7 +128,6 @@ public class CustomerSummaryDto
 
 public class CustomerDetailDto : CustomerSummaryDto
 {
-    public string? Email { get; set; }
     public string? CustomerSegment { get; set; }
     public List<CaseSummaryDto> Cases { get; set; } = new();
 }

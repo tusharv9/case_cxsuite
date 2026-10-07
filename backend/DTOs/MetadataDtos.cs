@@ -5,6 +5,11 @@ public class LookupOptionDto
 {
     public string Value { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
+
+    /// <summary>ID-type options only: the format rule an ID value must satisfy (key from IdFormatRules) and its optional pattern/message.</summary>
+    public string? FormatRule { get; set; }
+    public string? FormatRegex { get; set; }
+    public string? FormatMessage { get; set; }
 }
 
 public class CaseTypeOptionDto

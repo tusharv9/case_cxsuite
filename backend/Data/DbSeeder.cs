@@ -373,6 +373,8 @@ public static class DbSeeder
                     Code = "ID_TYPE",
                     Name = "ID Type",
                     Description = "Supported customer identification types",
+                    AllowAdd = false,   // the customer record has a column for each supported ID type
+                    UsesFormatRules = true,   // each ID type says what its ID numbers must look like
                     CreatedAt = now
                 };
 
@@ -403,24 +405,24 @@ public static class DbSeeder
                 var fields = new List<FieldConfiguration>
                 {
                     // AddNewCustomer Section
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "fullName", DisplayLabel = "Full Name", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Text", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "idType", DisplayLabel = "Choose an ID", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", LookupTypeCode = "ID_TYPE", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "idValue", DisplayLabel = "ID Value", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Text", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "dateOfBirth", DisplayLabel = "Date of Birth", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Date", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "phoneNumber", DisplayLabel = "Phone Number", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 5, FieldType = "Phone", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "email", DisplayLabel = "Email Address", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 6, FieldType = "Email", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 7, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 8, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "fullName", DisplayLabel = "Full Name", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Text", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "idType", DisplayLabel = "Choose an ID", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", LookupTypeCode = "ID_TYPE", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "idValue", DisplayLabel = "ID Value", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Text", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "dateOfBirth", DisplayLabel = "Date of Birth", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Date", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "phoneNumber", DisplayLabel = "Phone Number", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 5, FieldType = "Phone", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "email", DisplayLabel = "Email Address", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 6, FieldType = "Email", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 7, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "AddNewCustomer", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 8, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now },
 
                     // ExistingCustomer Section
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "idType", DisplayLabel = "Choose an ID", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", LookupTypeCode = "ID_TYPE", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "idValue", DisplayLabel = "ID Value", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Text", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "phoneNumber", DisplayLabel = "Phone Number", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Phone", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "dateOfBirth", DisplayLabel = "Date of Birth", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Date", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "idType", DisplayLabel = "Choose an ID", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", LookupTypeCode = "ID_TYPE", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "idValue", DisplayLabel = "ID Value", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Text", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "phoneNumber", DisplayLabel = "Phone Number", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Phone", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "dateOfBirth", DisplayLabel = "Date of Birth", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Date", CreatedAt = now },
 
                     // Customer 360 Filters Section
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now }
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "Filters", ApiField = "branch", DisplayLabel = "Home Branch", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", LookupTypeCode = "HOME_BRANCH", CreatedAt = now }
                 };
 
                 context.FieldConfigurations.AddRange(fields);
@@ -430,14 +432,14 @@ public static class DbSeeder
             {
                 // Ensure idType and idValue are present in existing database
                 context.Database.ExecuteSqlRaw(@"
-                    INSERT INTO ""FieldConfigurations"" (""Id"", ""ModuleKey"", ""SectionKey"", ""ApiField"", ""DisplayLabel"", ""IsVisible"", ""IsRequired"", ""IsEditable"", ""IsSensitive"", ""MaskingRule"", ""VisibleChars"", ""DisplayOrder"", ""FieldType"", ""LookupTypeCode"", ""IsCustomField"", ""CreatedAt"")
-                    SELECT gen_random_uuid(), 'Customer360', 'AddNewCustomer', 'idType', 'Choose an ID', true, true, true, false, 'None', 4, 2, 'Dropdown', 'ID_TYPE', false, NOW()
+                    INSERT INTO ""FieldConfigurations"" (""Id"", ""ModuleKey"", ""SectionKey"", ""ApiField"", ""DisplayLabel"", ""IsVisible"", ""IsRequired"", ""MaskingRule"", ""VisibleChars"", ""DisplayOrder"", ""FieldType"", ""LookupTypeCode"", ""IsCustomField"", ""CreatedAt"")
+                    SELECT gen_random_uuid(), 'Customer360', 'AddNewCustomer', 'idType', 'Choose an ID', true, true, 'None', 4, 2, 'Dropdown', 'ID_TYPE', false, NOW()
                     WHERE NOT EXISTS (
                         SELECT 1 FROM ""FieldConfigurations"" WHERE ""ModuleKey"" = 'Customer360' AND ""SectionKey"" = 'AddNewCustomer' AND ""ApiField"" = 'idType'
                     );
 
-                    INSERT INTO ""FieldConfigurations"" (""Id"", ""ModuleKey"", ""SectionKey"", ""ApiField"", ""DisplayLabel"", ""IsVisible"", ""IsRequired"", ""IsEditable"", ""IsSensitive"", ""MaskingRule"", ""VisibleChars"", ""DisplayOrder"", ""FieldType"", ""LookupTypeCode"", ""IsCustomField"", ""CreatedAt"")
-                    SELECT gen_random_uuid(), 'Customer360', 'AddNewCustomer', 'idValue', 'ID Value', true, true, true, false, 'None', 4, 3, 'Text', NULL, false, NOW()
+                    INSERT INTO ""FieldConfigurations"" (""Id"", ""ModuleKey"", ""SectionKey"", ""ApiField"", ""DisplayLabel"", ""IsVisible"", ""IsRequired"", ""MaskingRule"", ""VisibleChars"", ""DisplayOrder"", ""FieldType"", ""LookupTypeCode"", ""IsCustomField"", ""CreatedAt"")
+                    SELECT gen_random_uuid(), 'Customer360', 'AddNewCustomer', 'idValue', 'ID Value', true, true, 'None', 4, 3, 'Text', NULL, false, NOW()
                     WHERE NOT EXISTS (
                         SELECT 1 FROM ""FieldConfigurations"" WHERE ""ModuleKey"" = 'Customer360' AND ""SectionKey"" = 'AddNewCustomer' AND ""ApiField"" = 'idValue'
                     );
@@ -499,15 +501,15 @@ public static class DbSeeder
             if (!existingCaseFields.Any(f => f.SectionKey == "CreateCase"))
             {
                 context.FieldConfigurations.AddRange(
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "caseType", DisplayLabel = "Case Type", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "title", DisplayLabel = "Case Title", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Text", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "description", DisplayLabel = "Description", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Text", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "selectCustomer", DisplayLabel = "Select Customer", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Dropdown", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "departmentId", DisplayLabel = "Department", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 5, FieldType = "Dropdown", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "subCategory", DisplayLabel = "Sub-category", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 6, FieldType = "Dropdown", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 7, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "communicationChannel", DisplayLabel = "Preferred Communication Channel", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 8, FieldType = "Dropdown", LookupTypeCode = "COMMUNICATION_CHANNEL", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "severity", DisplayLabel = "Severity", IsVisible = true, IsRequired = true, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 9, FieldType = "Dropdown", CreatedAt = now }
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "caseType", DisplayLabel = "Case Type", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "title", DisplayLabel = "Case Title", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Text", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "description", DisplayLabel = "Description", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Text", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "selectCustomer", DisplayLabel = "Select Customer", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 4, FieldType = "Dropdown", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "departmentId", DisplayLabel = "Department", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 5, FieldType = "Dropdown", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "subCategory", DisplayLabel = "Sub-category", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 6, FieldType = "Dropdown", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "preferredLanguage", DisplayLabel = "Preferred Language", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 7, FieldType = "Dropdown", LookupTypeCode = "PREFERRED_LANGUAGE", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "communicationChannel", DisplayLabel = "Preferred Communication Channel", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 8, FieldType = "Dropdown", LookupTypeCode = "COMMUNICATION_CHANNEL", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = "severity", DisplayLabel = "Severity", IsVisible = true, IsRequired = true, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 9, FieldType = "Dropdown", CreatedAt = now }
                 );
                 context.SaveChanges();
             }
@@ -515,9 +517,9 @@ public static class DbSeeder
             if (!existingCaseFields.Any(f => f.SectionKey == "Filters"))
             {
                 context.FieldConfigurations.AddRange(
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "Filters", ApiField = "departmentId", DisplayLabel = "Handling Department", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "Filters", ApiField = "status", DisplayLabel = "Case Status", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", CreatedAt = now },
-                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "Filters", ApiField = "caseType", DisplayLabel = "Case Type", IsVisible = true, IsRequired = false, IsEditable = true, IsSensitive = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Dropdown", CreatedAt = now }
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "Filters", ApiField = "departmentId", DisplayLabel = "Handling Department", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 1, FieldType = "Dropdown", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "Filters", ApiField = "status", DisplayLabel = "Case Status", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 2, FieldType = "Dropdown", CreatedAt = now },
+                    new FieldConfiguration { Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = "Filters", ApiField = "caseType", DisplayLabel = "Case Type", IsVisible = true, IsRequired = false, MaskingRule = "None", VisibleChars = 4, DisplayOrder = 3, FieldType = "Dropdown", CreatedAt = now }
                 );
                 context.SaveChanges();
             }
@@ -769,11 +771,9 @@ public static class DbSeeder
                         DisplayLabel = "Source Channel",
                         IsVisible = true,
                         IsRequired = true,
-                        IsEditable = true,
-                        IsSensitive = false,
                         MaskingRule = "None",
                         VisibleChars = 4,
-                        DisplayOrder = 9,
+                        DisplayOrder = 10,   // 9 belongs to severity; two fields never share an order
                         FieldType = "Dropdown",
                         LookupTypeCode = "SOURCE_CHANNEL",
                         CreatedAt = now

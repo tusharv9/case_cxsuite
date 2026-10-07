@@ -17,7 +17,7 @@ public interface ICustomerRepository
     Task<IEnumerable<SearchCustomerHitDto>> SearchCustomersAsync(string query, int limit, CancellationToken ct = default);
 
     /// <summary>Server-side paginated and filtered list of customers.</summary>
-    Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedAsync(string? search, string? preferredLanguage, string? branch, int page, int pageSize, CancellationToken ct = default);
+    Task<PagedResponseDto<CustomerSummaryDto>> GetPaginatedAsync(string? search, string? preferredLanguage, string? branch, int page, int pageSize, string? sortBy = null, bool descending = false, CancellationToken ct = default);
 
     /// <summary>Server-side paginated list of cases belonging to a customer.</summary>
     Task<PagedResponseDto<CaseSummaryDto>> GetCustomerCasesAsync(Guid customerId, int page, int pageSize, CancellationToken ct = default);

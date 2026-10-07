@@ -6,10 +6,13 @@ import { useNavigate } from 'react-router-dom';
 import { X, Search, AlertCircle } from 'lucide-react';
 import { Button } from '../../common/Button/Button.jsx';
 import { Input, Select } from '../../common/Input/Input.jsx';
+import { PhoneInput } from '../../common/PhoneInput/PhoneInput.jsx';
+import { metadataService } from '../../../services/metadataService.js';
+import { fullPhone, phoneRuleError } from '../../../utils/phone.js';
+import { DEFAULT_PHONE_COUNTRY_ISO2 } from '../../../constants/index.js';
 import { customerService } from '../../../services/customerService.js';
-import { configurableSettingsService } from '../../../services/configurableSettingsService.js';
 import { useToast } from '../../../hooks/useToast.js';
-import { SUPPORTED_ID_TYPES, validateIdentification, validatePhoneNumber, validateNricDateWithDob } from '../../../utils/validationUtils.js';
+import { validateIdByRule, validateIdAgainstDob } from '../../../utils/validationUtils.js';
 import '../CreateCaseDrawer/CreateCaseDrawer.css';
 import '../CreateCustomerDrawer/CreateCustomerDrawer.css';
 import './ExistingCustomerDrawer.css';
@@ -18,13 +21,16 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
   const navigate = useNavigate();
   const toast = useToast();
 
-  const [idTypes, setIdTypes] = useState(SUPPORTED_ID_TYPES);
+  const [idTypes, setIdTypes] = useState([]);   // [{ value, label, formatRule, … }] from the customer form's ID type list
   const [form, setForm] = useState({
     idType: 'NRIC Number',
     idValue: '',
     phoneDigits: '',
     dateOfBirth: '',
   });
+  const [countries, setCountries] = useState([]);
+  const [phoneCountry, setPhoneCountry] = useState(DEFAULT_PHONE_COUNTRY_ISO2);
+  const country = countries.find((c) => c.iso2 === phoneCountry);
 
   const [errors, setErrors] = useState({});
   const [notFoundError, setNotFoundError] = useState(null);
@@ -36,17 +42,15 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
     let isMounted = true;
     async function loadIdTypes() {
       try {
-        const lookupValues = await configurableSettingsService.getLookupValues('ID_TYPE', true);
+        // The same list (and the same effective format rules) the Add New Customer form uses.
+        const meta = await metadataService.getCustomerForm();
         if (!isMounted) return;
-        const types = (lookupValues || [])
-          .map((l) => l.value)
-          .filter((v) => SUPPORTED_ID_TYPES.includes(v));
-        
-        const finalTypes = types.length > 0 ? types : SUPPORTED_ID_TYPES;
-        setIdTypes(finalTypes);
+        const field = (meta.fields || []).find((f) => f.apiField === 'idType');
+        const options = meta.lookups?.[field?.lookupTypeCode] || [];
+        setIdTypes(options);
         setForm((prev) => ({
           ...prev,
-          idType: finalTypes.includes(prev.idType) ? prev.idType : finalTypes[0],
+          idType: options.some((o) => o.value === prev.idType) ? prev.idType : options[0]?.value || '',
         }));
       } catch (err) {
         console.error('Failed to load ID types from database:', err);
@@ -54,23 +58,34 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
     }
 
     loadIdTypes();
+    metadataService.getCountries()
+      .then((list) => {
+        if (!isMounted) return;
+        setCountries(list);
+        setPhoneCountry((prev) => (list.some((c) => c.iso2 === prev) ? prev : list[0]?.iso2));
+      })
+      .catch((err) => console.error('Failed to load countries:', err));
     return () => {
       isMounted = false;
     };
   }, [isOpen]);
 
-  const handlePhoneChange = (e) => {
-    let input = e.target.value.replace(/\D/g, '');
-    if (input.startsWith('60')) {
-      input = input.slice(2);
-    } else if (input.startsWith('0')) {
-      input = input.slice(1);
-    }
-    const cleanDigits = input.slice(0, 10);
-    setForm((prev) => ({ ...prev, phoneDigits: cleanDigits }));
+  const optionOf = (idType) => idTypes.find((o) => o.value === idType);
+
+  const handlePhoneChange = (digits) => {
+    setForm((prev) => ({ ...prev, phoneDigits: digits }));
     setErrors((prev) => ({ ...prev, phoneNumber: undefined }));
     setNotFoundError(null);
   };
+
+  const handleCountryChange = (iso2) => {
+    setPhoneCountry(iso2);
+    setErrors((prev) => ({ ...prev, phoneNumber: undefined }));   // the rules changed with the country
+    setNotFoundError(null);
+  };
+
+  // Blank = required; otherwise the selected country's rules (data from the API, not code).
+  const phoneError = () => (form.phoneDigits ? phoneRuleError(country, form.phoneDigits, 'Phone number') : 'This field is required');
 
   const set = (field) => (e) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
@@ -84,7 +99,7 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
     setErrors((prev) => ({ ...prev, idType: undefined, idValue: undefined }));
     setNotFoundError(null);
     if (form.idValue && form.idValue.trim()) {
-      const res = validateIdentification(form.idValue, newType);
+      const res = validateIdByRule(form.idValue, optionOf(newType));
       if (!res.isValid) {
         setErrors((prev) => ({ ...prev, idValue: res.error }));
       }
@@ -96,13 +111,13 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
       if (!form.idValue || !form.idValue.trim()) {
         setErrors((prev) => ({ ...prev, idValue: 'This field is required' }));
       } else {
-        const res = validateIdentification(form.idValue, form.idType);
+        const res = validateIdByRule(form.idValue, optionOf(form.idType));
         if (!res.isValid) {
           setErrors((prev) => ({ ...prev, idValue: res.error }));
         } else {
           setErrors((prev) => ({ ...prev, idValue: undefined }));
-          if (form.idType === 'NRIC Number' && form.dateOfBirth) {
-            const dobRes = validateNricDateWithDob(form.idValue, form.dateOfBirth);
+          if (form.dateOfBirth) {
+            const dobRes = validateIdAgainstDob(form.idValue, form.dateOfBirth, optionOf(form.idType));
             if (!dobRes.isValid) {
               setErrors((prev) => ({ ...prev, dateOfBirth: dobRes.error }));
             } else if (errors.dateOfBirth === 'Date of Birth does not match the date in the NRIC number.') {
@@ -112,14 +127,7 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
         }
       }
     } else if (field === 'phoneNumber') {
-      if (!form.phoneDigits) {
-        setErrors((prev) => ({ ...prev, phoneNumber: 'This field is required' }));
-      } else if (form.phoneDigits.length !== 10) {
-        setErrors((prev) => ({
-          ...prev,
-          phoneNumber: `Phone number must contain exactly 10 contact digits (currently ${form.phoneDigits.length}).`,
-        }));
-      }
+      setErrors((prev) => ({ ...prev, phoneNumber: phoneError() || undefined }));
     } else if (field === 'dateOfBirth') {
       if (!form.dateOfBirth) {
         setErrors((prev) => ({ ...prev, dateOfBirth: 'This field is required' }));
@@ -127,8 +135,8 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
         const d = new Date(form.dateOfBirth);
         if (d > new Date()) {
           setErrors((prev) => ({ ...prev, dateOfBirth: 'Date of birth cannot be in the future.' }));
-        } else if (form.idType === 'NRIC Number' && form.idValue && form.idValue.trim()) {
-          const dobRes = validateNricDateWithDob(form.idValue, form.dateOfBirth);
+        } else if (form.idValue && form.idValue.trim()) {
+          const dobRes = validateIdAgainstDob(form.idValue, form.dateOfBirth, optionOf(form.idType));
           if (!dobRes.isValid) {
             setErrors((prev) => ({ ...prev, dateOfBirth: dobRes.error }));
           } else {
@@ -148,17 +156,14 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
     if (!form.idValue || !form.idValue.trim()) {
       e.idValue = 'This field is required';
     } else {
-      const idRes = validateIdentification(form.idValue, form.idType);
+      const idRes = validateIdByRule(form.idValue, optionOf(form.idType));
       if (!idRes.isValid) {
         e.idValue = idRes.error;
       }
     }
 
-    if (!form.phoneDigits) {
-      e.phoneNumber = 'This field is required';
-    } else if (form.phoneDigits.length !== 10) {
-      e.phoneNumber = `Phone number must contain exactly 10 contact digits (currently ${form.phoneDigits.length}).`;
-    }
+    const phoneProblem = phoneError();
+    if (phoneProblem) e.phoneNumber = phoneProblem;
 
     if (!form.dateOfBirth) {
       e.dateOfBirth = 'This field is required';
@@ -166,8 +171,8 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
       const d = new Date(form.dateOfBirth);
       if (d > new Date()) {
         e.dateOfBirth = 'Date of birth cannot be in the future.';
-      } else if (form.idType === 'NRIC Number' && form.idValue && form.idValue.trim()) {
-        const dobRes = validateNricDateWithDob(form.idValue, form.dateOfBirth);
+      } else if (form.idValue && form.idValue.trim()) {
+        const dobRes = validateIdAgainstDob(form.idValue, form.dateOfBirth, optionOf(form.idType));
         if (!dobRes.isValid) {
           e.dateOfBirth = dobRes.error;
         }
@@ -191,7 +196,7 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
       const payload = {
         idType: form.idType,
         idValue: form.idValue.trim(),
-        phoneNumber: `+60 ${form.phoneDigits}`,
+        phoneNumber: fullPhone(country, form.phoneDigits),
         dateOfBirth: new Date(form.dateOfBirth).toISOString(),
       };
 
@@ -260,7 +265,7 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
             placeholder="Select ID type..."
           >
             {idTypes.map((type) => (
-              <option key={type} value={type}>{type}</option>
+              <option key={type.value} value={type.value}>{type.label || type.value}</option>
             ))}
           </Select>
 
@@ -275,23 +280,18 @@ export function ExistingCustomerDrawer({ isOpen, onClose, onCustomerFound }) {
             error={errors.idValue}
           />
 
-          {/* Field 3 — Phone Number with fixed +60 */}
-          <div className="form-group phone-input-container">
-            <label className="form-label form-label--required">Phone Number</label>
-            <div className="phone-input-group">
-              <span className="phone-input-group__prefix">+60</span>
-              <input
-                type="tel"
-                className={`form-input phone-input-group__input ${errors.phoneNumber ? 'form-input--error field-error' : ''}`}
-                placeholder="1234567890"
-                maxLength={10}
-                value={form.phoneDigits}
-                onChange={handlePhoneChange}
-                onBlur={() => handleBlurValidate('phoneNumber')}
-              />
-            </div>
-            {errors.phoneNumber && <span className="form-error">{errors.phoneNumber}</span>}
-          </div>
+          {/* Field 3 — Phone Number: country selector + national number */}
+          <PhoneInput
+            label="Phone Number"
+            required
+            countries={countries}
+            countryIso2={phoneCountry}
+            onCountryChange={handleCountryChange}
+            national={form.phoneDigits}
+            onNationalChange={handlePhoneChange}
+            onBlur={() => handleBlurValidate('phoneNumber')}
+            error={errors.phoneNumber}
+          />
 
           {/* Field 4 — Date of Birth */}
           <Input

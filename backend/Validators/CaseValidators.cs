@@ -4,86 +4,21 @@ using CaseManagement.Api.DTOs;
 using FluentValidation;
 
 /// <summary>
-/// STRUCTURAL checks only — things that are true of an identity document regardless of configuration (an NRIC has
-/// a valid embedded date, a passport is alphanumeric…), applied when a value is present. Whether a field is
-/// required, which dropdown values are valid, lengths and patterns are the administrator's configuration, applied by
-/// the validation engine, not hard-coded here.
+/// Request-level checks that do not depend on configuration. Whether a field is required, which dropdown values are valid,
+/// lengths, patterns and the format of an ID value are the administrator's configuration, applied by the validation engine
+/// and <c>IdFormatRules</c>. The static <c>BeValid…</c> helpers below are the checkers those rules use.
 /// </summary>
 public class CreateCustomerDtoValidator : AbstractValidator<CreateCustomerDto>
 {
-    /// <summary>ID types the customer record can currently store (it has a column for each).</summary>
-    public static readonly string[] SupportedIdTypes = { "NRIC Number", "Passport Number", "Account Number" };
-
     public CreateCustomerDtoValidator()
     {
         RuleFor(x => x.FullName).MaximumLength(100);
 
-        RuleFor(x => x.IdType)
-            .Must(t => string.IsNullOrWhiteSpace(t) || SupportedIdTypes.Contains(t.Trim(), StringComparer.OrdinalIgnoreCase))
-            .WithMessage(x => $"ID type '{x.IdType}' is not supported. Supported: {string.Join(", ", SupportedIdTypes)}.");
-
-        RuleFor(x => x)
-            .Must(HaveValidIdValue)
-            .When(x => !string.IsNullOrWhiteSpace(GetEffectiveIdValue(x)))
-            .WithMessage(x => GetIdValidationErrorMessage(x.IdType, GetEffectiveIdValue(x)));
-
-        RuleFor(x => x)
-            .Must(MatchDateOfBirthWithNric)
-            .WithMessage("Date of Birth does not match the date in the NRIC number.");
-
+        // The format of an ID value (and whether it must match the date of birth) is configuration: the format rule of the
+        // ID type, applied by CustomerService (see IdFormatRules). Only the type-independent check remains here.
         RuleFor(x => x.DateOfBirth)
             .LessThan(DateTime.UtcNow).WithMessage("Date of Birth must be in the past.")
             .When(x => x.DateOfBirth.HasValue);
-    }
-
-    private static string GetEffectiveIdValue(CreateCustomerDto dto)
-    {
-        if (!string.IsNullOrWhiteSpace(dto.IdValue)) return dto.IdValue.Trim();
-        if (dto.IdType == "Passport Number" && !string.IsNullOrWhiteSpace(dto.Passport)) return dto.Passport.Trim();
-        if (dto.IdType == "Account Number" && !string.IsNullOrWhiteSpace(dto.AccountNumber)) return dto.AccountNumber.Trim();
-        if (!string.IsNullOrWhiteSpace(dto.NRIC)) return dto.NRIC.Trim();
-        return string.Empty;
-    }
-
-    private static bool HaveValidIdValue(CreateCustomerDto dto)
-    {
-        var id = GetEffectiveIdValue(dto);
-        if (string.IsNullOrWhiteSpace(id)) return false;
-
-        return dto.IdType switch
-        {
-            "Passport Number" => BeValidPassport(id),
-            "Account Number" => BeValidAccountNumber(id),
-            _ => BeValidNric(id)
-        };
-    }
-
-    private static bool MatchDateOfBirthWithNric(CreateCustomerDto dto)
-    {
-        if (string.IsNullOrWhiteSpace(dto.IdType) || !dto.IdType.Contains("NRIC", StringComparison.OrdinalIgnoreCase)) return true;
-        if (!dto.DateOfBirth.HasValue) return true;
-
-        var id = GetEffectiveIdValue(dto);
-        if (!BeValidNric(id)) return true; // Handled by HaveValidIdValue
-
-        var datePart = id.Split('-')[0];
-        var yy = int.Parse(datePart[..2]);
-        var mm = int.Parse(datePart[2..4]);
-        var dd = int.Parse(datePart[4..6]);
-
-        var dob = dto.DateOfBirth.Value;
-        return (dob.Year % 100 == yy && dob.Month == mm && dob.Day == dd);
-    }
-
-    private static string GetIdValidationErrorMessage(string? idType, string idValue)
-    {
-        if (string.IsNullOrWhiteSpace(idValue)) return "This field is required";
-        return idType switch
-        {
-            "Passport Number" => "Passport number must be 6 to 12 alphanumeric characters with no spaces or symbols (e.g. A98765432).",
-            "Account Number" => "Account number must be 4 to 25 alphanumeric characters (e.g. ACC-12345).",
-            _ => "Please enter in correct format"
-        };
     }
 
     public static bool BeValidNric(string id)

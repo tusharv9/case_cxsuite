@@ -186,3 +186,48 @@ export function validatePhoneNumber(phoneNumber, isRequired = true) {
     formatted: `+60 ${contactDigits.slice(0, 2)}-${contactDigits.slice(2, 5)} ${contactDigits.slice(5)}`,
   };
 }
+
+
+// ===== ID FORMAT RULES (client mirror of the backend's IdFormatRules) =====
+// WHICH rule applies to an ID type is configuration: each ID type option arrives with its effective rule key (and a pattern for
+// custom rules). Only the checkers live here, keyed by that rule key. The backend applies the same rules and is the authority.
+
+export const ID_RULE = Object.freeze({
+  MY_NRIC: 'MY_NRIC', PASSPORT: 'PASSPORT', ACCOUNT_NUMBER: 'ACCOUNT_NUMBER', ALPHANUMERIC: 'ALPHANUMERIC', REGEX: 'REGEX', ANY: 'ANY',
+});
+
+/**
+ * @param {string} idValue
+ * @param {{formatRule?: string, formatRegex?: string, formatMessage?: string}|undefined} option  the selected ID type option
+ * @returns {{ isValid: boolean, error?: string }}
+ */
+export function validateIdByRule(idValue, option) {
+  if (!idValue || !idValue.trim()) return { isValid: false, error: 'This field is required' };
+  const clean = idValue.trim();
+  const rule = option?.formatRule || ID_RULE.ANY;
+  const fail = (error) => ({ isValid: false, error });
+
+  switch (rule) {
+    case ID_RULE.MY_NRIC:
+      return validateMalaysianNric(clean) ? { isValid: true } : fail('Please enter in correct format');
+    case ID_RULE.PASSPORT:
+      return /^[A-Za-z0-9]{6,12}$/.test(clean) ? { isValid: true } : fail('Passport number must be 6 to 12 alphanumeric characters with no spaces or symbols (e.g. A98765432).');
+    case ID_RULE.ACCOUNT_NUMBER:
+      return /^[A-Za-z0-9-]{4,25}$/.test(clean) ? { isValid: true } : fail('Account number must be 4 to 25 alphanumeric characters (e.g. ACC-12345).');
+    case ID_RULE.ALPHANUMERIC:
+      return /^[A-Za-z0-9-]{1,30}$/.test(clean) ? { isValid: true } : fail(option?.formatMessage || 'Use letters, digits and hyphens only (up to 30 characters).');
+    case ID_RULE.REGEX:
+      try {
+        return new RegExp(option.formatRegex).test(clean) ? { isValid: true } : fail(option.formatMessage || 'The ID value format is invalid.');
+      } catch {
+        return { isValid: true };   // an unusable pattern is ignored (the server does the same)
+      }
+    default:
+      return { isValid: true };
+  }
+}
+
+/** Only the NRIC rule encodes a birth date, so only it is cross-checked against the date of birth. */
+export function validateIdAgainstDob(idValue, dateOfBirth, option) {
+  return option?.formatRule === ID_RULE.MY_NRIC ? validateNricDateWithDob(idValue, dateOfBirth) : { isValid: true };
+}

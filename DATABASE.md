@@ -71,3 +71,30 @@ variable they are skipped.
 
 - `Cases.SlaOutcome` (text, nullable): persisted result of the SLA clock when a case stops (`Met` / `Breached`). Set by `SlaClock.Stop`; existing closed cases are back-filled once at startup by `SlaMonitorService.BackfillOutcomesAsync`. Lets dashboards count breaches in SQL instead of loading cases.
 - Partial indexes over **open** cases only (`Status NOT IN ('Resolved','Closed','Cancelled')`): `(OwnerId, Status)` and `(DepartmentId, Status)`, plus an index on breached outcomes. Migrations: `SlaOutcomeAndPerformance`, `OpenCaseIndexes`. Back up the database before the first start on an existing deployment.
+
+## Field configuration, lists and countries (migration `CountriesPhoneAndFieldMetadata`)
+
+- **`FieldConfigurations`**: `IsEditable` and `IsSensitive` were removed. A `MaskingRule` other than `None` now masks on its own
+  (the migration sets the rule to `None` where it never took effect because the field was not Sensitive, so nothing newly
+  starts masking). `MinValue` / `MaxValue` hold the bounds of Number and Date fields. Which settings apply to which field type
+  is defined once, in `FieldDefinitionRules`, and served to the UI by `GET /api/metadata/field-types`.
+- **Display order** is unique within a form (`ModuleKey` + `SectionKey`). The API enforces it on every save (new fields and fields
+  whose order changed are checked, so old duplicates never block an unrelated save). `UQ_FieldConfigurations_DisplayOrder`
+  (DEFERRABLE) is the database backstop; the migration only creates it when no duplicates exist yet and otherwise prints a
+  NOTICE — duplicates are never renumbered automatically. Fix them in Configurable Settings; a later migration can add the constraint.
+- **`LookupTypes.AllowAdd`**: `false` for `ID_TYPE` (the customer record has a column per supported ID type). A lookup value's
+  `Value` cannot be renamed (records store it); its label, order and active flag can.
+- **`Countries`**: dial code and national-number length rules (plus an optional pattern) per country; phone validation is data-driven.
+  `Customers.PhoneCountryIso2` records the country; `PhoneNumber` keeps the form `+<dial> <digits>`.
+
+## Type changes, ID format rules, preferences (migration `TypeChangeIdFormatPreferences`)
+
+- **Changing a field's type** is allowed for built-in fields too, within what their storage supports (`BuiltInFieldStorage`: e.g.
+  Date of Birth is a date column, so only Date; Phone allows Phone or Text). The server also streams every stored value of the field
+  through the same validation engine and refuses the change if any would be rejected (`FieldTypeChangeChecker`).
+  `POST /api/ConfigurableSettings/fields/{id}/check-type` is the dry run the editor uses.
+- **`LookupValues.FormatRule / FormatRegex / FormatMessage`** and **`LookupTypes.UsesFormatRules`**: an ID type option says what its ID
+  values must look like (keys in `IdFormatRules`: MY_NRIC, PASSPORT, ACCOUNT_NUMBER, ALPHANUMERIC, REGEX, ANY). A null rule means the
+  built-in default for the type's name, so nothing changes until an administrator edits it. The NRIC/date-of-birth cross-check applies only to MY_NRIC.
+- **`UserPreferences`** (`UserId`, `Key`, `Value`): per-user UI preferences, e.g. `customer360.view-mode`. `GET/PUT /api/preferences/{key}` only ever touches the caller's own rows.
+- Customer list: `sortBy` is limited to a fixed list of columns (`CustomerRepository.SortableColumns`), ties break on `Id`, and trigram indexes cover the searched columns.

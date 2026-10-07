@@ -17,9 +17,11 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
     private readonly ILogger<ConfigurableSettingsService> _logger;
     private readonly INotificationService _notificationService;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IFieldTypeChangeChecker _typeChecker;
 
-    public ConfigurableSettingsService(IConfigurableSettingsRepository repository, AppDbContext context, INotificationService notificationService, IHttpContextAccessor httpContextAccessor, ILogger<ConfigurableSettingsService>? logger = null)
+    public ConfigurableSettingsService(IConfigurableSettingsRepository repository, AppDbContext context, INotificationService notificationService, IHttpContextAccessor httpContextAccessor, ILogger<ConfigurableSettingsService>? logger = null, IFieldTypeChangeChecker? typeChecker = null)
     {
+        _typeChecker = typeChecker ?? new FieldTypeChangeChecker(context, new FieldValidationEngine(context, new ConfigCache(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions())), NullLogger<FieldValidationEngine>.Instance));
         _repository = repository;
         _logger = logger ?? NullLogger<ConfigurableSettingsService>.Instance;
         _context = context;
@@ -75,31 +77,85 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         "fullName", "idType", "idValue", "nric", "passport", "accountNumber", "dateOfBirth", "phoneNumber", "email", "branch", "customerSegment"
     };
 
-    private static readonly string[] AllowedFieldTypes = { "Text", "Number", "Date", "Email", "Phone", "Dropdown", "Checkbox" };
+    private static FieldDefinitionRules.Definition DefinitionOf(string label, string fieldType, string? maskingRule, int visibleChars, int displayOrder,
+        string? regex, int? minLength, int? maxLength, string? minValue, string? maxValue, string? lookup) =>
+        new(label, fieldType, maskingRule ?? "None", visibleChars, displayOrder, regex, minLength, maxLength, minValue, maxValue, lookup);
 
     /// <summary>
-    /// Rejects field metadata the validation engine could not honour, at SAVE time — so a typo in a pattern is an
-    /// immediate, clear error for the administrator instead of a silently ignored rule later.
+    /// Checks a field definition at SAVE time, so a typo in a pattern, an unknown list or a settings combination the
+    /// field type cannot honour is an immediate, clear error for the administrator instead of a silently ignored rule later.
     /// </summary>
-    private async Task ValidateFieldMetadataAsync(string label, string fieldType, string? regex, int? minLength, int? maxLength, string? lookupTypeCode, bool visible, CancellationToken ct)
+    private async Task<List<FieldError>> CheckDefinitionAsync(FieldDefinitionRules.Definition d, CancellationToken ct, string? prefix = null)
     {
-        if (!AllowedFieldTypes.Contains(fieldType ?? string.Empty, StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"'{fieldType}' is not a valid field type for '{label}'. Valid types: {string.Join(", ", AllowedFieldTypes)}.");
-        if (minLength is < 0 || maxLength is < 0)
-            throw new InvalidOperationException($"Length limits for '{label}' cannot be negative.");
-        if (minLength.HasValue && maxLength.HasValue && minLength > maxLength)
-            throw new InvalidOperationException($"Minimum length for '{label}' cannot be greater than its maximum length.");
-        if (!string.IsNullOrWhiteSpace(regex))
+        var errors = FieldDefinitionRules.Check(d);
+        var type = FieldDefinitionRules.CanonicalType(d.FieldType);
+        if (type != null && FieldDefinitionRules.ByType[type].Lookup && !string.IsNullOrWhiteSpace(d.LookupTypeCode))
         {
-            try { _ = new System.Text.RegularExpressions.Regex(regex, System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(250)); }
-            catch (ArgumentException ex) { throw new InvalidOperationException($"The validation pattern for '{label}' is not a valid regular expression: {ex.Message}"); }
+            var known = await _context.LookupTypes.AsNoTracking().AnyAsync(t => t.Code == d.LookupTypeCode, ct);
+            if (!known) errors.Add(new FieldError("lookupTypeCode", $"The list '{d.LookupTypeCode}' does not exist."));
         }
-        if (string.Equals(fieldType, "Dropdown", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(lookupTypeCode))
+        return prefix == null ? errors : errors.Select(e => e with { Message = $"{prefix}: {e.Message}" }).ToList();
+    }
+
+    /// <summary>
+    /// A field may not take a display order another field in the same form already has (a form needs a deterministic
+    /// order). Only rows that are NEW or whose order CHANGED are checked, so old duplicates among untouched fields never
+    /// block an unrelated save — they are reported the first time someone edits one of them.
+    /// </summary>
+    private static void CheckDisplayOrders(IReadOnlyList<(Guid Id, string Key, string Label, int Order, bool Touched)> final, List<FieldError> errors)
+    {
+        foreach (var row in final.Where(r => r.Touched))
         {
-            var known = await _context.LookupTypes.AsNoTracking().AnyAsync(t => t.Code == lookupTypeCode, ct);
-            if (!known) throw new InvalidOperationException($"The list '{lookupTypeCode}' chosen for '{label}' does not exist.");
+            if (final.Any(o => o.Id != row.Id && o.Order == row.Order))
+                errors.Add(new FieldError(row.Key, string.Format(FieldDefinitionRules.DisplayOrderMessage, row.Order)));
         }
     }
+
+    private static FieldConfiguration NewEntity(CreateCustomFieldDto dto, string moduleKey, string sectionKey)
+    {
+        var def = DefinitionOf(dto.DisplayLabel, dto.FieldType, dto.MaskingRule, dto.VisibleChars, dto.DisplayOrder,
+            dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.MinValue, dto.MaxValue, dto.LookupTypeCode);
+        var n = FieldDefinitionRules.Normalize(def, dto.ValidationMessage);
+        return new FieldConfiguration
+        {
+            Id = Guid.NewGuid(),
+            ModuleKey = moduleKey,
+            SectionKey = sectionKey,
+            ApiField = string.IsNullOrWhiteSpace(dto.ApiField) ? SanitizeApiField(dto.DisplayLabel) : dto.ApiField.Trim(),
+            DisplayLabel = dto.DisplayLabel.Trim(),
+            FieldType = FieldDefinitionRules.CanonicalType(dto.FieldType)!,
+            IsVisible = dto.IsVisible,
+            IsRequired = dto.IsRequired,
+            MaskingRule = n.MaskingRule,
+            VisibleChars = n.VisibleChars,
+            DisplayOrder = dto.DisplayOrder,
+            LookupTypeCode = n.Lookup,
+            ValidationRegex = n.Regex,
+            ValidationMessage = n.Message,
+            MinLength = n.Min,
+            MaxLength = n.Max,
+            MinValue = n.MinValue,
+            MaxValue = n.MaxValue,
+            IsCustomField = true
+        };
+    }
+
+    /// <summary>The key becomes a property name in API payloads and a column value key: keep it a plain identifier, and never let it shadow a built-in field.</summary>
+    private static FieldError? CheckNewKey(FieldConfiguration entity)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(entity.ApiField, @"^[A-Za-z][A-Za-z0-9_]{0,49}$"))
+            return new FieldError("displayLabel", $"'{entity.ApiField}' is not a valid field key. Use letters, digits and underscores, starting with a letter (max 50).");
+        if (ReservedFieldKeys.Contains(entity.ApiField))
+            return new FieldError("displayLabel", $"'{entity.ApiField}' is a built-in field name and cannot be used for a custom field.");
+        return null;
+    }
+
+    private static string Summarize(FieldConfiguration f) =>
+        $"Label: {f.DisplayLabel}, Type: {f.FieldType}, Visible: {f.IsVisible}, Required: {f.IsRequired}, Order: {f.DisplayOrder}, Masking: {f.MaskingRule}" +
+        (f.LookupTypeCode != null ? $", List: {f.LookupTypeCode}" : "") +
+        (f.ValidationRegex != null ? $", Pattern: {f.ValidationRegex}" : "") +
+        (f.MinLength != null || f.MaxLength != null ? $", Length: {f.MinLength}-{f.MaxLength}" : "") +
+        (f.MinValue != null || f.MaxValue != null ? $", Range: {f.MinValue}..{f.MaxValue}" : "");
 
     public async Task<IEnumerable<FieldConfigurationDto>> GetFieldConfigurationsAsync(string moduleKey, string? sectionKey = null, CancellationToken ct = default)
     {
@@ -107,99 +163,163 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         return fields.Select(MapToDto);
     }
 
-    public async Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfigurationDto> fields, CancellationToken ct = default)
+    public async Task<IReadOnlyList<FieldConfigurationDto>> SaveFieldConfigurationsAsync(UpdateFieldConfigurationsRequest request, CancellationToken ct = default)
     {
-        foreach (var dto in fields)
-            await ValidateFieldMetadataAsync(dto.DisplayLabel, dto.FieldType, dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.LookupTypeCode, dto.IsVisible, ct);
+        var moduleKey = request.ModuleKey;
+        var sectionKey = request.SectionKey;
+        var errors = new List<FieldError>();
+        var existing = (await _repository.GetFieldConfigurationsAsync(moduleKey, sectionKey, ct)).ToList();
 
-        var entities = fields.Select(dto => MapToEntity(dto, moduleKey, sectionKey));
-        await _repository.SaveFieldConfigurationsAsync(moduleKey, sectionKey, entities, ct);
-        await RecordAuditLogAsync("UPDATE", $"Section Fields: {sectionKey}", $"Saved field configurations layout for {sectionKey}", null, $"{fields.Count()} fields updated", ct);
+        var updates = new List<FieldConfiguration>();
+        var final = existing.ToDictionary(e => e.Id, e => (Key: e.ApiField, Label: e.DisplayLabel, Order: e.DisplayOrder, Touched: false));
+
+        foreach (var dto in request.Update)
+        {
+            var current = existing.FirstOrDefault(e => e.Id == dto.Id);
+            var key = string.IsNullOrWhiteSpace(dto.ApiField) ? dto.DisplayLabel : dto.ApiField;
+            if (current == null)
+            {
+                errors.Add(new FieldError(key, $"'{dto.DisplayLabel}' no longer exists in this form. Reload the page and try again."));
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(dto.DisplayLabel))
+            {
+                errors.Add(new FieldError(key, $"{current.ApiField}: a display label is required."));
+                continue;
+            }
+
+            var fieldType = string.IsNullOrWhiteSpace(dto.FieldType) ? current.FieldType : dto.FieldType;
+            var def = DefinitionOf(dto.DisplayLabel, fieldType, dto.MaskingRule, dto.VisibleChars, dto.DisplayOrder,
+                dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.MinValue, dto.MaxValue, dto.LookupTypeCode);
+            var defErrors = await CheckDefinitionAsync(def, ct, dto.DisplayLabel);
+            if (defErrors.Count > 0) { errors.AddRange(defErrors.Select(e => e with { Field = key })); continue; }
+
+            var n = FieldDefinitionRules.Normalize(def, dto.ValidationMessage);
+
+            // A different type is only allowed if the storage can hold it and every stored value still fits.
+            if (!string.Equals(current.FieldType, fieldType, StringComparison.OrdinalIgnoreCase))
+            {
+                var verdict = await _typeChecker.CheckAsync(current, ProposedFrom(current, dto, fieldType, n), ct);
+                if (!verdict.Ok) { errors.Add(new FieldError(key, verdict.Message!)); continue; }
+            }
+
+            updates.Add(new FieldConfiguration
+            {
+                Id = current.Id,
+                DisplayLabel = dto.DisplayLabel.Trim(),
+                FieldType = FieldDefinitionRules.CanonicalType(fieldType)!,
+                IsVisible = dto.IsVisible,
+                IsRequired = dto.IsRequired,
+                MaskingRule = n.MaskingRule,
+                VisibleChars = n.VisibleChars,
+                DisplayOrder = dto.DisplayOrder,
+                LookupTypeCode = n.Lookup,
+                ValidationRegex = n.Regex,
+                ValidationMessage = n.Message,
+                MinLength = n.Min,
+                MaxLength = n.Max,
+                MinValue = n.MinValue,
+                MaxValue = n.MaxValue
+            });
+            final[current.Id] = (current.ApiField, dto.DisplayLabel.Trim(), dto.DisplayOrder, dto.DisplayOrder != current.DisplayOrder);
+        }
+
+        var creates = new List<FieldConfiguration>();
+        foreach (var dto in request.Create)
+        {
+            var label = dto.DisplayLabel?.Trim() ?? string.Empty;
+            if (label.Length == 0) { errors.Add(new FieldError("displayLabel", "A new field needs a display label.")); continue; }
+            dto.DisplayLabel = label;
+
+            var def = DefinitionOf(label, dto.FieldType, dto.MaskingRule, dto.VisibleChars, dto.DisplayOrder,
+                dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.MinValue, dto.MaxValue, dto.LookupTypeCode);
+            var defErrors = await CheckDefinitionAsync(def, ct, label);
+            if (defErrors.Count > 0) { errors.AddRange(defErrors.Select(e => e with { Field = label })); continue; }
+
+            var entity = NewEntity(dto, moduleKey, sectionKey);
+            var keyError = CheckNewKey(entity);
+            if (keyError != null) { errors.Add(keyError with { Field = label }); continue; }
+            if (existing.Any(e => e.ApiField.Equals(entity.ApiField, StringComparison.OrdinalIgnoreCase)) ||
+                creates.Any(c => c.ApiField.Equals(entity.ApiField, StringComparison.OrdinalIgnoreCase)))
+            {
+                errors.Add(new FieldError(label, $"A field with the key '{entity.ApiField}' already exists in this form. Use a different label."));
+                continue;
+            }
+            creates.Add(entity);
+            final[entity.Id] = (entity.ApiField, label, entity.DisplayOrder, true);
+        }
+
+        CheckDisplayOrders(final.Select(kv => (kv.Key, kv.Value.Key, kv.Value.Label, kv.Value.Order, kv.Value.Touched)).ToList(), errors);
+        if (errors.Count > 0) throw new FieldValidationException(errors);
+
+        var before = existing.ToDictionary(e => e.Id, Summarize);
+        await _repository.SaveFieldConfigurationsAsync(moduleKey, sectionKey, updates, creates, ct);
+
+        var after = (await _repository.GetFieldConfigurationsAsync(moduleKey, sectionKey, ct)).ToList();
+        foreach (var f in after)
+        {
+            if (!before.TryGetValue(f.Id, out var old))
+                await RecordAuditLogAsync("CREATE", $"Field: {f.DisplayLabel}", $"Created custom configurable field '{f.DisplayLabel}' ({f.ApiField}) in section {sectionKey}", null, Summarize(f), ct);
+            else if (old != Summarize(f))
+                await RecordAuditLogAsync("UPDATE", $"Field: {f.DisplayLabel}", $"Updated field configuration '{f.DisplayLabel}' in section {sectionKey}", old, Summarize(f), ct);
+        }
+        return after.Select(MapToDto).ToList();
+    }
+
+    private static FieldConfiguration ProposedFrom(FieldConfiguration current, FieldConfigurationDto dto, string fieldType,
+        (string? Regex, string? Message, int? Min, int? Max, string? MinValue, string? MaxValue, string? Lookup, string MaskingRule, int VisibleChars) n) => new()
+    {
+        Id = current.Id, ModuleKey = current.ModuleKey, SectionKey = current.SectionKey, ApiField = current.ApiField, IsCustomField = current.IsCustomField,
+        DisplayLabel = dto.DisplayLabel.Trim(), FieldType = FieldDefinitionRules.CanonicalType(fieldType)!, IsRequired = dto.IsRequired, IsVisible = dto.IsVisible,
+        ValidationRegex = n.Regex, ValidationMessage = n.Message, MinLength = n.Min, MaxLength = n.Max, MinValue = n.MinValue, MaxValue = n.MaxValue, LookupTypeCode = n.Lookup
+    };
+
+    /// <summary>Dry run for the editor: would this field be accepted with the proposed type and rules? (The save runs the same check.)</summary>
+    public async Task<TypeChangeResult?> CheckTypeChangeAsync(Guid id, FieldConfigurationDto proposal, CancellationToken ct = default)
+    {
+        var current = await _repository.GetFieldConfigurationAsync(id, ct);
+        if (current == null) return null;
+        var type = string.IsNullOrWhiteSpace(proposal.FieldType) ? current.FieldType : proposal.FieldType;
+        if (FieldDefinitionRules.CanonicalType(type) == null)
+            return new TypeChangeResult(false, $"'{type}' is not a valid field type.", 0, BuiltInFieldStorage.AllowedTypes(current));
+        proposal.DisplayLabel = string.IsNullOrWhiteSpace(proposal.DisplayLabel) ? current.DisplayLabel : proposal.DisplayLabel;
+        var def = DefinitionOf(proposal.DisplayLabel, type, proposal.MaskingRule, proposal.VisibleChars, proposal.DisplayOrder,
+            proposal.ValidationRegex, proposal.MinLength, proposal.MaxLength, proposal.MinValue, proposal.MaxValue, proposal.LookupTypeCode);
+        return await _typeChecker.CheckAsync(current, ProposedFrom(current, proposal, type, FieldDefinitionRules.Normalize(def, proposal.ValidationMessage)), ct);
     }
 
     public async Task<FieldConfigurationDto> AddCustomFieldAsync(CreateCustomFieldDto dto, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(dto.DisplayLabel))
-            throw new InvalidOperationException("A field needs a display label.");
-        await ValidateFieldMetadataAsync(dto.DisplayLabel, dto.FieldType, dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.LookupTypeCode, dto.IsVisible, ct);
-
-        var entity = new FieldConfiguration
-        {
-            ModuleKey = string.IsNullOrWhiteSpace(dto.ModuleKey) ? "Customer360" : dto.ModuleKey,
-            SectionKey = string.IsNullOrWhiteSpace(dto.SectionKey) ? "AddNewCustomer" : dto.SectionKey,
-            ApiField = string.IsNullOrWhiteSpace(dto.ApiField) ? SanitizeApiField(dto.DisplayLabel) : dto.ApiField,
-            DisplayLabel = dto.DisplayLabel,
-            FieldType = dto.FieldType,
-            IsVisible = dto.IsVisible,
-            IsRequired = dto.IsRequired,
-            IsEditable = dto.IsEditable,
-            IsSensitive = dto.IsSensitive,
-            MaskingRule = dto.MaskingRule,
-            VisibleChars = dto.VisibleChars,
-            DisplayOrder = dto.DisplayOrder,
-            LookupTypeCode = string.IsNullOrWhiteSpace(dto.LookupTypeCode) ? null : dto.LookupTypeCode,
-            ValidationRegex = string.IsNullOrWhiteSpace(dto.ValidationRegex) ? null : dto.ValidationRegex,
-            ValidationMessage = string.IsNullOrWhiteSpace(dto.ValidationMessage) ? null : dto.ValidationMessage.Trim(),
-            MinLength = dto.MinLength,
-            MaxLength = dto.MaxLength,
-            IsCustomField = true
-        };
-
-        // The key becomes a property name in API payloads and a column value key: keep it a plain identifier, and
-        // never let it shadow one of the form's built-in fields.
-        if (!System.Text.RegularExpressions.Regex.IsMatch(entity.ApiField, @"^[A-Za-z][A-Za-z0-9_]{0,49}$"))
-            throw new InvalidOperationException($"'{entity.ApiField}' is not a valid field key. Use letters, digits and underscores, starting with a letter (max 50).");
-        if (ReservedFieldKeys.Contains(entity.ApiField))
-            throw new InvalidOperationException($"'{entity.ApiField}' is a built-in field name and cannot be used for a custom field.");
-
-        if (await _repository.FieldExistsAsync(entity.ModuleKey, entity.SectionKey, entity.ApiField, null, ct))
-        {
-            throw new InvalidOperationException($"A field with the key '{entity.ApiField}' already exists in this section.");
-        }
-
-        var created = await _repository.AddFieldConfigurationAsync(entity, ct);
-        await RecordAuditLogAsync("CREATE", $"Field: {created.DisplayLabel}", $"Created custom configurable field '{created.DisplayLabel}' ({created.ApiField}) in section {created.SectionKey}", null, $"Label: {created.DisplayLabel}, Type: {created.FieldType}, Section: {created.SectionKey}", ct);
-        return MapToDto(created);
+        var module = string.IsNullOrWhiteSpace(dto.ModuleKey) ? "Customer360" : dto.ModuleKey;
+        var section = string.IsNullOrWhiteSpace(dto.SectionKey) ? "AddNewCustomer" : dto.SectionKey;
+        var saved = await SaveFieldConfigurationsAsync(new UpdateFieldConfigurationsRequest { ModuleKey = module, SectionKey = section, Create = new() { dto } }, ct);
+        var key = string.IsNullOrWhiteSpace(dto.ApiField) ? SanitizeApiField(dto.DisplayLabel.Trim()) : dto.ApiField.Trim();
+        return saved.First(f => f.ApiField.Equals(key, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task<FieldConfigurationDto?> UpdateFieldConfigurationAsync(Guid id, UpdateFieldConfigurationDto dto, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(dto.DisplayLabel))
-            throw new InvalidOperationException("Display label is required.");
-
-        var fieldType = string.IsNullOrWhiteSpace(dto.FieldType) ? "Text" : dto.FieldType;
-        await ValidateFieldMetadataAsync(dto.DisplayLabel, fieldType, dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.LookupTypeCode, dto.IsVisible, ct);
-
-        // Looked up by id alone: the old code searched only the Customer360 module, so the audit "before" value
-        // was missing for every other module.
         var existing = await _repository.GetFieldConfigurationAsync(id, ct);
-        var oldVal = existing != null ? $"Label: {existing.DisplayLabel}, Type: {existing.FieldType}, Visible: {existing.IsVisible}, Required: {existing.IsRequired}, Masking: {existing.MaskingRule}" : null;
+        if (existing == null) return null;
 
-        var entity = new FieldConfiguration
+        var fieldType = string.IsNullOrWhiteSpace(dto.FieldType) ? existing.FieldType : dto.FieldType;
+        var saved = await SaveFieldConfigurationsAsync(new UpdateFieldConfigurationsRequest
         {
-            DisplayLabel = dto.DisplayLabel.Trim(),
-            FieldType = fieldType,
-            IsVisible = dto.IsVisible,
-            IsRequired = dto.IsRequired,
-            IsEditable = dto.IsEditable,
-            IsSensitive = dto.IsSensitive,
-            MaskingRule = string.IsNullOrWhiteSpace(dto.MaskingRule) ? "None" : dto.MaskingRule,
-            VisibleChars = dto.VisibleChars < 0 ? 0 : dto.VisibleChars,
-            DisplayOrder = dto.DisplayOrder,
-            LookupTypeCode = string.IsNullOrWhiteSpace(dto.LookupTypeCode) ? null : dto.LookupTypeCode,
-            ValidationRegex = string.IsNullOrWhiteSpace(dto.ValidationRegex) ? null : dto.ValidationRegex,
-            ValidationMessage = string.IsNullOrWhiteSpace(dto.ValidationMessage) ? null : dto.ValidationMessage.Trim(),
-            MinLength = dto.MinLength,
-            MaxLength = dto.MaxLength
-        };
-
-        var updated = await _repository.UpdateFieldConfigurationAsync(id, entity, ct);
-        if (updated != null)
-        {
-            var newVal = $"Label: {updated.DisplayLabel}, Type: {updated.FieldType}, Visible: {updated.IsVisible}, Required: {updated.IsRequired}, Masking: {updated.MaskingRule}";
-            await RecordAuditLogAsync("UPDATE", $"Field: {updated.DisplayLabel}", $"Updated field configuration '{updated.DisplayLabel}'", oldVal, newVal, ct);
-        }
-        return updated == null ? null : MapToDto(updated);
+            ModuleKey = existing.ModuleKey,
+            SectionKey = existing.SectionKey,
+            Update = new()
+            {
+                new FieldConfigurationDto
+                {
+                    Id = id, ApiField = existing.ApiField, DisplayLabel = dto.DisplayLabel, FieldType = fieldType,
+                    IsVisible = dto.IsVisible, IsRequired = dto.IsRequired, MaskingRule = dto.MaskingRule, VisibleChars = dto.VisibleChars,
+                    DisplayOrder = dto.DisplayOrder, LookupTypeCode = dto.LookupTypeCode, ValidationRegex = dto.ValidationRegex,
+                    ValidationMessage = dto.ValidationMessage, MinLength = dto.MinLength, MaxLength = dto.MaxLength,
+                    MinValue = dto.MinValue, MaxValue = dto.MaxValue
+                }
+            }
+        }, ct);
+        return saved.FirstOrDefault(f => f.Id == id);
     }
 
     public async Task<bool> DeleteFieldConfigurationAsync(Guid id, CancellationToken ct = default)
@@ -221,7 +341,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
     public async Task<IEnumerable<LookupTypeDto>> GetLookupTypesAsync(CancellationToken ct = default)
     {
         var types = await _context.LookupTypes.AsNoTracking().OrderBy(t => t.Name).ToListAsync(ct);
-        return types.Select(t => new LookupTypeDto { Code = t.Code, Name = t.Name, Description = t.Description });
+        return types.Select(t => new LookupTypeDto { Code = t.Code, Name = t.Name, Description = t.Description, AllowAdd = t.AllowAdd, UsesFormatRules = t.UsesFormatRules });
     }
 
     public async Task<IEnumerable<LookupValueDto>> GetLookupValuesAsync(string typeCode, bool activeOnly = true, CancellationToken ct = default)
@@ -244,6 +364,8 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         if (string.IsNullOrWhiteSpace(entity.Value))
             throw new InvalidOperationException("Value is required.");
 
+        await EnsureCanAddAsync(entity.TypeCode, ct);
+
         if (await _repository.LookupValueExistsAsync(entity.TypeCode, entity.Value, null, ct))
             throw new InvalidOperationException($"'{entity.Value}' already exists in this list.");
 
@@ -265,6 +387,11 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         var current = await _repository.GetLookupValueAsync(id, ct);
         if (current == null) return null;
 
+        // Records store the VALUE itself (a customer keeps "English", not a reference to a row), so changing it would
+        // strand every record that already uses it. The label, order and active flag are freely editable.
+        if (!string.Equals(current.Value, entity.Value, StringComparison.Ordinal))
+            throw new InvalidOperationException($"The value '{current.Value}' cannot be renamed because existing records store it. Edit its label instead, or disable it and add a new option.");
+
         var oldVal = $"Label: {current.Label}, Value: {current.Value}, Active: {current.IsActive}";
 
         if (await _repository.LookupValueExistsAsync(current.TypeCode, entity.Value, id, ct))
@@ -279,9 +406,105 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         return updated == null ? null : MapLookupDto(updated);
     }
 
+    private async Task EnsureCanDeleteAsync(string typeCode, CancellationToken ct)
+    {
+        var type = await _context.LookupTypes.AsNoTracking().FirstOrDefaultAsync(t => t.Code == typeCode, ct);
+        if (type is { AllowAdd: false })
+            throw new InvalidOperationException($"Options of '{type.Name}' cannot be deleted: the system supports a fixed set. Switch the option off instead.");
+    }
+
+    private async Task EnsureCanAddAsync(string typeCode, CancellationToken ct)
+    {
+        var type = await _context.LookupTypes.AsNoTracking().FirstOrDefaultAsync(t => t.Code == typeCode, ct);
+        if (type is { AllowAdd: false })
+            throw new InvalidOperationException($"New options cannot be added to '{type.Name}': the system supports a fixed set. You can switch the existing ones on or off.");
+    }
+
+    /// <summary>
+    /// Saves every pending option change of one list together: all of it is applied, or none of it. This is what the
+    /// field drawer's "manage options" panel calls, so a list can be edited from the field that uses it without a
+    /// separate Master Lookup screen being the only place that knows how.
+    /// </summary>
+    public async Task<IReadOnlyList<LookupValueDto>> SaveLookupValuesAsync(string typeCode, SaveLookupValuesRequest request, CancellationToken ct = default)
+    {
+        string? createdListNote = null;
+        var type = await _context.LookupTypes.FirstOrDefaultAsync(t => t.Code == typeCode, ct);
+        if (type == null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Name))
+                throw new KeyNotFoundException($"The list '{typeCode}' does not exist.");
+            if (!System.Text.RegularExpressions.Regex.IsMatch(typeCode, @"^[A-Z][A-Z0-9_]{1,59}$"))
+                throw new FieldValidationException(new[] { new FieldError("name", "A list's code must be 2-60 capital letters, digits or underscores, starting with a letter.") });
+            type = new LookupType { Id = Guid.NewGuid(), Code = typeCode, Name = request.Name.Trim(), Description = $"Options of {request.Name.Trim()}", AllowAdd = true, CreatedAt = DateTime.UtcNow };
+            _context.LookupTypes.Add(type);
+            createdListNote = $"Created list '{type.Name}' ({type.Code})";
+        }
+        var current = await _context.LookupValues.Where(v => v.LookupTypeId == type.Id).ToListAsync(ct);
+        var errors = new List<FieldError>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var changes = new List<(string Action, string Text, string? Old, string? New)>();
+
+        foreach (var draft in request.Values)
+        {
+            var value = draft.Value?.Trim() ?? string.Empty;
+            var label = string.IsNullOrWhiteSpace(draft.Label) ? value : draft.Label.Trim();
+            var existing = draft.Id.HasValue ? current.FirstOrDefault(v => v.Id == draft.Id.Value) : null;
+
+            if (draft.Id.HasValue && existing == null) { errors.Add(new FieldError(label, $"'{label}' no longer exists. Reload and try again.")); continue; }
+            if (existing != null) value = existing.Value;   // the stored value is immutable; see UpdateLookupValueAsync
+            if (value.Length == 0) { errors.Add(new FieldError("value", "Every option needs a value.")); continue; }
+            if (!seen.Add(value)) { errors.Add(new FieldError(value, $"'{value}' appears twice in this list.")); continue; }
+
+            // Format rule (ID-type lists only): which kind of ID value this option accepts.
+            string? formatRule = null, formatRegex = null, formatMessage = null;
+            if (type.UsesFormatRules)
+            {
+                formatRule = string.IsNullOrWhiteSpace(draft.FormatRule) ? null : draft.FormatRule.Trim();
+                formatRegex = formatRule == IdFormatRules.Regex && !string.IsNullOrWhiteSpace(draft.FormatRegex) ? draft.FormatRegex.Trim() : null;
+                formatMessage = string.IsNullOrWhiteSpace(draft.FormatMessage) ? null : draft.FormatMessage.Trim();
+                var ruleError = IdFormatRules.CheckDefinition(formatRule, formatRegex);
+                if (ruleError != null) { errors.Add(new FieldError(value, $"{label}: {ruleError}")); continue; }
+            }
+
+            if (existing == null)
+            {
+                if (!type.AllowAdd) { errors.Add(new FieldError(value, $"New options cannot be added to '{type.Name}': the system supports a fixed set.")); continue; }
+                var added = new LookupValue
+                {
+                    Id = Guid.NewGuid(), LookupTypeId = type.Id, TypeCode = type.Code, Value = value, Label = label,
+                    DisplayOrder = draft.DisplayOrder, IsActive = draft.IsActive, CreatedAt = DateTime.UtcNow,
+                    FormatRule = formatRule, FormatRegex = formatRegex, FormatMessage = formatMessage
+                };
+                _context.LookupValues.Add(added);
+                changes.Add(("CREATE", $"Added option '{label}' to list '{type.Name}'", null, $"Value: {value}, Active: {draft.IsActive}"));
+            }
+            else if (existing.Label != label || existing.DisplayOrder != draft.DisplayOrder || existing.IsActive != draft.IsActive
+                     || (type.UsesFormatRules && (existing.FormatRule != formatRule || existing.FormatRegex != formatRegex || existing.FormatMessage != formatMessage)))
+            {
+                changes.Add(("UPDATE", $"Updated option '{existing.Label}' of list '{type.Name}'",
+                    $"Label: {existing.Label}, Order: {existing.DisplayOrder}, Active: {existing.IsActive}",
+                    $"Label: {label}, Order: {draft.DisplayOrder}, Active: {draft.IsActive}"));
+                existing.Label = label;
+                existing.DisplayOrder = draft.DisplayOrder;
+                existing.IsActive = draft.IsActive;
+                if (type.UsesFormatRules) { existing.FormatRule = formatRule; existing.FormatRegex = formatRegex; existing.FormatMessage = formatMessage; }
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        if (errors.Count > 0) throw new FieldValidationException(errors);
+        await _context.SaveChangesAsync(ct);
+        if (createdListNote != null) await RecordAuditLogAsync("CREATE", $"Lookup list: {type.Name}", createdListNote, null, null, ct);
+        foreach (var c in changes) await RecordAuditLogAsync(c.Action, $"Lookup: {type.Name}", c.Text, c.Old, c.New, ct);
+
+        var all = await _repository.GetLookupValuesAsync(typeCode, activeOnly: false, ct);
+        return all.Select(MapLookupDto).ToList();
+    }
+
     public async Task<bool> DeleteLookupValueAsync(Guid id, CancellationToken ct = default)
     {
         var existing = await _repository.GetLookupValueAsync(id, ct);
+        if (existing != null) await EnsureCanDeleteAsync(existing.TypeCode, ct);
         var oldVal = existing != null ? $"Label: {existing.Label}, Value: {existing.Value}, TypeCode: {existing.TypeCode}" : $"ID: {id}";
         var label = existing?.Label ?? existing?.Value ?? "Lookup Item";
 
@@ -303,32 +526,6 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
     private static FieldConfigurationDto MapToDto(FieldConfiguration entity) => FieldConfigurationDto.From(entity);
 
-    private static FieldConfiguration MapToEntity(FieldConfigurationDto dto, string defaultModule, string defaultSection)
-    {
-        return new FieldConfiguration
-        {
-            Id = dto.Id,
-            ModuleKey = string.IsNullOrWhiteSpace(dto.ModuleKey) ? defaultModule : dto.ModuleKey,
-            SectionKey = string.IsNullOrWhiteSpace(dto.SectionKey) ? defaultSection : dto.SectionKey,
-            ApiField = dto.ApiField,
-            DisplayLabel = dto.DisplayLabel,
-            IsVisible = dto.IsVisible,
-            IsRequired = dto.IsRequired,
-            IsEditable = dto.IsEditable,
-            IsSensitive = dto.IsSensitive,
-            MaskingRule = dto.MaskingRule,
-            VisibleChars = dto.VisibleChars,
-            DisplayOrder = dto.DisplayOrder,
-            FieldType = dto.FieldType,
-            ValidationRegex = string.IsNullOrWhiteSpace(dto.ValidationRegex) ? null : dto.ValidationRegex,
-            ValidationMessage = string.IsNullOrWhiteSpace(dto.ValidationMessage) ? null : dto.ValidationMessage.Trim(),
-            MinLength = dto.MinLength,
-            MaxLength = dto.MaxLength,
-            LookupTypeCode = dto.LookupTypeCode,
-            IsCustomField = dto.IsCustomField
-        };
-    }
-
     private static LookupValueDto MapLookupDto(LookupValue entity)
     {
         return new LookupValueDto
@@ -339,7 +536,10 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             Value = entity.Value,
             Label = entity.Label,
             DisplayOrder = entity.DisplayOrder,
-            IsActive = entity.IsActive
+            IsActive = entity.IsActive,
+            FormatRule = entity.FormatRule,
+            FormatRegex = entity.FormatRegex,
+            FormatMessage = entity.FormatMessage
         };
     }
 

@@ -6,16 +6,18 @@ using CaseManagement.Api.Models;
 public interface IConfigurableSettingsService
 {
     Task<IEnumerable<FieldConfigurationDto>> GetFieldConfigurationsAsync(string moduleKey, string? sectionKey = null, CancellationToken ct = default);
-    Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfigurationDto> fields, CancellationToken ct = default);
+    Task<IReadOnlyList<FieldConfigurationDto>> SaveFieldConfigurationsAsync(UpdateFieldConfigurationsRequest request, CancellationToken ct = default);
     Task<FieldConfigurationDto> AddCustomFieldAsync(CreateCustomFieldDto dto, CancellationToken ct = default);
     Task<FieldConfigurationDto?> UpdateFieldConfigurationAsync(Guid id, UpdateFieldConfigurationDto dto, CancellationToken ct = default);
     Task<bool> DeleteFieldConfigurationAsync(Guid id, CancellationToken ct = default);
+    Task<TypeChangeResult?> CheckTypeChangeAsync(Guid id, FieldConfigurationDto proposal, CancellationToken ct = default);
 
     Task<IEnumerable<LookupTypeDto>> GetLookupTypesAsync(CancellationToken ct = default);
     Task<IEnumerable<LookupValueDto>> GetLookupValuesAsync(string typeCode, bool activeOnly = true, CancellationToken ct = default);
     Task<LookupValueDto> AddLookupValueAsync(CreateLookupValueDto dto, CancellationToken ct = default);
     Task<LookupValueDto?> UpdateLookupValueAsync(Guid id, UpdateLookupValueDto dto, CancellationToken ct = default);
     Task<bool> DeleteLookupValueAsync(Guid id, CancellationToken ct = default);
+    Task<IReadOnlyList<LookupValueDto>> SaveLookupValuesAsync(string typeCode, SaveLookupValuesRequest request, CancellationToken ct = default);
 
     // Case Management Settings
     Task<IEnumerable<CaseTypeConfigDto>> GetCaseTypesAsync(bool activeOnly = true, CancellationToken ct = default);

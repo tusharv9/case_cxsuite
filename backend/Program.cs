@@ -42,6 +42,25 @@ builder.Services.AddControllers(options =>
         // Enforces [RequirePermission] on the server for every endpoint.
         options.Filters.Add<PermissionAuthorizationFilter>();
     })
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        // A request the framework cannot even bind (a malformed id, a wrong type…) used to reach the user as the raw
+        // .NET message ("The JSON value could not be converted to System.Guid. Path: $.fields[8].id …"). The caller gets a
+        // plain sentence; the technical detail goes to the log, tied to the correlation id.
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ModelBinding");
+            var detail = string.Join(" | ", context.ModelState.Where(e => e.Value?.Errors.Count > 0)
+                .SelectMany(e => e.Value!.Errors.Select(x => $"{e.Key}: {x.ErrorMessage}")));
+            logger.LogWarning("Request rejected by model binding for {Method} {Path}: {Detail}", context.HttpContext.Request.Method, context.HttpContext.Request.Path, detail);
+            var correlationId = context.HttpContext.Items[CaseManagement.Api.Middleware.CorrelationIdMiddleware.Header]?.ToString() ?? string.Empty;
+            return new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(new
+            {
+                error = "Some of the information sent was not in the expected format. Reload the page and try again; if it keeps happening, quote the correlation id.",
+                correlationId
+            });
+        };
+    })
     .AddJsonOptions(options =>
     {
         // Global string sanitization (trimming) for incoming JSON requests
@@ -270,6 +289,9 @@ builder.Services.AddScoped<IConfigurableSettingsService, ConfigurableSettingsSer
 builder.Services.AddScoped<IPiiMaskingService, PiiMaskingService>();
 builder.Services.AddScoped<IFieldValidationEngine, FieldValidationEngine>();
 builder.Services.AddScoped<IMetadataService, MetadataService>();
+builder.Services.AddScoped<ICountryService, CountryService>();
+builder.Services.AddScoped<IIdFormatService, IdFormatService>();
+builder.Services.AddScoped<IFieldTypeChangeChecker, FieldTypeChangeChecker>();
 builder.Services.AddScoped<IBusinessTimeService, BusinessTimeService>();
 builder.Services.AddScoped<IEscalationService, EscalationService>();
 builder.Services.AddScoped<ISlaClockProvider, SlaClockProvider>();

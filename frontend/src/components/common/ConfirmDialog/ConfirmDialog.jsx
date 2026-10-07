@@ -1,11 +1,50 @@
-// ===== REUSABLE CONFIRMATION DIALOG / DELETE DRAWER =====
-// Every destructive action routes through this component with a prominent red header,
-// detailed item inspection layout, deletion impact summary, and explicit cancel/delete safety.
+// ===== REUSABLE CONFIRMATION DIALOG =====
+// One component, two kinds of confirmation. WHAT it says comes from the `context`, so a person closing a half-filled form is
+// never told they are about to delete a configuration item:
+//   CONFIGURATION_DELETE (default) - permanently deleting a configured item: red header, item details, deletion impact.
+//   FORM_DISCARD                   - throwing away what was typed into a form that has not been saved.
 
-import { AlertTriangle, Trash2, CheckCircle2, ShieldAlert, Info } from 'lucide-react';
+import { AlertTriangle, Trash2, Eraser, CheckCircle2, ShieldAlert, Info, FilePenLine } from 'lucide-react';
 import { Button } from '../Button/Button.jsx';
 import { Modal } from '../Modal/Modal.jsx';
 import './ConfirmDialog.css';
+
+export const CONFIRM_CONTEXT = Object.freeze({
+  CONFIGURATION_DELETE: 'CONFIGURATION_DELETE',
+  FORM_DISCARD: 'FORM_DISCARD',
+});
+
+const COPY = {
+  [CONFIRM_CONTEXT.CONFIGURATION_DELETE]: {
+    alertTitle: 'Delete Confirmation',
+    alertText: 'You are about to permanently delete the following configuration item:',
+    itemLabel: 'Selected Item',
+    showStatus: true,
+    impactTitle: 'Deletion Impact',
+    currentBadge: 'Current Configuration',
+    afterBadge: 'After Deletion',
+    afterText: () => 'This configuration will be removed.',
+    warningStrong: 'This action cannot be undone.',
+    warningText: ' Deleting this item may affect where this option is displayed or used in the application.',
+    busyLabel: 'Deleting…',
+    Icon: Trash2,
+  },
+  [CONFIRM_CONTEXT.FORM_DISCARD]: {
+    alertTitle: 'Unsaved Form Data',
+    alertText: 'You are about to discard the information entered in this form.',
+    itemLabel: 'Unsaved Form Data',
+    showStatus: false,
+    impactTitle: 'What Happens Next',
+    currentBadge: 'Current Form Data',
+    afterBadge: 'After Discard',
+    currentText: () => 'The information currently entered in this form has not been saved.',
+    afterText: () => 'All unsaved information entered in this form will be cleared.',
+    warningStrong: 'This action cannot be undone.',
+    warningText: ' Any information entered in this form will be lost.',
+    busyLabel: 'Discarding…',
+    Icon: Eraser,
+  },
+};
 
 function parseItemName(title, message, itemDetails) {
   if (itemDetails?.name || itemDetails?.itemName) {
@@ -32,8 +71,12 @@ export function ConfirmDialog({
   onConfirm,
   itemDetails = null,
   variant = 'destructive',
+  context = CONFIRM_CONTEXT.CONFIGURATION_DELETE,
 }) {
-  const itemName = parseItemName(title, message, itemDetails);
+  const copy = COPY[context] || COPY[CONFIRM_CONTEXT.CONFIGURATION_DELETE];
+  const isDiscard = context === CONFIRM_CONTEXT.FORM_DISCARD;
+  const itemName = isDiscard ? (itemDetails?.name || 'Form Information') : parseItemName(title, message, itemDetails);
+  const ActionIcon = copy.Icon;
 
   return (
     <Modal
@@ -58,7 +101,7 @@ export function ConfirmDialog({
             isLoading={isBusy}
             onClick={onConfirm}
             id="btn-confirm-delete"
-            leftIcon={<Trash2 size={15} />}
+            leftIcon={<ActionIcon size={15} />}
             style={{
               backgroundColor: '#dc2626',
               borderColor: '#b91c1c',
@@ -66,7 +109,7 @@ export function ConfirmDialog({
               boxShadow: '0 2px 8px rgba(220, 38, 38, 0.25)'
             }}
           >
-            {isBusy ? 'Deleting…' : confirmLabel}
+            {isBusy ? copy.busyLabel : confirmLabel}
           </Button>
         </div>
       }
@@ -75,12 +118,12 @@ export function ConfirmDialog({
         {/* 1. TOP ALERT HEADER CARD */}
         <div className="delete-alert-header-card">
           <div className="delete-alert-header-card__icon">
-            <AlertTriangle size={20} />
+            {isDiscard ? <FilePenLine size={20} /> : <AlertTriangle size={20} />}
           </div>
           <div>
-            <h4 className="delete-alert-header-card__title">Delete Confirmation</h4>
+            <h4 className="delete-alert-header-card__title">{copy.alertTitle}</h4>
             <p className="delete-alert-header-card__subtitle">
-              You are about to permanently delete the following configuration item:
+              {copy.alertText}
             </p>
           </div>
         </div>
@@ -88,10 +131,12 @@ export function ConfirmDialog({
         {/* 2. DYNAMIC ITEM DETAILS CARD */}
         <div className="delete-item-details-card">
           <div className="delete-item-details-card__header">
-            <span className="delete-item-details-card__label">Selected Item</span>
-            <span className="delete-item-badge-active">
-              <CheckCircle2 size={11} /> Active
-            </span>
+            <span className="delete-item-details-card__label">{copy.itemLabel}</span>
+            {copy.showStatus && (
+              <span className="delete-item-badge-active">
+                <CheckCircle2 size={11} /> Active
+              </span>
+            )}
           </div>
 
           <div className="delete-item-details-card__name">
@@ -153,17 +198,17 @@ export function ConfirmDialog({
 
         {/* 3. DELETION IMPACT SUMMARY */}
         <div className="delete-impact-card">
-          <h5 className="delete-impact-title">Deletion Impact</h5>
+          <h5 className="delete-impact-title">{copy.impactTitle}</h5>
           <div className="delete-impact-comparison">
             <div className="delete-impact-state delete-impact-state--current">
-              <span className="delete-state-badge">Current Configuration</span>
-              <span className="delete-state-text">{itemName}</span>
+              <span className="delete-state-badge">{copy.currentBadge}</span>
+              <span className="delete-state-text">{copy.currentText ? copy.currentText() : itemName}</span>
             </div>
             <div className="delete-impact-arrow">&rarr;</div>
             <div className="delete-impact-state delete-impact-state--after">
-              <span className="delete-state-badge delete-state-badge--removed">After Deletion</span>
+              <span className="delete-state-badge delete-state-badge--removed">{copy.afterBadge}</span>
               <span className="delete-state-text delete-state-text--muted">
-                This configuration will be removed.
+                {copy.afterText()}
               </span>
             </div>
           </div>
@@ -180,7 +225,7 @@ export function ConfirmDialog({
             <ShieldAlert size={18} />
           </div>
           <div className="delete-warning-banner__text">
-            <strong>This action cannot be undone.</strong> Deleting this item may affect where this option is displayed or used in the application.
+            <strong>{copy.warningStrong}</strong>{copy.warningText}
           </div>
         </div>
 

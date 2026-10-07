@@ -9,6 +9,9 @@ public class CreateCustomerDto
     public string? Passport { get; set; }
     public string? AccountNumber { get; set; }
     public string PhoneNumber { get; set; } = string.Empty;
+
+    /// <summary>Country whose rules the phone number is checked against (ISO 3166-1 alpha-2). Blank = the default country.</summary>
+    public string? PhoneCountryIso2 { get; set; }
     public string Email { get; set; } = string.Empty;
     public string Branch { get; set; } = string.Empty;
     public string? CustomerSegment { get; set; }

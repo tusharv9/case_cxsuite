@@ -41,12 +41,22 @@ export function validateField(config, rawValue, options, opts = {}) {
     case 'phone':
       if ((value.match(/\d/g) || []).length < 7 || /[^\d\s+\-()]/.test(value)) return `${label} must be a valid phone number.`;
       break;
-    case 'date':
-      if (Number.isNaN(Date.parse(value))) return `${label} must be a valid date.`;
+    case 'date': {
+      const time = Date.parse(value);
+      if (Number.isNaN(time)) return `${label} must be a valid date.`;
+      const day = (iso) => Date.parse(`${String(iso).slice(0, 10)}T00:00:00Z`);
+      const asDay = day(value);
+      if (config.minValue && !Number.isNaN(day(config.minValue)) && asDay < day(config.minValue)) return `${label} cannot be before ${String(config.minValue).slice(0, 10)}.`;
+      if (config.maxValue && !Number.isNaN(day(config.maxValue)) && asDay > day(config.maxValue)) return `${label} cannot be after ${String(config.maxValue).slice(0, 10)}.`;
       break;
-    case 'number':
+    }
+    case 'number': {
       if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(value)) return `${label} must be a number.`;
+      const n = Number(value);
+      if (config.minValue !== null && config.minValue !== undefined && config.minValue !== '' && n < Number(config.minValue)) return `${label} must be at least ${config.minValue}.`;
+      if (config.maxValue !== null && config.maxValue !== undefined && config.maxValue !== '' && n > Number(config.maxValue)) return `${label} cannot exceed ${config.maxValue}.`;
       break;
+    }
     case 'checkbox':
       if (!/^(true|false)$/i.test(value)) return `${label} must be true or false.`;
       break;
@@ -86,4 +96,14 @@ export function validateFields(fields, getValue, getOptions, skipRequired = new 
     if (message) errors[config.apiField] = message;
   }
   return errors;
+}
+
+/**
+ * The text a dropdown shows before anything is chosen: "Select Your Preferred Language", "Select Your Home Branch",
+ * "Select Your ID". Built from the configured label (a leading "Choose an" / "Select your" is dropped), so a renamed
+ * or newly added dropdown gets a sensible prompt with no code change.
+ */
+export function dropdownPlaceholder(label) {
+  const core = String(label || 'Option').trim().replace(/^(choose|select|pick)\s+(an?\s+|the\s+|your\s+)?/i, '');
+  return `Select Your ${core || 'Option'}`;
 }

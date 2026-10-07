@@ -11,6 +11,9 @@ public class Customer : AuditableEntity
     public string? AccountNumber { get; set; }
     public string IdType { get; set; } = "NRIC Number";
     public string PhoneNumber { get; set; } = string.Empty;
+
+    /// <summary>ISO 3166-1 alpha-2 code of the country whose dial code prefixes <see cref="PhoneNumber"/>.</summary>
+    public string PhoneCountryIso2 { get; set; } = "MY";
     public string? Email { get; set; }
     
     // Additional 360 data

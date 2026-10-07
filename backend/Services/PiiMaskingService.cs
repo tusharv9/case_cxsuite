@@ -8,7 +8,7 @@ using CaseManagement.Api.Models;
 using Microsoft.EntityFrameworkCore;
 
 /// <summary>
-/// Server-side masking of customer data, driven by field configuration (IsSensitive, MaskingRule,
+/// Server-side masking of customer data, driven by field configuration (MaskingRule,
 /// VisibleChars). This is the ONLY place masking happens: the API never sends a sensitive value the
 /// caller is not entitled to see, so there is nothing for a browser to "mask" afterwards.
 ///
@@ -149,12 +149,12 @@ public class PiiMaskingService : IPiiMaskingService
     private Task<Dictionary<string, Rule>> GetRulesAsync() =>
         _cache.GetOrCreateAsync("pii-rules", async () =>
         {
-            var sensitive = await _context.FieldConfigurations.AsNoTracking()
-                .Where(f => f.IsSensitive && f.MaskingRule != "None" && f.MaskingRule != "")
+            var masked = await _context.FieldConfigurations.AsNoTracking()
+                .Where(f => f.MaskingRule != "None" && f.MaskingRule != "")
                 .ToListAsync();
 
             var result = new Dictionary<string, Rule>(StringComparer.OrdinalIgnoreCase);
-            foreach (var field in sensitive)
+            foreach (var field in masked)
             {
                 var candidate = new Rule(field.MaskingRule, Math.Max(0, field.VisibleChars));
                 if (!result.TryGetValue(field.ApiField, out var existing) || MoreRestrictive(candidate, existing))

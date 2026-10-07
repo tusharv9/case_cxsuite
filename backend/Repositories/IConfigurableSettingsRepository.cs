@@ -5,7 +5,8 @@ using CaseManagement.Api.Models;
 public interface IConfigurableSettingsRepository
 {
     Task<IEnumerable<FieldConfiguration>> GetFieldConfigurationsAsync(string moduleKey, string? sectionKey = null, CancellationToken ct = default);
-    Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfiguration> fields, CancellationToken ct = default);
+    /// <summary>Applies the updates (matched by Id) and inserts the creates in ONE transaction.</summary>
+    Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfiguration> updates, IEnumerable<FieldConfiguration> creates, CancellationToken ct = default);
     Task<FieldConfiguration?> GetFieldConfigurationAsync(Guid id, CancellationToken ct = default);
     Task<FieldConfiguration> AddFieldConfigurationAsync(FieldConfiguration field, CancellationToken ct = default);
     Task<FieldConfiguration?> UpdateFieldConfigurationAsync(Guid id, FieldConfiguration field, CancellationToken ct = default);

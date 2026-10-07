@@ -55,6 +55,15 @@ public interface IFieldValidationEngine
         IEnumerable<string>? customFieldKeys = null,
         IReadOnlySet<string>? requirednessHandledElsewhere = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Checks ONE stored value against a field definition (type, length, range, pattern, list membership). Null = acceptable.
+    /// Used to prove existing data still fits before a field's type is changed.
+    /// </summary>
+    Task<string?> CheckValueAsync(FieldConfiguration config, string value, bool includeInactiveOptions = false);
+
+    /// <summary>The configuration of one field of a form section (null when it is not configured).</summary>
+    Task<FieldConfiguration?> GetConfigAsync(string moduleKey, string sectionKey, string apiField);
 }
 
 /// <summary>
@@ -131,6 +140,21 @@ public sealed class FieldValidationEngine : IFieldValidationEngine
         return new FieldValidationResult { Errors = errors, Normalized = normalized };
     }
 
+    public async Task<FieldConfiguration?> GetConfigAsync(string moduleKey, string sectionKey, string apiField) =>
+        (await GetConfigsAsync(moduleKey, sectionKey)).FirstOrDefault(c => c.ApiField.Equals(apiField, StringComparison.OrdinalIgnoreCase));
+
+    public async Task<string?> CheckValueAsync(FieldConfiguration config, string value, bool includeInactiveOptions = false)
+    {
+        var label = string.IsNullOrWhiteSpace(config.DisplayLabel) ? config.ApiField : config.DisplayLabel;
+        var errors = new List<FieldError>();
+        _includeInactive.Value = includeInactiveOptions;
+        try { await ValidateValueAsync(config, label, value, errors); }
+        finally { _includeInactive.Value = false; }
+        return errors.Count == 0 ? null : errors[0].Message;
+    }
+
+    private readonly AsyncLocal<bool> _includeInactive = new();
+
     private async Task ValidateValueAsync(FieldConfiguration config, string label, string value, List<FieldError> errors)
     {
         if (config.MinLength.HasValue && value.Length < config.MinLength.Value)
@@ -163,19 +187,21 @@ public sealed class FieldValidationEngine : IFieldValidationEngine
                 break;
 
             case "date":
-                if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out _))
+                if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var date))
                 {
                     errors.Add(new FieldError(config.ApiField, $"{label} must be a valid date."));
                     return;
                 }
+                if (!CheckRange(config, label, date.Date.Ticks, errors, d => new DateTime((long)d).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))) return;
                 break;
 
             case "number":
-                if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out _))
+                if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var number))
                 {
                     errors.Add(new FieldError(config.ApiField, $"{label} must be a number."));
                     return;
                 }
+                if (!CheckRange(config, label, number, errors, d => d.ToString(CultureInfo.InvariantCulture))) return;
                 break;
 
             case "checkbox":
@@ -189,7 +215,7 @@ public sealed class FieldValidationEngine : IFieldValidationEngine
             case "dropdown":
                 if (!string.IsNullOrWhiteSpace(config.LookupTypeCode))
                 {
-                    var options = await GetLookupAsync(config.LookupTypeCode);
+                    var options = _includeInactive.Value ? await GetAllLookupAsync(config.LookupTypeCode) : await GetLookupAsync(config.LookupTypeCode);
                     if (!options.ContainsKey(value))
                     {
                         errors.Add(new FieldError(config.ApiField, $"'{value}' is not a valid option for {label}."));
@@ -203,7 +229,7 @@ public sealed class FieldValidationEngine : IFieldValidationEngine
         {
             try
             {
-                if (!Regex.IsMatch(value, config.ValidationRegex, RegexOptions.None, RegexTimeout))
+                if (!PatternMatcher.IsMatch(value, config.ValidationRegex))
                     errors.Add(new FieldError(config.ApiField, string.IsNullOrWhiteSpace(config.ValidationMessage) ? $"{label} format is invalid." : config.ValidationMessage));
             }
             catch (ArgumentException ex)   // RegexParseException: an unusable pattern must not lock every user out
@@ -215,6 +241,27 @@ public sealed class FieldValidationEngine : IFieldValidationEngine
                 errors.Add(new FieldError(config.ApiField, $"{label} could not be validated."));
             }
         }
+    }
+
+    /// <summary>Min/max value (Number) or earliest/latest date (Date) from the field configuration. False = an error was added.</summary>
+    private static bool CheckRange(FieldConfiguration config, string label, decimal value, List<FieldError> errors, Func<decimal, string> show)
+    {
+        var type = config.FieldType ?? "Text";
+        var min = FieldDefinitionRules.TryParseBound(type, config.MinValue, out var minOk);
+        var max = FieldDefinitionRules.TryParseBound(type, config.MaxValue, out var maxOk);
+        if (minOk && min.HasValue && value < min.Value)
+        {
+            errors.Add(new FieldError(config.ApiField, type.Equals("Date", StringComparison.OrdinalIgnoreCase)
+                ? $"{label} cannot be before {show(min.Value)}." : $"{label} must be at least {show(min.Value)}."));
+            return false;
+        }
+        if (maxOk && max.HasValue && value > max.Value)
+        {
+            errors.Add(new FieldError(config.ApiField, type.Equals("Date", StringComparison.OrdinalIgnoreCase)
+                ? $"{label} cannot be after {show(max.Value)}." : $"{label} cannot exceed {show(max.Value)}."));
+            return false;
+        }
+        return true;
     }
 
     private static bool SafeMatch(Regex regex, string value)
@@ -237,6 +284,13 @@ public sealed class FieldValidationEngine : IFieldValidationEngine
                 .Where(f => f.ModuleKey == moduleKey && f.SectionKey == sectionKey)
                 .OrderBy(f => f.DisplayOrder)
                 .ToListAsync());
+
+    /// <summary>Every value of a lookup, active or not (not cached: used only when a field's type is being changed).</summary>
+    private async Task<Dictionary<string, string>> GetAllLookupAsync(string typeCode)
+    {
+        var values = await _context.LookupValues.AsNoTracking().Where(v => v.TypeCode == typeCode).Select(v => v.Value).ToListAsync();
+        return values.GroupBy(v => v, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+    }
 
     /// <summary>Active values of a lookup: any casing in, configured spelling out.</summary>
     private Task<Dictionary<string, string>> GetLookupAsync(string typeCode) =>

@@ -1,6 +1,6 @@
 // ===== CREATE CUSTOMER DRAWER =====
 // Metadata-driven: fields, labels, required flags, validation rules and dropdown options all come from one request
-// (/api/metadata/customer-form). Only the ID-specific structural checks (NRIC format, NRIC-vs-date-of-birth) stay in
+// (/api/metadata/customer-form); the countries a phone number can belong to come from /api/metadata/countries. Only the ID-specific structural checks (NRIC format, NRIC-vs-date-of-birth) stay in
 // code, because they are rules about the identity document itself, not configurable data.
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -12,8 +12,10 @@ import { DynamicField } from '../../common/DynamicField/DynamicField.jsx';
 import { customerService } from '../../../services/customerService.js';
 import { metadataService } from '../../../services/metadataService.js';
 import { useToast } from '../../../hooks/useToast.js';
-import { SUPPORTED_ID_TYPES, validateIdentification, validateNricDateWithDob } from '../../../utils/validationUtils.js';
-import { validateFields, validateField, isFieldVisible, isFieldRequired } from '../../../utils/fieldValidation.js';
+import { SUPPORTED_ID_TYPES, validateIdByRule, validateIdAgainstDob } from '../../../utils/validationUtils.js';
+import { validateField, isFieldVisible, isFieldRequired } from '../../../utils/fieldValidation.js';
+import { fullPhone, phoneRuleError } from '../../../utils/phone.js';
+import { DEFAULT_PHONE_COUNTRY_ISO2 } from '../../../constants/index.js';
 import { fieldErrorsFromError } from '../../../utils/serverErrors.js';
 import '../CreateCaseDrawer/CreateCaseDrawer.css';
 import './CreateCustomerDrawer.css';
@@ -37,7 +39,8 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   const [isLoadingMeta, setIsLoadingMeta] = useState(false);
 
   const [values, setValues] = useState({});
-  const [phoneDigits, setPhoneDigits] = useState('');
+  const [countries, setCountries] = useState([]);
+  const [phoneCountries, setPhoneCountries] = useState({});   // apiField -> ISO2 of that phone field
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [touched, setTouched] = useState(false);
@@ -45,22 +48,16 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   const loadMetadata = useCallback(() => {
     setIsLoadingMeta(true);
     setLoadError(null);
-    metadataService
-      .getCustomerForm()
-      .then((data) => {
+    Promise.all([metadataService.getCustomerForm(), metadataService.getCountries()])
+      .then(([data, countryList]) => {
         setMeta(data);
+        setCountries(countryList);
+        // Nothing is chosen for the person: every field starts empty and dropdowns show their "Select Your …" prompt.
         const initial = {};
         for (const f of data.fields) if (isFieldVisible(f)) initial[f.apiField] = '';
-        // A required dropdown is pre-selected with its first option as a convenience; optional ones start empty.
-        for (const f of data.fields) {
-          if (!isFieldVisible(f) || f.fieldType !== 'Dropdown' || !isFieldRequired(f)) continue;
-          const opts = data.lookups[f.lookupTypeCode] || [];
-          if (f.apiField === 'idType') {
-            const supported = opts.filter((o) => SUPPORTED_ID_TYPES.includes(o.value));
-            if (supported.length) initial.idType = supported[0].value;
-          } else if (opts.length) initial[f.apiField] = opts[0].value;
-        }
         setValues(initial);
+        const startCountry = countryList.some((c) => c.iso2 === DEFAULT_PHONE_COUNTRY_ISO2) ? DEFAULT_PHONE_COUNTRY_ISO2 : countryList[0]?.iso2;
+        setPhoneCountries(Object.fromEntries(data.fields.filter((f) => f.fieldType === 'Phone').map((f) => [f.apiField, startCountry])));
       })
       .catch((err) => setLoadError(err.message || 'The form could not be loaded.'))
       .finally(() => setIsLoadingMeta(false));
@@ -70,7 +67,6 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     if (!isOpen) return;
     setErrors({});
     setTouched(false);
-    setPhoneDigits('');
     loadMetadata();
   }, [isOpen, loadMetadata]);
 
@@ -89,9 +85,9 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   );
 
   const idKey = fields.find((f) => f.apiField === 'idValue' || f.apiField === 'nric')?.apiField;
-  const phoneValue = phoneDigits ? `+60 ${phoneDigits}` : '';
 
-  const getValue = (f) => (f.apiField === 'phoneNumber' ? phoneValue : values[f.apiField]);
+  const countryOf = (f) => countries.find((c) => c.iso2 === phoneCountries[f.apiField]);
+  const getValue = (f) => (f.fieldType === 'Phone' ? fullPhone(countryOf(f), values[f.apiField]) : values[f.apiField]);
 
   const clearError = (...keys) => setErrors((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => !keys.includes(k))));
 
@@ -101,27 +97,42 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     clearError(key, ...(key === idKey ? ['idValue', 'nric'] : []));
   };
 
-  const handlePhoneChange = (e) => {
-    let digits = e.target.value.replace(/\D/g, '');
-    if (digits.startsWith('60')) digits = digits.slice(2);
-    else if (digits.startsWith('0')) digits = digits.slice(1);
+  const changePhoneCountry = (f, iso2) => {
     setTouched(true);
-    setPhoneDigits(digits.slice(0, 15));
-    clearError('phoneNumber');
+    setPhoneCountries((prev) => ({ ...prev, [f.apiField]: iso2 }));
+    clearError(f.apiField);   // the rules just changed: the old verdict no longer applies
   };
 
-  // Structural identity-document checks (not configuration).
+  // One field's error: required / configured rules from the shared engine, plus the selected country's rules for a phone.
+  const fieldError = (f) => {
+    if (f.fieldType === 'Phone') {
+      const label = f.displayLabel || f.apiField;
+      const national = values[f.apiField] || '';
+      if (!national) return isFieldRequired(f) ? `${label} is required.` : '';
+      return phoneRuleError(countryOf(f), national, label);
+    }
+    return validateField(f, getValue(f), optionsFor(f));
+  };
+
+  // The selected ID type's option carries its format rule (configuration, resolved by the server): what an ID value of that
+  // type must look like, and whether it must agree with the date of birth.
+  const idOption = (idType) => {
+    const idField = (meta?.fields || []).find((f) => f.apiField === 'idType');
+    return (meta?.lookups?.[idField?.lookupTypeCode] || []).find((o) => o.value === idType);
+  };
+
   const idErrors = (v) => {
     const out = {};
     const idValue = (v[idKey] || '').trim();
+    const option = idOption(v.idType);
     if (idValue && v.idType) {
-      const res = validateIdentification(idValue, v.idType);
+      const res = validateIdByRule(idValue, option);
       if (!res.isValid) out[idKey] = res.error;
     }
     if (v.dateOfBirth) {
       if (new Date(v.dateOfBirth) > new Date()) out.dateOfBirth = 'Date of birth cannot be in the future.';
-      else if (v.idType === 'NRIC Number' && idValue && !out[idKey]) {
-        const dob = validateNricDateWithDob(idValue, v.dateOfBirth);
+      else if (v.idType && idValue && !out[idKey]) {
+        const dob = validateIdAgainstDob(idValue, v.dateOfBirth, option);
         if (!dob.isValid) out.dateOfBirth = dob.error;
       }
     }
@@ -129,7 +140,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   };
 
   const blurField = (f) => {
-    const msg = validateField(f, getValue(f), optionsFor(f));
+    const msg = fieldError(f);
     const structural = idErrors(values);
     const key = f.apiField;
     const combined = msg || (key === idKey || key === 'dateOfBirth' ? structural[key] : '') || '';
@@ -137,7 +148,11 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   };
 
   const handleSubmit = async () => {
-    const found = { ...validateFields(fields, getValue, optionsFor), };
+    const found = {};
+    for (const f of fields) {
+      const msg = fieldError(f);
+      if (msg) found[f.apiField] = msg;
+    }
     for (const [k, msg] of Object.entries(idErrors(values))) if (!found[k]) found[k] = msg;
     if (Object.keys(found).length > 0) {
       setErrors(found);
@@ -147,10 +162,11 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
     const customAttributes = {};
     for (const f of fields) {
       if (CORE.has(f.apiField)) continue;
-      const v = values[f.apiField];
+      const v = f.fieldType === 'Phone' ? getValue(f) : values[f.apiField];
       if (v !== undefined && v !== null && String(v).trim() !== '') customAttributes[f.apiField] = String(v).trim();
     }
 
+    const phoneField = fields.find((f) => f.apiField === 'phoneNumber');
     const idType = values.idType;
     const idValue = idKey ? (values[idKey] || '').trim() : '';
 
@@ -164,7 +180,8 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         passport: idType === 'Passport Number' ? idValue : null,
         accountNumber: idType === 'Account Number' ? idValue : null,
         dateOfBirth: values.dateOfBirth ? new Date(values.dateOfBirth).toISOString() : null,
-        phoneNumber: phoneValue,
+        phoneNumber: phoneField ? getValue(phoneField) : '',
+        phoneCountryIso2: phoneField ? phoneCountries.phoneNumber : undefined,
         email: (values.email || '').trim(),
         branch: values.branch || '',
         customerSegment: values.customerSegment || null,
@@ -192,27 +209,6 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
   const renderField = (f) => {
     const key = f.apiField;
 
-    if (key === 'phoneNumber') {
-      return (
-        <div key={key} className="form-group phone-input-container">
-          <label className={`form-label ${isFieldRequired(f) ? 'form-label--required' : ''}`}>{f.displayLabel || key}</label>
-          <div className="phone-input-group">
-            <span className="phone-input-group__prefix">+60</span>
-            <input
-              type="tel"
-              className={`form-input phone-input-group__input ${errors.phoneNumber ? 'form-input--error field-error' : ''}`}
-              disabled={f.isEditable === false}
-              placeholder="1234567890"
-              value={phoneDigits}
-              onChange={handlePhoneChange}
-              onBlur={() => blurField(f)}
-            />
-          </div>
-          {errors.phoneNumber && <span className="form-error">{errors.phoneNumber}</span>}
-        </div>
-      );
-    }
-
     const isId = key === idKey;
     const config = isId ? { ...f, displayLabel: `${values.idType || 'ID'} Value` } : f;
 
@@ -222,6 +218,9 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
         config={config}
         value={values[key]}
         options={optionsFor(f)}
+        countries={countries}
+        phoneCountry={phoneCountries[key]}
+        onPhoneCountryChange={(iso2) => changePhoneCountry(f, iso2)}
         placeholder={isId ? ID_PLACEHOLDERS[values.idType] : undefined}
         onChange={(v) => {
           setValue(key, v);
@@ -239,6 +238,7 @@ export function CreateCustomerDrawer({ isOpen, onClose, onSuccess }) {
       onClose={onClose}
       isDirty={touched && !isLoading}
       title="Add New Customer"
+      discardLabel="Customer Information"
       subtitle="Register customer profile with ID options & language options"
       ariaLabel="Create new customer"
       footer={({ requestClose }) => (

@@ -229,23 +229,17 @@ public class CustomerValidatorStructuralTests
         Assert.True(result.IsValid, string.Join("; ", result.Errors.Select(e => e.ErrorMessage)));
     }
 
-    [Fact]
-    public void AnIdTypeTheRecordCannotStore_IsRejectedExplicitly()
-    {
-        var dto = Valid(); dto.IdType = "Driving Licence";
-        var result = new CreateCustomerDtoValidator().Validate(dto);
-        Assert.Contains(result.Errors, e => e.ErrorMessage.Contains("not supported"));
-    }
-
     [Theory]
     [InlineData("Passport Number", "AB12", false)]
     [InlineData("Passport Number", "A98765432", true)]
     [InlineData("Account Number", "AC", false)]
     [InlineData("Account Number", "ACC-12345", true)]
-    public void IdFormats_AreCheckedWhenAValueIsPresent(string idType, string value, bool valid)
+    [InlineData("NRIC Number", "900101-14-1234", true)]
+    [InlineData("NRIC Number", "900101-14-123", false)]
+    public void IdFormats_FollowTheRuleOfTheIdType_ByDefault(string idType, string value, bool valid)
     {
-        var dto = new CreateCustomerDto { FullName = "X", IdType = idType, IdValue = value };
-        Assert.Equal(valid, new CreateCustomerDtoValidator().Validate(dto).IsValid);
+        var format = new IdFormat(IdFormatRules.DefaultFor(idType), null, null);
+        Assert.Equal(valid, IdFormatRules.Check(format, value) == null);
     }
 }
 
@@ -276,7 +270,7 @@ public class FieldSettingsGuardTests
         using var db = NewDb();
         var row = Row("notes"); db.FieldConfigurations.Add(row); await db.SaveChangesAsync();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<ArgumentException>(() =>
             Service(db).UpdateFieldConfigurationAsync(row.Id, Update(d => d.ValidationRegex = "([unclosed")));
         Assert.Contains("not a valid regular expression", ex.Message);
     }
@@ -288,10 +282,10 @@ public class FieldSettingsGuardTests
         var row = Row("notes"); db.FieldConfigurations.Add(row); await db.SaveChangesAsync();
         var service = Service(db);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => d.FieldType = "Hologram")));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => { d.MinLength = 10; d.MaxLength = 5; })));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => d.MinLength = -1)));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => { d.FieldType = "Dropdown"; d.LookupTypeCode = "NO_SUCH_LIST"; })));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => d.FieldType = "Hologram")));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => { d.MinLength = 10; d.MaxLength = 5; })));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => d.MinLength = -1)));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => service.UpdateFieldConfigurationAsync(row.Id, Update(d => { d.FieldType = "Dropdown"; d.LookupTypeCode = "NO_SUCH_LIST"; })));
     }
 
     [Fact]
@@ -324,9 +318,10 @@ public class FieldSettingsGuardTests
         Assert.True(updated.IsSystemRequired);
 
         // The bulk save the Settings screen uses honours the lock too.
-        await service.SaveFieldConfigurationsAsync("CaseManagement", "CreateCase", new[]
+        await service.SaveFieldConfigurationsAsync(new UpdateFieldConfigurationsRequest
         {
-            new FieldConfigurationDto { Id = row.Id, ApiField = "title", DisplayLabel = "Title", FieldType = "Text", IsRequired = false, IsVisible = false }
+            ModuleKey = "CaseManagement", SectionKey = "CreateCase",
+            Update = new() { new FieldConfigurationDto { Id = row.Id, ApiField = "title", DisplayLabel = "Title", FieldType = "Text", IsRequired = false, IsVisible = false } }
         });
         var stored = await db.FieldConfigurations.AsNoTracking().SingleAsync();
         Assert.True(stored.IsRequired && stored.IsVisible);
@@ -344,7 +339,7 @@ public class FieldSettingsGuardTests
     public async Task CustomFieldKeys_MustBePlainIdentifiers_AndNeverShadowBuiltInFields(string key)
     {
         using var db = NewDb();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(db).AddCustomFieldAsync(new CreateCustomFieldDto
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => Service(db).AddCustomFieldAsync(new CreateCustomFieldDto
         {
             ModuleKey = "CaseManagement", SectionKey = "CreateCase", ApiField = key, DisplayLabel = "Custom", FieldType = "Text"
         }));

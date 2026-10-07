@@ -25,12 +25,6 @@ UPDATE ""FieldConfigurations""
         ('Customer360', 'AddNewCustomer', 'idType'),
         ('Customer360', 'AddNewCustomer', 'idValue'));
 
--- The Malaysian phone rule used to be hard-coded in the customer validator. It is now ordinary field
--- metadata (an administrator can change or remove it); existing behaviour is the default.
-UPDATE ""FieldConfigurations""
-   SET ""ValidationRegex"" = '^(\+?60)?([ -]*\d){10}$',
-       ""ValidationMessage"" = 'Phone number must have 10 digits after the +60 Malaysian country code.'
- WHERE ""ModuleKey"" = 'Customer360' AND ""SectionKey"" = 'AddNewCustomer' AND ""ApiField"" = 'phoneNumber'
-   AND ""ValidationRegex"" IS NULL;
+-- (The Malaysian phone rule that used to be seeded here now lives in the Countries table.)
 ";
 }

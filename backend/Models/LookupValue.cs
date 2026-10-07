@@ -10,5 +10,14 @@ public class LookupValue : AuditableEntity
     public int DisplayOrder { get; set; } = 0;
     public bool IsActive { get; set; } = true;
 
+    /// <summary>For lists whose type <see cref="LookupType.UsesFormatRules"/> (ID types): the key of the format rule an ID value of this type must satisfy (see IdFormatRules). Null = the built-in default for the value's name.</summary>
+    public string? FormatRule { get; set; }
+
+    /// <summary>Pattern used when <see cref="FormatRule"/> is REGEX.</summary>
+    public string? FormatRegex { get; set; }
+
+    /// <summary>Message shown when the pattern does not match.</summary>
+    public string? FormatMessage { get; set; }
+
     public LookupType? LookupType { get; set; }
 }

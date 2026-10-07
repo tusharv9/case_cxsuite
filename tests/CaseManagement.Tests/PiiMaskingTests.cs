@@ -81,7 +81,6 @@ public class PiiMaskingTests
                 SectionKey = "Profile",
                 ApiField = "nric",
                 DisplayLabel = "NRIC",
-                IsSensitive = true,
                 MaskingRule = "HideMiddle",
                 VisibleChars = 3,
                 CreatedAt = DateTime.UtcNow
@@ -93,7 +92,6 @@ public class PiiMaskingTests
                 SectionKey = "Profile",
                 ApiField = "phoneNumber",
                 DisplayLabel = "Phone Number",
-                IsSensitive = true,
                 MaskingRule = "HideFirstShowLast",
                 VisibleChars = 4,
                 CreatedAt = DateTime.UtcNow
@@ -105,7 +103,6 @@ public class PiiMaskingTests
                 SectionKey = "Profile",
                 ApiField = "dateOfBirth",
                 DisplayLabel = "Date of Birth",
-                IsSensitive = true,
                 MaskingRule = "FullMask",
                 VisibleChars = 0,
                 CreatedAt = DateTime.UtcNow
@@ -143,10 +140,10 @@ public class PiiMaskingEngineTests
     private static AppDbContext NewDb() =>
         new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
 
-    private static FieldConfiguration Field(string apiField, string rule, int visible, string section = "AddNewCustomer", bool sensitive = true) => new()
+    private static FieldConfiguration Field(string apiField, string rule, int visible, string section = "AddNewCustomer") => new()
     {
         Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = section, ApiField = apiField, DisplayLabel = apiField,
-        IsSensitive = sensitive, MaskingRule = rule, VisibleChars = visible, CreatedAt = DateTime.UtcNow
+        MaskingRule = rule, VisibleChars = visible, CreatedAt = DateTime.UtcNow
     };
 
     private static ICurrentUserAccessor User(params string[] permissions)
@@ -216,16 +213,18 @@ public class PiiMaskingEngineTests
     }
 
     [Fact]
-    public async Task NothingIsMasked_WhenNothingIsConfiguredSensitive()
+    public async Task AMaskingRule_AppliesOnItsOwn_AndNoMaskingMeansNoMasking()
     {
         using var db = NewDb();
-        db.FieldConfigurations.Add(Field("phoneNumber", "FullMask", 0, sensitive: false));
+        db.FieldConfigurations.AddRange(Field("phoneNumber", "FullMask", 0), Field("email", "None", 4));
         await db.SaveChangesAsync();
 
         var dto = Customer();
+        var original = dto.Email;
         await new PiiMaskingService(db, NewCache(), User()).MaskAsync(dto);
 
-        Assert.Equal("+60123456789", dto.PhoneNumber);
+        Assert.Equal(new string('*', "+60123456789".Length), dto.PhoneNumber);   // no "sensitive" flag needed
+        Assert.Equal(original, dto.Email);                                      // "No masking" masks nothing
     }
 
     [Fact]

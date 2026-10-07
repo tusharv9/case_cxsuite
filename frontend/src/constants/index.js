@@ -106,3 +106,7 @@ export const NOTIFICATION_POLL_INTERVAL_MS = 8000;
 // Rows per page in the Case Management List View (server-side pagination).
 export const CASE_LIST_DEFAULT_PAGE_SIZE = 10;
 export const CASE_LIST_PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+// The country a phone field starts on. Matches the backend's CountryService.DefaultIso2 (every existing customer's number
+// is Malaysian); the countries themselves, their dial codes and rules all come from /api/metadata/countries.
+export const DEFAULT_PHONE_COUNTRY_ISO2 = 'MY';

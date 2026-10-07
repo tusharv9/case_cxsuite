@@ -226,3 +226,8 @@
   color: var(--color-text-tertiary);
   text-align: center;
 }
+
+.custom-select-option.is-highlighted {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}

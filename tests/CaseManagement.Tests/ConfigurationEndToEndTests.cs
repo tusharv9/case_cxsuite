@@ -332,12 +332,12 @@ public class ConfigurationEndToEndTests
     // ----------------------------------------------------------------------------------------------- masking
 
     [PostgresFact]
-    public async Task SensitiveFields_AreMaskedInTheApiResponse_UnlessTheCallerMayUnmask()
+    public async Task MaskedFields_AreMaskedInTheApiResponse_UnlessTheCallerMayUnmask()
     {
         await using var env = await Env.StartAsync(async ctx =>
         {
             await ctx.Database.ExecuteSqlRawAsync(
-                "UPDATE \"FieldConfigurations\" SET \"IsSensitive\" = TRUE, \"MaskingRule\" = 'HideFirstShowLast', \"VisibleChars\" = 4 " +
+                "UPDATE \"FieldConfigurations\" SET \"MaskingRule\" = 'HideFirstShowLast', \"VisibleChars\" = 4 " +
                 "WHERE \"ModuleKey\" = 'Customer360' AND \"ApiField\" IN ('idValue', 'phoneNumber')");
         });
 

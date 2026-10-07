@@ -23,46 +23,51 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
         return await query.OrderBy(f => f.DisplayOrder).ToListAsync(ct);
     }
 
-    public async Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfiguration> fields, CancellationToken ct = default)
+    public async Task SaveFieldConfigurationsAsync(string moduleKey, string sectionKey, IEnumerable<FieldConfiguration> updates, IEnumerable<FieldConfiguration> creates, CancellationToken ct = default)
     {
         var existing = await _context.FieldConfigurations
             .Where(f => f.ModuleKey == moduleKey && f.SectionKey == sectionKey)
             .ToListAsync(ct);
 
-        foreach (var updated in fields)
+        foreach (var updated in updates)
         {
-            var target = existing.FirstOrDefault(e => e.Id == updated.Id || (e.ApiField == updated.ApiField));
-            if (target != null)
-            {
-                target.DisplayLabel = updated.DisplayLabel;
-                target.IsVisible = updated.IsVisible;
-                target.IsRequired = updated.IsRequired;
-                target.IsEditable = updated.IsEditable;
-                target.IsSensitive = updated.IsSensitive;
-                target.MaskingRule = updated.MaskingRule;
-                target.VisibleChars = updated.VisibleChars;
-                target.DisplayOrder = updated.DisplayOrder;
-                target.FieldType = updated.FieldType;
-                target.ValidationRegex = updated.ValidationRegex;
-                target.ValidationMessage = updated.ValidationMessage;
-                target.MinLength = updated.MinLength;
-                target.MaxLength = updated.MaxLength;
-                target.LookupTypeCode = updated.LookupTypeCode;
-                ApplySystemLock(target);
-                target.UpdatedAt = DateTime.UtcNow;
-            }
-            else
-            {
-                updated.Id = updated.Id == Guid.Empty ? Guid.NewGuid() : updated.Id;
-                updated.ModuleKey = moduleKey;
-                updated.SectionKey = sectionKey;
-                updated.CreatedAt = DateTime.UtcNow;
-                updated.IsSystemRequired = false;   // only the system defines these; a client cannot create a locked field
-                _context.FieldConfigurations.Add(updated);
-            }
+            var target = existing.FirstOrDefault(e => e.Id == updated.Id);
+            if (target == null) continue;
+            CopyDefinition(target, updated);
+            ApplySystemLock(target);
+            target.UpdatedAt = DateTime.UtcNow;
         }
 
+        foreach (var created in creates)
+        {
+            created.Id = created.Id == Guid.Empty ? Guid.NewGuid() : created.Id;
+            created.ModuleKey = moduleKey;
+            created.SectionKey = sectionKey;
+            created.CreatedAt = DateTime.UtcNow;
+            created.IsSystemRequired = false;   // only the system defines these; a client cannot create a locked field
+            _context.FieldConfigurations.Add(created);
+        }
+
+        // One SaveChanges = one transaction: every change is stored, or none is.
         await _context.SaveChangesAsync(ct);
+    }
+
+    private static void CopyDefinition(FieldConfiguration target, FieldConfiguration source)
+    {
+        target.DisplayLabel = source.DisplayLabel;
+        target.FieldType = source.FieldType;
+        target.IsVisible = source.IsVisible;
+        target.IsRequired = source.IsRequired;
+        target.MaskingRule = source.MaskingRule;
+        target.VisibleChars = source.VisibleChars;
+        target.DisplayOrder = source.DisplayOrder;
+        target.LookupTypeCode = source.LookupTypeCode;
+        target.ValidationRegex = source.ValidationRegex;
+        target.ValidationMessage = source.ValidationMessage;
+        target.MinLength = source.MinLength;
+        target.MaxLength = source.MaxLength;
+        target.MinValue = source.MinValue;
+        target.MaxValue = source.MaxValue;
     }
 
     /// <summary>A system-required field is always required and visible, whatever a client sent.</summary>
@@ -90,20 +95,7 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
         var target = await _context.FieldConfigurations.FindAsync(new object[] { id }, ct);
         if (target == null) return null;
 
-        target.DisplayLabel = updated.DisplayLabel;
-        target.FieldType = updated.FieldType;
-        target.IsVisible = updated.IsVisible;
-        target.IsRequired = updated.IsRequired;
-        target.IsEditable = updated.IsEditable;
-        target.IsSensitive = updated.IsSensitive;
-        target.MaskingRule = updated.MaskingRule;
-        target.VisibleChars = updated.VisibleChars;
-        target.DisplayOrder = updated.DisplayOrder;
-        target.LookupTypeCode = updated.LookupTypeCode;
-        target.ValidationRegex = updated.ValidationRegex;       // previously dropped by this path
-        target.ValidationMessage = updated.ValidationMessage;
-        target.MinLength = updated.MinLength;
-        target.MaxLength = updated.MaxLength;
+        CopyDefinition(target, updated);
         ApplySystemLock(target);
         target.UpdatedAt = DateTime.UtcNow;
 

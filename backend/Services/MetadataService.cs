@@ -92,9 +92,17 @@ public class MetadataService : IMetadataService
         var values = await _context.LookupValues.AsNoTracking()
             .Where(v => v.IsActive && codes.Contains(v.TypeCode))
             .OrderBy(v => v.DisplayOrder).ThenBy(v => v.Label)
-            .Select(v => new { v.TypeCode, Option = new LookupOptionDto { Value = v.Value, Label = v.Label } })
+            .Select(v => new { v.TypeCode, v.LookupType!.UsesFormatRules, v.FormatRule, v.FormatRegex, v.FormatMessage, v.Value, v.Label })
             .ToListAsync(ct);
 
-        return codes.ToDictionary(c => c, c => values.Where(v => v.TypeCode == c).Select(v => v.Option).ToList());
+        return codes.ToDictionary(c => c, c => values.Where(v => v.TypeCode == c).Select(v => new LookupOptionDto
+        {
+            Value = v.Value,
+            Label = v.Label,
+            // The effective rule (the built-in default when none was chosen), so the form checks exactly what the server will.
+            FormatRule = v.UsesFormatRules ? v.FormatRule ?? IdFormatRules.DefaultFor(v.Value) : null,
+            FormatRegex = v.UsesFormatRules ? v.FormatRegex : null,
+            FormatMessage = v.UsesFormatRules ? v.FormatMessage : null,
+        }).ToList());
     }
 }

@@ -26,13 +26,19 @@ public class CustomersController : BaseApiController
         [FromQuery] string? branch,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string sortDir = "asc",
         CancellationToken ct = default)
     {
+        // Sorting is limited to a fixed list of columns: anything else is an error rather than a silent fallback.
+        if (!string.IsNullOrWhiteSpace(sortBy) && !Repositories.CustomerRepository.SortableColumns.Contains(sortBy, StringComparer.OrdinalIgnoreCase))
+            return BadRequest(new { error = $"Cannot sort by '{sortBy}'. Sortable columns: {string.Join(", ", Repositories.CustomerRepository.SortableColumns)}." });
+
         // Always paginated (and masked per row by the service). The former "return every customer"
         // branch handed out raw entities for large page sizes, so it is gone; page size is capped.
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
-        var paged = await _customerService.GetPaginatedCustomersAsync(search, preferredLanguage, branch, page, pageSize, ct);
+        var paged = await _customerService.GetPaginatedCustomersAsync(search, preferredLanguage, branch, page, pageSize, sortBy, string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase), ct);
         return Ok(paged);
     }
 

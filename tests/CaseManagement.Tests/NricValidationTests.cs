@@ -1,4 +1,5 @@
 using CaseManagement.Api.DTOs;
+using CaseManagement.Api.Services;
 using CaseManagement.Api.Validators;
 using System;
 using Xunit;
@@ -46,44 +47,40 @@ public class NricValidationTests
     }
 
     [Fact]
-    public void Validator_InvalidNric_YieldsCorrectErrorMessage()
+    public void NricRule_InvalidNric_YieldsCorrectErrorMessage()
     {
-        var validator = new CreateCustomerDtoValidator();
-        var dto = new CreateCustomerDto
-        {
-            FullName = "Ahmad Razak",
-            IdType = "NRIC Number",
-            IdValue = "900101-14-123", // Malformed
-            PhoneNumber = "+60 12-345 6789",
-            Email = "ahmad@example.com",
-            Branch = "KL HQ",
-            PreferredLanguage = "Bahasa Malaysia",
-            DateOfBirth = new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-        };
-
-        var result = validator.Validate(dto);
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, e => e.ErrorMessage == "Please enter in correct format");
+        var error = IdFormatRules.Check(new IdFormat(IdFormatRules.MyNric, null, null), "900101-14-123");   // malformed
+        Assert.Equal("Please enter in correct format", error);
     }
 
     [Fact]
-    public void Validator_DateOfBirthMismatchWithNric_YieldsClearErrorMessage()
+    public void NricRule_DateOfBirthMismatch_YieldsClearErrorMessage()
     {
-        var validator = new CreateCustomerDtoValidator();
-        var dto = new CreateCustomerDto
-        {
-            FullName = "Ahmad Razak",
-            IdType = "NRIC Number",
-            IdValue = "900101-14-1234", // Encodes 1990-01-01
-            PhoneNumber = "+60 12-345 6789",
-            Email = "ahmad@example.com",
-            Branch = "KL HQ",
-            PreferredLanguage = "Bahasa Malaysia",
-            DateOfBirth = new DateTime(1995, 5, 20, 0, 0, 0, DateTimeKind.Utc) // Mismatch
-        };
+        var nric = new IdFormat(IdFormatRules.MyNric, null, null);
+        var error = IdFormatRules.CheckAgainstDateOfBirth(nric, "900101-14-1234", new DateTime(1995, 5, 20, 0, 0, 0, DateTimeKind.Utc));   // encodes 1990-01-01
+        Assert.Equal("Date of Birth does not match the date in the NRIC number.", error);
+        Assert.Null(IdFormatRules.CheckAgainstDateOfBirth(nric, "900101-14-1234", new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+    }
 
-        var result = validator.Validate(dto);
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, e => e.ErrorMessage == "Date of Birth does not match the date in the NRIC number.");
+    [Fact]
+    public void TheNricRule_IsConfiguration_NotAFixedProperty()
+    {
+        // Same value, same ID type: it is the configured rule that decides. An organisation that moves to alphanumeric IDs changes the rule only.
+        Assert.NotNull(IdFormatRules.Check(new IdFormat(IdFormatRules.MyNric, null, null), "AB12345678"));
+        Assert.Null(IdFormatRules.Check(new IdFormat(IdFormatRules.Alphanumeric, null, null), "AB12345678"));
+        Assert.Null(IdFormatRules.CheckAgainstDateOfBirth(new IdFormat(IdFormatRules.Alphanumeric, null, null), "900101-14-1234", new DateTime(1995, 5, 20)));   // no DOB cross-check without the NRIC rule
+        Assert.Null(IdFormatRules.Check(new IdFormat(IdFormatRules.Any, null, null), "anything"));
+    }
+
+    [Fact]
+    public void CustomPatternRule_UsesItsPatternAndMessage_AndIsCheckedWhenSaved()
+    {
+        var format = new IdFormat(IdFormatRules.Regex, "^[A-Z]{2}\\d{6}$", "Two letters then six digits.");
+        Assert.Null(IdFormatRules.Check(format, "AB123456"));
+        Assert.Equal("Two letters then six digits.", IdFormatRules.Check(format, "123"));
+        Assert.NotNull(IdFormatRules.CheckDefinition(IdFormatRules.Regex, "([unclosed"));
+        Assert.NotNull(IdFormatRules.CheckDefinition(IdFormatRules.Regex, null));
+        Assert.NotNull(IdFormatRules.CheckDefinition("NOPE", null));
+        Assert.Null(IdFormatRules.CheckDefinition(IdFormatRules.Passport, null));
     }
 }

@@ -15,7 +15,7 @@ public sealed class ConfigChangeInterceptor : SaveChangesInterceptor
 {
     private static readonly HashSet<Type> ConfigEntityTypes = new()
     {
-        typeof(FieldConfiguration), typeof(LookupType), typeof(LookupValue), typeof(CaseTypeConfig),
+        typeof(FieldConfiguration), typeof(LookupType), typeof(LookupValue), typeof(Country), typeof(CaseTypeConfig),
         typeof(DepartmentSubCategory), typeof(Department), typeof(PrioritySlaRule), typeof(PriorityCategoryMapping),
         typeof(BusinessHour), typeof(PublicHoliday), typeof(BusinessCalendarSetting), typeof(TeamMember), typeof(AssignmentConfiguration), typeof(SkillRule), typeof(AgentSkill), typeof(RoutingRule), typeof(EscalationLevelConfig),
     };

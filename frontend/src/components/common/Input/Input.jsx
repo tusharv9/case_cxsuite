@@ -60,11 +60,13 @@ export function Select({
   value,
   onChange,
   placeholder = 'Select option...',
+  searchPlaceholder = 'Type to search...',
   disabled = false,
   ...rest
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [highlighted, setHighlighted] = useState(0);
   const [coords, setCoords] = useState(null);
   const triggerRef = useRef(null);
   const popoverRef = useRef(null);
@@ -135,6 +137,8 @@ export function Select({
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
+        // Close only the list: a drawer around this select must not also close on the same keystroke.
+        e.stopPropagation();
         setIsOpen(false);
         setSearchQuery('');
       }
@@ -143,13 +147,13 @@ export function Select({
     window.addEventListener('scroll', handleScrollOrResize, true);
     window.addEventListener('resize', handleScrollOrResize);
     document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown, true);   // capture: runs before the drawer's own Escape handler
 
     return () => {
       window.removeEventListener('scroll', handleScrollOrResize, true);
       window.removeEventListener('resize', handleScrollOrResize);
       document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [isOpen, calculatePosition]);
 
@@ -167,6 +171,8 @@ export function Select({
           value: child.props.value,
           label: child.props.children,
           disabled: child.props.disabled,
+          // Extra text the search also matches (e.g. a country's ISO code and dial code).
+          searchText: child.props.searchText,
         });
       }
     });
@@ -178,9 +184,21 @@ export function Select({
 
   const filteredOptions = useMemo(() => {
     if (!searchQuery.trim()) return options;
-    const q = searchQuery.toLowerCase();
-    return options.filter((o) => String(o.label).toLowerCase().includes(q));
+    const q = searchQuery.trim().toLowerCase();
+    return options.filter((o) => `${o.label} ${o.value} ${o.searchText ?? ''}`.toLowerCase().includes(q));
   }, [options, searchQuery]);
+
+  // The highlighted row follows what the search leaves on screen; the chosen option starts highlighted.
+  useEffect(() => {
+    if (!isOpen) return;
+    const selectedIndex = filteredOptions.findIndex((o) => String(o.value) === String(value));
+    setHighlighted(searchQuery.trim() ? 0 : Math.max(0, selectedIndex));
+  }, [isOpen, searchQuery, filteredOptions, value]);
+
+  useEffect(() => {
+    if (!isOpen || !popoverRef.current) return;
+    popoverRef.current.querySelector('[data-highlighted="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [highlighted, isOpen, coords]);
 
   const handleSelect = (val) => {
     if (disabled) return;
@@ -201,9 +219,24 @@ export function Select({
         }}
         onKeyDown={(e) => {
           if (disabled) return;
-          if (e.key === 'Enter' || e.key === ' ') {
+          if (!isOpen) {
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+              e.preventDefault();
+              setIsOpen(true);
+            }
+            return;
+          }
+          // Open: arrows move, Enter picks, Escape closes (typing goes to the search box).
+          if (e.key === 'ArrowDown') {
             e.preventDefault();
-            setIsOpen(!isOpen);
+            setHighlighted((h) => Math.min(filteredOptions.length - 1, h + 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setHighlighted((h) => Math.max(0, h - 1));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            const opt = filteredOptions[highlighted];
+            if (opt && !opt.disabled) handleSelect(opt.value);
           }
         }}
         onBlur={(e) => {
@@ -222,7 +255,8 @@ export function Select({
             ref={searchInputRef}
             type="text"
             className="custom-select-search-inline"
-            placeholder="Type to search..."
+            placeholder={searchPlaceholder}
+            aria-label={`Search ${label || 'options'}`}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onClick={(e) => e.stopPropagation()}
@@ -243,12 +277,14 @@ export function Select({
           {filteredOptions.length === 0 ? (
             <div className="custom-select-empty">No options found</div>
           ) : (
-            filteredOptions.map((opt) => {
+            filteredOptions.map((opt, index) => {
               const isSelected = String(opt.value) === String(value);
               return (
                 <div
                   key={opt.value}
-                  className={`custom-select-option ${isSelected ? 'is-selected' : ''} ${opt.disabled ? 'is-disabled' : ''}`}
+                  className={`custom-select-option ${isSelected ? 'is-selected' : ''} ${opt.disabled ? 'is-disabled' : ''} ${index === highlighted ? 'is-highlighted' : ''}`}
+                  data-highlighted={index === highlighted ? 'true' : undefined}
+                  onMouseEnter={() => setHighlighted(index)}
                   role="option"
                   aria-selected={isSelected}
                   onClick={() => {

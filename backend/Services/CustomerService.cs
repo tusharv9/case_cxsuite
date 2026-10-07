@@ -9,13 +9,17 @@ public class CustomerService : ICustomerService
     private readonly ICustomerRepository _customerRepository;
     private readonly IPiiMaskingService _piiMasking;
     private readonly IFieldValidationEngine _fieldValidation;
+    private readonly ICountryService _countries;
+    private readonly IIdFormatService _idFormats;
     private readonly ISlaClockProvider? _slaClock;
 
-    public CustomerService(ICustomerRepository customerRepository, IPiiMaskingService piiMasking, IFieldValidationEngine fieldValidation, ISlaClockProvider? slaClock = null)
+    public CustomerService(ICustomerRepository customerRepository, IPiiMaskingService piiMasking, IFieldValidationEngine fieldValidation, ICountryService countries, IIdFormatService idFormats, ISlaClockProvider? slaClock = null)
     {
         _customerRepository = customerRepository;
         _piiMasking = piiMasking;
         _fieldValidation = fieldValidation;
+        _countries = countries;
+        _idFormats = idFormats;
         _slaClock = slaClock;
     }
 
@@ -31,6 +35,12 @@ public class CustomerService : ICustomerService
         var detail = await _customerRepository.GetCustomerDetailAsync(id, ct);
         if (detail != null) await EnrichSlaAsync(detail.Cases, ct);
         return detail;
+    }
+
+    private async Task<string> PhoneLabelAsync()
+    {
+        var f = await _fieldValidation.GetConfigAsync("Customer360", "AddNewCustomer", "phoneNumber");
+        return string.IsNullOrWhiteSpace(f?.DisplayLabel) ? "Phone number" : f.DisplayLabel;
     }
 
     public async Task<Customer> CreateCustomerAsync(CreateCustomerDto dto, Guid userId)
@@ -93,23 +103,11 @@ public class CustomerService : ICustomerService
             throw new FieldValidationException(new[] { new FieldError("idType", $"ID type '{idType}' is not supported by this system yet.") });
         }
 
-        // Strict Malaysian NRIC Validation
-        if (idType == "NRIC Number")
-        {
-            if (string.IsNullOrWhiteSpace(nricVal) || !CaseManagement.Api.Validators.CreateCustomerDtoValidator.BeValidNric(nricVal))
-                throw new ArgumentException("Please enter in correct format");
-
-            if (dto.DateOfBirth.HasValue)
-            {
-                var datePart = nricVal.Split('-')[0];
-                var yy = int.Parse(datePart[..2]);
-                var mm = int.Parse(datePart[2..4]);
-                var dd = int.Parse(datePart[4..6]);
-                var dob = dto.DateOfBirth.Value;
-                if (dob.Year % 100 != yy || dob.Month != mm || dob.Day != dd)
-                    throw new ArgumentException("Date of Birth does not match the date in the NRIC number.");
-            }
-        }
+        // What an ID value of this type must look like is configuration (the format rule on the ID type option), not code.
+        var idFormat = await _idFormats.GetAsync(idType);
+        var idFormatError = IdFormatRules.Check(idFormat, idVal) ?? IdFormatRules.CheckAgainstDateOfBirth(idFormat, idVal, dto.DateOfBirth);
+        if (idFormatError != null)
+            throw new FieldValidationException(new[] { new FieldError(idFormatError.StartsWith("Date of Birth") ? "dateOfBirth" : "idValue", idFormatError) });
 
         // Duplicate NRIC check (Requirement 6)
         if (!string.IsNullOrWhiteSpace(nricVal))
@@ -118,17 +116,21 @@ public class CustomerService : ICustomerService
                 throw new InvalidOperationException("A customer already exists with this NRIC number.");
         }
 
-        // Normalize Phone representation with +60 prefix (an optional field may be blank)
+        // The phone number is checked against ITS country's rules (Countries table) and stored as "+<dial> <digits>".
+        // An optional field may be blank.
         var normalizedPhone = string.Empty;
+        var phoneCountry = CountryService.DefaultIso2;
         if (!string.IsNullOrWhiteSpace(dto.PhoneNumber))
         {
-            var cleanDigits = dto.PhoneNumber.Trim().Replace(" ", "").Replace("-", "");
-            if (cleanDigits.StartsWith("+60")) normalizedPhone = "+60 " + cleanDigits[3..];
-            else if (cleanDigits.StartsWith("60")) normalizedPhone = "+60 " + cleanDigits[2..];
-            else normalizedPhone = "+60 " + cleanDigits;
+            var phoneLabel = await PhoneLabelAsync();
+            var phone = await _countries.NormalizePhoneAsync(dto.PhoneCountryIso2, dto.PhoneNumber, phoneLabel);
+            if (phone.Error != null)
+                throw new FieldValidationException(new[] { new FieldError("phoneNumber", phone.Error) });
+            normalizedPhone = phone.Normalized;
+            phoneCountry = phone.Iso2;
 
             // Duplicate Phone Number check (on the stored, normalised form — what the unique index compares)
-            if (await _customerRepository.ExistsByPhoneAsync(normalizedPhone) || await _customerRepository.ExistsByPhoneAsync(dto.PhoneNumber))
+            if (await _customerRepository.ExistsByPhoneAsync(normalizedPhone))
                 throw new InvalidOperationException("A customer already exists with this phone number.");
         }
 
@@ -140,6 +142,7 @@ public class CustomerService : ICustomerService
             Passport = passportVal,
             AccountNumber = accountVal,
             PhoneNumber = normalizedPhone,
+            PhoneCountryIso2 = phoneCountry,
             Email = Normalized("email"),
             Branch = Normalized("branch"),
             CustomerSegment = dto.CustomerSegment?.Trim(),
@@ -207,9 +210,11 @@ public class CustomerService : ICustomerService
         string? branch,
         int page,
         int pageSize,
+        string? sortBy = null,
+        bool descending = false,
         CancellationToken ct = default)
     {
-        var result = await _customerRepository.GetPaginatedAsync(search, preferredLanguage, branch, page, pageSize, ct);
+        var result = await _customerRepository.GetPaginatedAsync(search, preferredLanguage, branch, page, pageSize, sortBy, descending, ct);
         foreach (var item in result.Items)
         {
             await _piiMasking.MaskCustomerSummaryAsync(item, ct);

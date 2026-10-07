@@ -2,102 +2,31 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, ChevronRight, Users, Search, Filter, RotateCcw, Sparkles, X, ChevronDown, UserCheck } from 'lucide-react';
+import { PlusCircle, Users, Search, Filter, RotateCcw, X, ChevronDown, UserCheck, LayoutGrid, List } from 'lucide-react';
 import { Button } from '../../components/common/Button/Button.jsx';
-import { Avatar } from '../../components/common/Avatar/Avatar.jsx';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
 import { customerService } from '../../services/customerService.js';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
-import { formatDate } from '../../utils/dateUtils.js';
+import { CustomerCard } from '../../components/customer360/CustomerCard/CustomerCard.jsx';
+import { CustomerListTable } from '../../components/customer360/CustomerListTable/CustomerListTable.jsx';
+import { ViewSwitcher } from '../../components/customer360/ViewSwitcher/ViewSwitcher.jsx';
+import { usePersistedChoice } from '../../hooks/usePersistedChoice.js';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue.js';
 import { CreateCustomerDrawer } from '../../components/drawer/CreateCustomerDrawer/CreateCustomerDrawer.jsx';
 import { ExistingCustomerDrawer } from '../../components/drawer/ExistingCustomerDrawer/ExistingCustomerDrawer.jsx';
 import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import './CustomerDirectoryPage.css';
 
-function CustomerCard({ customer, onClick }) {
-  const rawIdType = customer.idType ||
-    (Array.isArray(customer.customAttributes)
-      ? customer.customAttributes.find((a) => a.fieldKey?.toLowerCase() === 'idtype')?.fieldValue
-      : customer.customAttributes?.idType) ||
-    'NRIC Number';
-
-  const typeLower = (rawIdType || '').toLowerCase();
-  let idLabel = 'NRIC';
-  let rawIdVal = customer.nric || customer.idValue || '';
-  if (typeLower.includes('passport')) {
-    idLabel = 'Passport';
-    rawIdVal = customer.passport || customer.idValue || '';
-  } else if (typeLower.includes('account')) {
-    idLabel = 'Account Number';
-    rawIdVal = customer.accountNumber || customer.idValue || '';
-  }
-
-  // Sensitive values arrive already masked by the server (per the field configuration and the
-  // caller's permissions); this component only displays them.
-  const displayId = rawIdVal || '—';
-  const displayName = customer.fullName;
-  const displayPhone = customer.phoneNumber;
-  const displayDob = customer.dateOfBirth ? formatDate(customer.dateOfBirth) : null;
-  const displayBranch = customer.branch;
-  const displayLanguage = customer.preferredLanguage;
-
-  return (
-    <div
-      className="customer-card"
-      onClick={() => onClick(customer)}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && onClick(customer)}
-    >
-      <div className="customer-card__top">
-        <Avatar name={customer.fullName} size="md" />
-        <div className="customer-card__name-block">
-          <p className="customer-card__name">{displayName}</p>
-          <p className="customer-card__nric">{`${idLabel}: ${displayId}`}</p>
-        </div>
-        <span className="customer-card__badge">Active</span>
-      </div>
-
-      <div className="customer-card__divider" />
-
-      <div className="customer-card__details">
-        {customer.dateOfBirth && (
-          <div className="customer-card__detail-row">
-            <span className="customer-card__detail-label">DOB</span>
-            <span>{displayDob}</span>
-          </div>
-        )}
-        {customer.phoneNumber && (
-          <div className="customer-card__detail-row">
-            <span className="customer-card__detail-label">Phone</span>
-            <span>{displayPhone}</span>
-          </div>
-        )}
-        {customer.branch && (
-          <div className="customer-card__detail-row">
-            <span className="customer-card__detail-label">Branch</span>
-            <span>{displayBranch}</span>
-          </div>
-        )}
-        {customer.preferredLanguage && (
-          <div className="customer-card__detail-row">
-            <span className="customer-card__detail-label">Language</span>
-            <span>{displayLanguage}</span>
-          </div>
-        )}
-        {!customer.phoneNumber && !customer.branch && !customer.preferredLanguage && (
-          <div className="customer-card__detail-row" style={{ color: 'var(--color-text-tertiary)' }}>
-            No additional details available
-          </div>
-        )}
-      </div>
-
-      <div className="customer-card__arrow">
-        <ChevronRight size={16} />
-      </div>
-    </div>
-  );
-}
+// The views of the directory and the page sizes offered. Cards run 5 per row, so the default 10 is two full rows.
+const VIEW_MODES = ['card', 'list'];
+const VIEW_OPTIONS = [
+  { value: 'card', label: 'Card View', icon: <LayoutGrid size={14} /> },
+  { value: 'list', label: 'List View', icon: <List size={14} /> },
+];
+const VIEW_PREFERENCE_KEY = 'customer360.view-mode';
+const DEFAULT_PAGE_SIZE = 10;
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
+const DEFAULT_SORT = { by: 'name', dir: 'asc' };
 
 export function CustomerDirectoryPage() {
   const navigate = useNavigate();
@@ -116,21 +45,35 @@ export function CustomerDirectoryPage() {
 
   // Pagination States
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [sort, setSort] = useState(DEFAULT_SORT);
+  const [viewMode, setViewMode] = usePersistedChoice(VIEW_PREFERENCE_KEY, VIEW_MODES, 'card');
+  const requestRef = useRef(null);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
+  const debouncedSearch = useDebouncedValue(search, 300);
+
   const loadCustomers = useCallback(async () => {
+    // Only the newest request matters: a slower, older answer must never overwrite a newer one.
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+
     setIsLoading(true);
     setError(null);
     try {
       const data = await customerService.getPaginatedCustomers({
-        search: search.trim() || undefined,
+        search: debouncedSearch.trim() || undefined,
         preferredLanguage: languageFilter !== 'all' ? languageFilter : undefined,
         branch: branchFilter !== 'all' ? branchFilter : undefined,
         page,
         pageSize,
+        sortBy: sort.by,
+        sortDir: sort.dir,
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
       if (data && Array.isArray(data.items)) {
         setCustomers(data.items);
         setTotalCount(data.totalCount || 0);
@@ -141,14 +84,16 @@ export function CustomerDirectoryPage() {
         setTotalPages(1);
       }
     } catch (err) {
+      if (controller.signal.aborted) return;
       setError(err.message || 'Failed to load customers.');
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false);
     }
-  }, [search, languageFilter, branchFilter, page, pageSize]);
+  }, [debouncedSearch, languageFilter, branchFilter, page, pageSize, sort]);
 
   useEffect(() => {
     loadCustomers();
+    return () => requestRef.current?.abort();
   }, [loadCustomers]);
 
   // Click outside listener for filter popover
@@ -206,6 +151,12 @@ export function CustomerDirectoryPage() {
 
   const handleCustomerCreated = () => {
     loadCustomers(true);
+  };
+
+  // A header click sorts by that column; clicking it again flips the direction. Back to page 1 so the order starts from the top.
+  const handleSort = (sortKey) => {
+    setSort((prev) => (prev.by === sortKey ? { by: sortKey, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { by: sortKey, dir: 'asc' }));
+    setPage(1);
   };
 
   const handleSearchChange = (e) => {
@@ -292,6 +243,8 @@ export function CustomerDirectoryPage() {
           </div>
 
           <div className="customer-dir-toolbar-actions" ref={filterRef}>
+            <ViewSwitcher options={VIEW_OPTIONS} value={viewMode} onChange={setViewMode} ariaLabel="Customer directory view" />
+
             <button
               className={`customer-dir-filter-btn ${isFilterOpen || (hasActiveFilters && search === '') ? 'customer-dir-filter-btn--active' : ''}`}
               onClick={() => setIsFilterOpen(!isFilterOpen)}
@@ -377,7 +330,7 @@ export function CustomerDirectoryPage() {
 
       {/* 3. CUSTOMER CARDS GRID */}
       <div className="customer-dir-page__body scrollbar-thin">
-        {isLoading ? (
+        {isLoading && customers.length === 0 ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
             <Loader text="Loading customer directory…" />
           </div>
@@ -406,16 +359,27 @@ export function CustomerDirectoryPage() {
             )}
           </div>
         ) : (
-          <div className="customer-dir-grid">
-            {customers.map((c) => (
-              <CustomerCard key={c.id} customer={c} onClick={handleCustomerClick} />
-            ))}
-          </div>
+          viewMode === 'list' ? (
+            <CustomerListTable
+              customers={customers}
+              sortBy={sort.by}
+              sortDir={sort.dir}
+              onSort={handleSort}
+              onOpen={handleCustomerClick}
+              isBusy={isLoading}
+            />
+          ) : (
+            <div className={`customer-dir-grid ${isLoading ? 'customer-dir-grid--busy' : ''}`} aria-busy={isLoading}>
+              {customers.map((c) => (
+                <CustomerCard key={c.id} customer={c} onClick={handleCustomerClick} />
+              ))}
+            </div>
+          )
         )}
       </div>
 
       {/* 4. PINNED BOTTOM PAGINATION */}
-      {!isLoading && !error && customers.length > 0 && (
+      {!error && customers.length > 0 && (
         <div className="customer-dir-page__footer">
           <Pagination
             itemLabel="customers"
@@ -428,7 +392,7 @@ export function CustomerDirectoryPage() {
               setPageSize(newSize);
               setPage(1);
             }}
-            pageSizeOptions={[10, 20, 50]}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
             isLoading={isLoading}
           />
         </div>
