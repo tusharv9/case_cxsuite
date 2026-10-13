@@ -9,88 +9,94 @@ import { caseService } from '../../../services/caseService.js';
 import { useToast } from '../../../hooks/useToast.js';
 import {
   RESOLVE_DISPOSITIONS,
-  LINK_RELATIONSHIPS,
 } from '../../../constants/index.js';
-import { AlertTriangle, ShieldAlert, ArrowRight, Layers } from 'lucide-react';
+import { ShieldAlert, ArrowRight } from 'lucide-react';
 import { slaRoutingService } from '../../../services/slaRoutingService.js';
+import { departmentService } from '../../../services/departmentService.js';
+import { fieldErrorsFromError } from '../../../utils/serverErrors.js';
+import { selectPlaceholder } from '../../../utils/fieldValidation.js';
+import { ReasonFields } from './ReasonFields.jsx';
+import { useReasonState } from './useReasonState.js';
+import { teamService } from '../../../services/teamService.js';
 import './actions.css';
-
-// User Select Card Component for List Selection
-function UserSelectList({ users, selectedId, onSelect }) {
-  if (!users || users.length === 0) {
-    return <p className="user-select-empty">No available users found.</p>;
-  }
-
-  return (
-    <div className="user-select-list scrollbar-thin">
-      {users.map((user) => {
-        const isSelected = String(user.id) === String(selectedId);
-        const isAvailable = user.status?.toLowerCase() === 'available';
-
-        return (
-          <div
-            key={user.id}
-            className={`user-select-card ${isSelected ? 'user-select-card--selected' : ''}`}
-            onClick={() => onSelect(user.id)}
-          >
-            <Avatar name={user.name} size="sm" />
-            <div className="user-select-card__info">
-              <span className="user-select-card__name">{user.name}</span>
-              <span className="user-select-card__role">{user.role || 'Agent'}</span>
-            </div>
-            <div className="user-select-card__right">
-              <span className={`status-dot-indicator ${isAvailable ? 'status-dot-indicator--online' : 'status-dot-indicator--offline'}`} title={user.status || 'Offline'} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ============================================================
 // 1. ASSIGN / REASSIGN MODAL
 // ============================================================
-export function AssignModal({
-  isOpen,
-  onClose,
-  caseId,
-  caseData,
-  users = [],
-  currentOwnerId,
-  onSuccess,
-}) {
+// Short words for why someone cannot take the case (codes from GET /api/cases/{id}/eligible-assignees).
+const INELIGIBLE_SHORT = {
+  CurrentOwner: 'current owner',
+  Unavailable: 'not available now',
+  AtCapacity: 'at capacity',
+  UserInactive: 'account deactivated',
+  NotTeamMember: 'not in this team',
+  NotAssignable: 'not assignable',
+  NotSelected: 'not selected for assignment',
+  LeadExcluded: 'team leads excluded',
+  NeedsAssignPermission: 'needs the cases.assign permission',
+  TeamInactive: 'team inactive',
+};
+
+function statusDotClass(status) {
+  const s = (status || '').toLowerCase();
+  if (s === 'available') return 'status-dot--online';
+  if (s === 'busy') return 'status-dot--busy';
+  return 'status-dot--away';
+}
+
+export function AssignModal({ isOpen, onClose, caseId, caseData, onSuccess }) {
+  const [team, setTeam] = useState(null);             // the eligible-assignees answer for this case
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const [attempt, setAttempt] = useState(0);
   const [selectedUserId, setSelectedUserId] = useState('');
-  const [reason, setReason] = useState('Escalation');
-  const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
+  const reason = useReasonState();
   const toast = useToast();
 
   useEffect(() => {
-    if (isOpen) {
-      setSelectedUserId(currentOwnerId || '');
-      setReason('Escalation');
-    }
-  }, [isOpen, currentOwnerId]);
+    if (!isOpen || !caseId) return undefined;
+    let live = true;
+    setSelectedUserId('');
+    setErrors({});
+    setLoading(true);
+    setLoadError(null);
+    caseService
+      .getEligibleAssignees(caseId)
+      .then((data) => live && setTeam(data))
+      .catch((err) => live && setLoadError(err?.message || 'The list of people who can take this case could not be loaded.'))
+      .finally(() => live && setLoading(false));
+    return () => { live = false; };
+  }, [isOpen, caseId, attempt]);
 
-  const selectedUser = users.find((u) => String(u.id) === String(selectedUserId));
+  const candidates = team?.candidates || [];
+  const eligibleCount = candidates.filter((c) => c.isEligible).length;
+  const selected = candidates.find((c) => String(c.userId) === String(selectedUserId));
+
+  const optionLabel = (c) => {
+    const role = c.isTeamLead ? 'Team Lead' : c.teamRole;
+    const parts = [c.name, c.isCrossTeam ? `${c.homeTeamName} team` : null, role, c.status, `${c.openCases}/${team.capacity} open`].filter(Boolean);
+    return c.isEligible ? parts.join(' · ') : `${parts.join(' · ')} — ${INELIGIBLE_SHORT[c.ineligibleReason] || 'cannot take it'}`;
+  };
 
   const handleConfirm = async () => {
-    if (!selectedUserId) {
-      return toast.error('Please select an agent to assign.');
-    }
-    if (!reason) {
-      return toast.error('Please select a reason.');
-    }
-    setIsLoading(true);
+    if (!selected?.isEligible) return setErrors({ ownerId: 'Choose someone who can take this case.' });
+    if (!reason.isValid) return setErrors({ reason: reason.reason ? undefined : 'Choose a reason.', reasonDetail: reason.needsDetail ? 'An explanation is required.' : undefined });
+    setIsSaving(true);
+    setErrors({});
     try {
-      await caseService.assignCase(caseId, { ownerId: selectedUserId, reason });
-      toast.success('Case reassigned successfully.');
+      await caseService.assignCase(caseId, { ownerId: selected.userId, ...reason.payload() });
+      toast.success(`Case assigned to ${selected.name}.`);
       onSuccess?.();
       onClose();
     } catch (err) {
-      toast.error(err.message);
+      setErrors(fieldErrorsFromError(err));
+      toast.error(err.message || 'The case could not be assigned.');
+      // Someone's status or workload changed since the list was loaded: show the current picture.
+      if (err?.original?.response?.status === 422) setAttempt((n) => n + 1);
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
@@ -101,19 +107,23 @@ export function AssignModal({
       isOpen={isOpen}
       onClose={onClose}
       title={caseRef ? `Reassign case ${caseRef}` : 'Reassign case'}
-      subtitle="Select an agent to take ownership of this case"
+      subtitle={team
+        ? (team.crossTeamMode && team.crossTeamMode !== 'Disabled'
+          ? `People in ${team.departmentName} and other allowed teams who can take this case`
+          : `People in ${team.departmentName} who can take this case`)
+        : 'Choose who takes ownership of this case'}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={isSaving}>
             Cancel
           </Button>
           <Button
             variant="primary"
-            isLoading={isLoading}
-            disabled={!selectedUserId}
+            isLoading={isSaving}
+            disabled={!selected?.isEligible || !reason.isValid || isSaving}
             onClick={handleConfirm}
           >
-            {isLoading ? 'Assigning...' : 'Assign'}
+            {isSaving ? 'Assigning…' : 'Assign'}
           </Button>
         </>
       }
@@ -123,70 +133,61 @@ export function AssignModal({
           label="Assign to"
           required
           value={selectedUserId}
-          onChange={(e) => setSelectedUserId(e.target.value)}
-        >
-          <option value="">Select agent...</option>
-          {users.map((u) => {
-            const teamInfo = u.team ? ` — ${u.team}` : '';
-            const statusInfo = u.status ? ` (${u.status})` : '';
-            return (
-              <option key={u.id} value={u.id}>
-                {u.name} — {u.role || 'Agent'}{teamInfo}{statusInfo}
-              </option>
-            );
-          })}
-        </Select>
+          onChange={(e) => { setSelectedUserId(e.target.value); setErrors((p) => ({ ...p, ownerId: undefined })); }}
+          placeholder={selectPlaceholder('Agent')}
+          isLoading={loading}
+          loadError={loadError}
+          onRetry={() => setAttempt((n) => n + 1)}
+          error={errors.ownerId}
+          emptyText={team && candidates.length === 0 ? `${team.departmentName} has no members or lead yet.` : 'No matching people'}
+          options={candidates.map((c) => ({ value: c.userId, label: optionLabel(c), disabled: !c.isEligible, searchText: `${c.email || ''} ${c.teamRole || ''}` }))}
+        />
 
-        {selectedUser && (
+        {team && !loading && eligibleCount === 0 && (
+          <div className="assign-notice" role="status">
+            {candidates.length === 0
+              ? `${team.departmentName} has no members or team lead, so nobody can take this case. Add members on the Teams page, or transfer the case to another team.`
+              : `Nobody in ${team.departmentName} can take this case right now (everyone is unavailable, at capacity or already holds it). Try again later or transfer it to another team.`}
+          </div>
+        )}
+
+        {selected && (
           <div className="agent-preview-card">
             <div className="agent-preview-card__header">
-              <Avatar name={selectedUser.name} size="sm" />
+              <Avatar name={selected.name} size="sm" />
               <div className="agent-preview-card__name-group">
-                <span className="agent-preview-card__name">{selectedUser.name}</span>
+                <span className="agent-preview-card__name">{selected.name}</span>
                 <span className="agent-preview-card__status">
-                  <span
-                    className={`status-dot ${
-                      selectedUser.status?.toLowerCase() === 'available'
-                        ? 'status-dot--online'
-                        : selectedUser.status?.toLowerCase() === 'busy'
-                        ? 'status-dot--busy'
-                        : 'status-dot--away'
-                    }`}
-                  />
-                  {selectedUser.status || 'Available'}
+                  <span className={`status-dot ${statusDotClass(selected.status)}`} />
+                  {selected.status}
                 </span>
               </div>
             </div>
             <div className="agent-preview-card__details">
               <div className="agent-preview-card__row">
-                <span className="agent-preview-card__label">Role:</span>
-                <span className="agent-preview-card__val">{selectedUser.role || 'Agent'}</span>
-              </div>
-              <div className="agent-preview-card__row">
                 <span className="agent-preview-card__label">Team:</span>
-                <span className="agent-preview-card__val">{selectedUser.team || '—'}</span>
+                <span className="agent-preview-card__val">
+                  {selected.isCrossTeam ? `${selected.homeTeamName} (case stays with ${team.departmentName})` : team.departmentName}
+                </span>
               </div>
               <div className="agent-preview-card__row">
-                <span className="agent-preview-card__label">Queue:</span>
-                <span className="agent-preview-card__val">{selectedUser.queue || '—'}</span>
+                <span className="agent-preview-card__label">Role in team:</span>
+                <span className="agent-preview-card__val">{selected.isTeamLead ? 'Team Lead' : selected.teamRole || '—'}</span>
               </div>
+              <div className="agent-preview-card__row">
+                <span className="agent-preview-card__label">Workload:</span>
+                <span className="agent-preview-card__val">{selected.openCases} of {team.capacity} open cases</span>
+              </div>
+              {!selected.isEligible && selected.ineligibleMessage && (
+                <div className="agent-preview-card__row">
+                  <span className="agent-preview-card__val assign-ineligible">{selected.ineligibleMessage}</span>
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        <Select
-          label="Reason"
-          required
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        >
-          <option value="Escalation">Escalation</option>
-          <option value="Workload rebalancing">Workload rebalancing</option>
-          <option value="Specialist required">Specialist required</option>
-          <option value="Shift handover">Shift handover</option>
-          <option value="Leave / absence coverage">Leave / absence coverage</option>
-          <option value="Customer request">Customer request</option>
-        </Select>
+        <ReasonFields listCode="ASSIGNMENT_REASON" label="Reason" isOpen={isOpen} state={reason} errors={errors} />
       </div>
     </Modal>
   );
@@ -195,49 +196,52 @@ export function AssignModal({
 // ============================================================
 // 2. TRANSFER DEPARTMENT MODAL
 // ============================================================
-export function TransferModal({
-  isOpen,
-  onClose,
-  caseId,
-  caseData,
-  departments = [],
-  onSuccess,
-}) {
-  const [transferTo, setTransferTo] = useState('Queue');
-  const [targetQueue, setTargetQueue] = useState('Tier 2 - General Escalations (4 waiting)');
+export function TransferModal({ isOpen, onClose, caseId, caseData, onSuccess }) {
+  const [teams, setTeams] = useState([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  const [teamsError, setTeamsError] = useState(null);
+  const [attempt, setAttempt] = useState(0);
   const [selectedDeptId, setSelectedDeptId] = useState('');
-  const [reason, setReason] = useState('Skill / product expertise');
   const [handoverNote, setHandoverNote] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
+  const reason = useReasonState();
   const toast = useToast();
 
+  // Active teams other than the case's own (a team IS the queue: there is nothing else to transfer to).
   useEffect(() => {
-    if (isOpen) {
-      setTransferTo('Queue');
-      setTargetQueue('Tier 2 - General Escalations (4 waiting)');
-      setSelectedDeptId(departments[0]?.id || '');
-      setReason('Skill / product expertise');
-      setHandoverNote('');
-    }
-  }, [isOpen, departments]);
+    if (!isOpen) return undefined;
+    let live = true;
+    setSelectedDeptId('');
+    setHandoverNote('');
+    setErrors({});
+    setTeamsLoading(true);
+    setTeamsError(null);
+    departmentService
+      .getAllDepartments(true)
+      .then((list) => live && setTeams((list || []).filter((d) => d.isActive !== false && String(d.id) !== String(caseData?.departmentId))))
+      .catch((err) => live && setTeamsError(err?.message || 'The teams could not be loaded.'))
+      .finally(() => live && setTeamsLoading(false));
+    return () => { live = false; };
+  }, [isOpen, caseData?.departmentId, attempt]);
+
+  const target = teams.find((d) => String(d.id) === String(selectedDeptId));
 
   const handleConfirm = async () => {
-    setIsLoading(true);
+    if (!target) return setErrors({ departmentId: 'Choose the team to transfer the case to.' });
+    if (!reason.isValid) return setErrors({ reason: reason.reason ? undefined : 'Choose a reason.', reasonDetail: reason.needsDetail ? 'An explanation is required.' : undefined });
+    setIsSaving(true);
+    setErrors({});
     try {
-      await caseService.transferDepartment(caseId, {
-        departmentId: transferTo === 'Department' ? selectedDeptId : undefined,
-        transferTo,
-        targetQueue,
-        reason,
-        handoverNote: handoverNote.trim(),
-      });
-      toast.success('Case transferred successfully.');
+      await caseService.transferDepartment(caseId, { departmentId: target.id, ...reason.payload(), handoverNote: handoverNote.trim() || undefined });
+      toast.success(`Case transferred to ${target.name}.`);
       onSuccess?.();
       onClose();
     } catch (err) {
-      toast.error(err.message);
+      setErrors(fieldErrorsFromError(err));
+      toast.error(err.message || 'The case could not be transferred.');
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
 
@@ -248,18 +252,19 @@ export function TransferModal({
       isOpen={isOpen}
       onClose={onClose}
       title={caseRef ? `Transfer case ${caseRef}` : 'Transfer case'}
-      subtitle="Transfer case ownership to another team or queue"
+      subtitle={caseData?.departmentName ? `Move this case from ${caseData.departmentName} to another team` : 'Move this case to another team'}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={isSaving}>
             Cancel
           </Button>
           <Button
             variant="primary"
-            isLoading={isLoading}
+            isLoading={isSaving}
+            disabled={!target || !reason.isValid || isSaving}
             onClick={handleConfirm}
           >
-            {isLoading ? 'Transferring...' : '⇄ Transfer Case'}
+            {isSaving ? 'Transferring…' : '⇄ Transfer Case'}
           </Button>
         </>
       }
@@ -276,59 +281,28 @@ export function TransferModal({
         </div>
 
         <Select
-          label="Transfer to"
+          label="Target Team"
           required
-          value={transferTo}
-          onChange={(e) => setTransferTo(e.target.value)}
-        >
-          <option value="Queue">Queue</option>
-          <option value="Department">Department</option>
-          <option value="Team">Team</option>
-        </Select>
+          value={selectedDeptId}
+          onChange={(e) => { setSelectedDeptId(e.target.value); setErrors((p) => ({ ...p, departmentId: undefined })); }}
+          placeholder={selectPlaceholder('Team')}
+          isLoading={teamsLoading}
+          loadError={teamsError}
+          onRetry={() => setAttempt((n) => n + 1)}
+          error={errors.departmentId}
+          emptyText={!teamsLoading && teams.length === 0 ? 'There is no other active team to transfer to.' : 'No matching teams'}
+          options={teams.map((d) => ({ value: d.id, label: d.name, searchText: d.code }))}
+        />
 
-        {transferTo === 'Department' ? (
-          <Select
-            label="Target Department"
-            required
-            value={selectedDeptId}
-            onChange={(e) => setSelectedDeptId(e.target.value)}
-          >
-            <option value="">Select target department...</option>
-            {departments.map((dept) => (
-              <option key={dept.id} value={dept.id}>
-                {dept.name}
-              </option>
-            ))}
-          </Select>
-        ) : (
-          <Select
-            label="Target queue"
-            required
-            value={targetQueue}
-            onChange={(e) => setTargetQueue(e.target.value)}
-          >
-            <option value="Tier 2 - General Escalations (4 waiting)">Tier 2 - General Escalations (4 waiting)</option>
-            <option value="Dispute Resolution & Chargebacks (7 waiting)">Dispute Resolution & Chargebacks (7 waiting)</option>
-            <option value="Fraud & Security Review (2 waiting)">Fraud & Security Review (2 waiting)</option>
-            <option value="MicroFinance Tier 2 (1 waiting)">MicroFinance Tier 2 (1 waiting)</option>
-            <option value="Digital Support Specialist (3 waiting)">Digital Support Specialist (3 waiting)</option>
-            <option value="Underwriting Review (5 waiting)">Underwriting Review (5 waiting)</option>
-          </Select>
+        {target && (
+          <div className="assign-notice assign-notice--info" role="status">
+            {target.ownerName
+              ? <>The team lead, <strong>{target.ownerName}</strong>, takes ownership. If the lead&apos;s account is not active, the team&apos;s assignment algorithm picks an available agent.</>
+              : <>{target.name} has no team lead, so its assignment algorithm picks an available agent. If nobody can take the case, the transfer is refused.</>}
+          </div>
         )}
 
-        <Select
-          label="Reason"
-          required
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        >
-          <option value="Skill / product expertise">Skill / product expertise</option>
-          <option value="Misrouted case">Misrouted case</option>
-          <option value="Language requirement">Language requirement</option>
-          <option value="Escalation to Tier 2">Escalation to Tier 2</option>
-          <option value="Workload rebalancing">Workload rebalancing</option>
-          <option value="Customer request">Customer request</option>
-        </Select>
+        <ReasonFields listCode="TRANSFER_REASON" label="Reason" isOpen={isOpen} state={reason} errors={errors} />
 
         <Textarea
           label="Handover note (shown to receiving team)"
@@ -349,27 +323,79 @@ export function CoworkerModal({
   isOpen,
   onClose,
   caseId,
-  users = [],
-  departments = [],
+  departments: propDepartments = [],
   existingCoworkerIds = [],
   onSuccess,
 }) {
   const [selectedDeptId, setSelectedDeptId] = useState('');
   const [selectedUserIds, setSelectedUserIds] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [deptList, setDeptList] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
-    if (isOpen) {
-      setSelectedDeptId('');
-      setSelectedUserIds([]);
-    }
-  }, [isOpen]);
+    if (!isOpen) return;
+
+    setSelectedDeptId('');
+    setSelectedUserIds([]);
+    setSearchQuery('');
+
+    // Load departments
+    departmentService
+      .getAllDepartments()
+      .then((depts) => {
+        const list = depts && depts.length > 0 ? depts : propDepartments || [];
+        setDeptList(list);
+        if (list && list.length > 0) {
+          setSelectedDeptId(list[0].id);
+        }
+      })
+      .catch(() => {
+        setDeptList(propDepartments);
+        if (propDepartments && propDepartments.length > 0) {
+          setSelectedDeptId(propDepartments[0].id);
+        }
+      });
+
+    // Load teams for true membership mapping
+    teamService
+      .getAllTeams()
+      .then((t) => setTeams(t || []))
+      .catch(() => setTeams([]));
+  }, [isOpen, propDepartments]);
 
   const deptUsers = useMemo(() => {
     if (!selectedDeptId) return [];
-    return users.filter((u) => String(u.departmentId) === String(selectedDeptId));
-  }, [users, selectedDeptId]);
+
+    // Find team matching selected department
+    const matchingTeam = teams.find((t) => String(t.id) === String(selectedDeptId));
+    let memberList = [];
+
+    // Team membership is the only source of who belongs to a team (a user's "home department" is not).
+    if (matchingTeam?.members && matchingTeam.members.length > 0) {
+      memberList = matchingTeam.members.map((m) => ({
+        id: m.userId,
+        name: m.name,
+        role: m.role || (m.isLead ? 'Team Lead' : ''),
+        email: m.email,
+        status: m.status || null,
+        isLead: m.isLead,
+        departmentName: matchingTeam.name,
+      }));
+    }
+
+    if (!searchQuery.trim()) return memberList;
+
+    const q = searchQuery.toLowerCase().trim();
+    return memberList.filter(
+      (u) =>
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.role && u.role.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q))
+    );
+  }, [selectedDeptId, teams, searchQuery]);
 
   const toggleUserSelect = (userId) => {
     if (existingCoworkerIds.includes(userId)) return;
@@ -392,7 +418,7 @@ export function CoworkerModal({
       onSuccess?.();
       onClose();
     } catch (err) {
-      toast.error(err.message);
+      toast.error(err.message || 'Failed to add co-workers.');
     } finally {
       setIsLoading(false);
     }
@@ -409,8 +435,15 @@ export function CoworkerModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" isLoading={isLoading} onClick={handleConfirm}>
-            Add Selected Co-workers
+          <Button
+            variant="primary"
+            isLoading={isLoading}
+            disabled={selectedUserIds.length === 0}
+            onClick={handleConfirm}
+          >
+            {selectedUserIds.length > 0
+              ? `Add Selected Co-workers (${selectedUserIds.length})`
+              : 'Add Selected Co-workers'}
           </Button>
         </>
       }
@@ -420,10 +453,13 @@ export function CoworkerModal({
           label="Select Department (Compulsory)"
           required
           value={selectedDeptId}
-          onChange={(e) => setSelectedDeptId(e.target.value)}
+          onChange={(e) => {
+            setSelectedDeptId(e.target.value);
+            setSelectedUserIds([]);
+          }}
         >
           <option value="">Select department...</option>
-          {departments.map((d) => (
+          {deptList.map((d) => (
             <option key={d.id} value={d.id}>
               {d.name}
             </option>
@@ -431,46 +467,77 @@ export function CoworkerModal({
         </Select>
 
         <div>
-          <p className="form-label" style={{ marginBottom: 6 }}>
-            Select Team Members ({selectedUserIds.length} selected)
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <p className="form-label" style={{ margin: 0 }}>
+              Select Team Members ({selectedUserIds.length} selected)
+            </p>
+          </div>
+
           {!selectedDeptId ? (
             <div style={{ padding: 20, textAlign: 'center', background: '#f8fafc', borderRadius: 8, color: '#64748b', fontSize: 13 }}>
               Please select a department above to load eligible team members.
             </div>
           ) : (
-            <div className="user-select-list scrollbar-thin">
-              {deptUsers.length === 0 ? (
-                <p className="user-select-empty">No team members found for this department.</p>
-              ) : (
-                deptUsers.map((user) => {
-                  const isAlreadyCoworker = existingCoworkerIds.includes(user.id);
-                  const isChecked = selectedUserIds.includes(user.id);
+            <>
+              <div style={{ marginBottom: 10 }}>
+                <Input
+                  placeholder="Search team members by name or role..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
 
-                  return (
-                    <div
-                      key={user.id}
-                      className={`user-select-card ${isChecked ? 'user-select-card--selected' : ''} ${isAlreadyCoworker ? 'user-select-card--disabled' : ''}`}
-                      onClick={() => toggleUserSelect(user.id)}
-                    >
-                      <Checkbox
-                        checked={isChecked || isAlreadyCoworker}
-                        disabled={isAlreadyCoworker}
-                        onChange={() => {}}
-                      />
-                      <Avatar name={user.name} size="sm" />
-                      <div className="user-select-card__info">
-                        <span className="user-select-card__name">{user.name}</span>
-                        <span className="user-select-card__role">{user.departmentName || 'Agent'}</span>
+              <div className="user-select-list scrollbar-thin">
+                {deptUsers.length === 0 ? (
+                  <p className="user-select-empty">
+                    {searchQuery ? 'No matching team members found.' : 'No team members found for this department.'}
+                  </p>
+                ) : (
+                  deptUsers.map((user) => {
+                    const isAlreadyCoworker = existingCoworkerIds.includes(user.id);
+                    const isChecked = selectedUserIds.includes(user.id);
+
+                    return (
+                      <div
+                        key={user.id}
+                        className={`user-select-card ${isChecked ? 'user-select-card--selected' : ''} ${isAlreadyCoworker ? 'user-select-card--disabled' : ''}`}
+                        onClick={() => toggleUserSelect(user.id)}
+                      >
+                        <Checkbox
+                          checked={isChecked || isAlreadyCoworker}
+                          disabled={isAlreadyCoworker}
+                          onChange={() => {}}
+                        />
+                        <Avatar name={user.name} size="sm" />
+                        <div className="user-select-card__info">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span className="user-select-card__name">{user.name}</span>
+                            {user.isLead && (
+                              <span className="badge-pill" style={{ fontSize: 9, backgroundColor: '#fef3c7', color: '#b45309' }}>
+                                LEAD
+                              </span>
+                            )}
+                          </div>
+                          <span className="user-select-card__role">{user.role}</span>
+                        </div>
+                        {isAlreadyCoworker ? (
+                          <span className="badge-pill badge-pill--cowork">Already Added</span>
+                        ) : (
+                          <span
+                            className={`status-dot-indicator ${
+                              user.status?.toLowerCase() === 'available'
+                                ? 'status-dot-indicator--online'
+                                : 'status-dot-indicator--offline'
+                            }`}
+                            title={user.status || 'Status unknown'}
+                          />
+                        )}
                       </div>
-                      {isAlreadyCoworker && (
-                        <span className="badge-pill badge-pill--cowork">Already Added</span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+                    );
+                  })
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -485,14 +552,14 @@ export function EscalateModal({
   isOpen,
   onClose,
   caseId,
-  caseData = null,
+  _caseData = null,
   users = [],
-  departments = [],
+  _departments = [],
   onSuccess,
 }) {
   const [selectedUserId, setSelectedUserId] = useState('');
-  const [reason, setReason] = useState('SLA Breach / Risk');
-  const [customReason, setCustomReason] = useState('');
+  const reason = useReasonState();
+  const [errors, setErrors] = useState({});
   const [note, setNote] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [escalationStatus, setEscalationStatus] = useState(null);
@@ -502,8 +569,7 @@ export function EscalateModal({
   useEffect(() => {
     if (isOpen && caseId) {
       setSelectedUserId('');
-      setReason('SLA Breach / Risk');
-      setCustomReason('');
+      setErrors({});
       setNote('');
       setStatusLoading(true);
       slaRoutingService.getCaseEscalationStatus(caseId)
@@ -532,18 +598,15 @@ export function EscalateModal({
     if (!targetId) {
       return toast.error('Please select who to escalate this case to.');
     }
-    if (!reason) {
-      return toast.error('Please select an escalation reason.');
+    if (!reason.isValid) {
+      return setErrors({ reason: reason.reason ? undefined : 'Choose an escalation reason.', reasonDetail: reason.needsDetail ? 'An explanation is required.' : undefined });
     }
-    if (reason === 'Other' && !customReason.trim()) {
-      return toast.error('Please specify custom reason.');
-    }
-    const finalReason = reason === 'Other' ? customReason.trim() : reason;
 
     setIsLoading(true);
+    setErrors({});
     try {
       await caseService.escalateCase(caseId, {
-        reason: finalReason,
+        ...reason.payload(),
         note: note.trim() || undefined,
         targetUserId: targetId,
       });
@@ -551,21 +614,13 @@ export function EscalateModal({
       onSuccess?.();
       onClose();
     } catch (err) {
+      setErrors(fieldErrorsFromError(err));
       toast.error(err.message || 'Failed to escalate case.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const ESCALATION_OPTIONS = [
-    'SLA Breach / Risk',
-    'Complex Technical Issue',
-    'Customer Complaint Repeat',
-    'Regulatory / Compliance',
-    'Management Escalation',
-    'Fraud Risk',
-    'Other',
-  ];
 
   return (
     <Modal
@@ -582,7 +637,7 @@ export function EscalateModal({
           <Button
             variant="primary"
             isLoading={isLoading}
-            disabled={statusLoading || escalationStatus?.isMaxLevel || (!selectedUserId && !escalationStatus?.nextTargetUserId)}
+            disabled={statusLoading || escalationStatus?.isMaxLevel || (!selectedUserId && !escalationStatus?.nextTargetUserId) || !reason.isValid}
             onClick={handleConfirm}
           >
             Escalate Case
@@ -648,7 +703,7 @@ export function EscalateModal({
                 const statusInfo = u.status ? ` (${u.status})` : '';
                 return (
                   <option key={u.id} value={u.id}>
-                    {u.name} — {u.role || 'Agent'}{teamInfo}{statusInfo}
+                    {u.name}{u.role ? ` — ${u.role}` : ''}{teamInfo}{statusInfo}
                   </option>
                 );
               })}
@@ -671,14 +726,14 @@ export function EscalateModal({
                             : 'status-dot--away'
                         }`}
                       />
-                      {selectedUser.status || 'Available'}
+                      {selectedUser.status || '—'}
                     </span>
                   </div>
                 </div>
                 <div className="agent-preview-card__details">
                   <div className="agent-preview-card__row">
                     <span className="agent-preview-card__label">Role:</span>
-                    <span className="agent-preview-card__val">{selectedUser.role || 'Agent'}</span>
+                    <span className="agent-preview-card__val">{selectedUser.role || '—'}</span>
                   </div>
                   <div className="agent-preview-card__row">
                     <span className="agent-preview-card__label">Team:</span>
@@ -688,29 +743,8 @@ export function EscalateModal({
               </div>
             )}
 
-            {/* Step 2: Escalation Reason */}
-            <Select
-              label="Escalation Reason (Mandatory)"
-              required
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            >
-              {ESCALATION_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </Select>
-
-            {reason === 'Other' && (
-              <Input
-                label="Please specify reason"
-                required
-                placeholder="Describe the escalation reason..."
-                value={customReason}
-                onChange={(e) => setCustomReason(e.target.value)}
-              />
-            )}
+            {/* Step 2: Escalation Reason — the configured ESCALATION_REASON list */}
+            <ReasonFields listCode="ESCALATION_REASON" label="Escalation Reason" isOpen={isOpen} state={reason} errors={errors} />
 
             {/* Step 3: Additional Notes */}
             <div>

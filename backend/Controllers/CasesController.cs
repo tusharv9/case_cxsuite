@@ -72,11 +72,18 @@ public class CasesController : BaseApiController
     }
 
     [HttpPut("{id:guid}/assign")]
-    public async Task<IActionResult> AssignCase(Guid id, [FromBody] AssignCaseDto dto)
+    public async Task<IActionResult> AssignCase(Guid id, [FromBody] AssignCaseDto dto, [FromServices] ICurrentUserAccessor user)
     {
         dto.UserId = CurrentUserId;
-        await _caseService.AssignCaseAsync(id, dto);
+        await _caseService.AssignCaseAsync(id, dto, user.Has(Permissions.CasesAssign));
         return Ok(new { message = "Case assigned successfully." });
+    }
+
+    /// <summary>Who could hold this case (its team's members and lead), with live status, open cases, capacity and why someone cannot.</summary>
+    [HttpGet("{id:guid}/eligible-assignees")]
+    public async Task<IActionResult> GetEligibleAssignees(Guid id, [FromServices] ICurrentUserAccessor user, CancellationToken ct)
+    {
+        return Ok(await _caseService.GetEligibleAssigneesAsync(id, user.Has(Permissions.CasesAssign), ct));
     }
 
     [HttpPost("{id:guid}/notes")]
@@ -157,9 +164,9 @@ public class CasesController : BaseApiController
     }
 
     [HttpPut("{id:guid}/transfer")]
-    public async Task<IActionResult> TransferDepartment(Guid id, [FromBody] TransferDepartmentDto dto)
+    public async Task<IActionResult> TransferDepartment(Guid id, [FromBody] TransferDepartmentDto dto, [FromServices] ICurrentUserAccessor user)
     {
-        await _caseService.TransferDepartmentAsync(id, dto, CurrentUserId);
+        await _caseService.TransferDepartmentAsync(id, dto, CurrentUserId, user.Has(Permissions.CasesAssign));
         return Ok(new { message = "Department transferred successfully." });
     }
 

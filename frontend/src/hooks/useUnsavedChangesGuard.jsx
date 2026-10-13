@@ -6,10 +6,18 @@
 
 import { useCallback, useEffect } from 'react';
 import { useBlocker } from 'react-router-dom';
-import { ConfirmDialog, CONFIRM_CONTEXT } from '../components/common/ConfirmDialog/ConfirmDialog.jsx';
+import { UnsavedChangesDialog } from '../components/common/UnsavedChangesDialog/UnsavedChangesDialog.jsx';
 
-export function useUnsavedChangesGuard(isDirty, message = 'You have unsaved changes. If you leave now, they will be lost.') {
-  // Closing / refreshing the tab.
+/**
+ * @param {boolean} isDirty
+ * @param {string}  [message]  what will be lost
+ * @param {object}  [options]
+ * @param {'configuration'|'form'} [options.subject='configuration']
+ * @param {string}  [options.itemName]  what is being edited (e.g. "SLA & Routing settings")
+ * @param {() => (Promise<boolean|void>|boolean|void)} [options.onSave]  offers "Save changes"; resolve false when saving failed
+ */
+export function useUnsavedChangesGuard(isDirty, message, { subject = 'configuration', itemName, onSave } = {}) {
+  // Closing / refreshing the tab (browsers show their own wording here).
   useEffect(() => {
     if (!isDirty) return undefined;
     const handler = (e) => {
@@ -24,16 +32,15 @@ export function useUnsavedChangesGuard(isDirty, message = 'You have unsaved chan
   const blocker = useBlocker(useCallback(({ currentLocation, nextLocation }) => isDirty && currentLocation.pathname !== nextLocation.pathname, [isDirty]));
 
   const dialog = (
-    <ConfirmDialog
+    <UnsavedChangesDialog
       isOpen={blocker.state === 'blocked'}
-      title="Discard unsaved changes?"
+      subject={subject}
+      itemName={itemName}
       message={message}
-      context={CONFIRM_CONTEXT.FORM_DISCARD}
-      itemDetails={{ name: 'Page Changes' }}
-      confirmLabel="Discard and leave"
-      variant="warning"
-      onCancel={() => blocker.reset?.()}
-      onConfirm={() => blocker.proceed?.()}
+      onContinue={() => blocker.reset?.()}
+      onDiscard={() => blocker.proceed?.()}
+      onSave={onSave}
+      onSaved={() => blocker.proceed?.()}
     />
   );
 

@@ -17,7 +17,7 @@ import { validateField, isFieldVisible, isFieldRequired } from '../../../utils/f
 import { fullPhone, phoneRuleError } from '../../../utils/phone.js';
 import { DEFAULT_PHONE_COUNTRY_ISO2 } from '../../../constants/index.js';
 import { fieldErrorsFromError } from '../../../utils/serverErrors.js';
-import '../CreateCaseDrawer/CreateCaseDrawer.css';
+import '../../common/SideDrawer/SideDrawer.css';
 import './CreateCustomerDrawer.css';
 
 // Fields mapped explicitly onto the customer payload; any other configured field is a custom attribute.

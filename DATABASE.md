@@ -98,3 +98,66 @@ variable they are skipped.
   built-in default for the type's name, so nothing changes until an administrator edits it. The NRIC/date-of-birth cross-check applies only to MY_NRIC.
 - **`UserPreferences`** (`UserId`, `Key`, `Value`): per-user UI preferences, e.g. `customer360.view-mode`. `GET/PUT /api/preferences/{key}` only ever touches the caller's own rows.
 - Customer list: `sortBy` is limited to a fixed list of columns (`CustomerRepository.SortableColumns`), ties break on `Id`, and trigram indexes cover the searched columns.
+
+## Reasons for assign / transfer / escalate (migration `ReasonDetailRequirement`, seed `bootstrap.escalation-reasons-and-reason-detail.v1`)
+
+- **`LookupValues.RequiresDetail`** (bool, default false): choosing the option needs a typed explanation (e.g. "Other"). The API refuses the
+  choice without one (`reasonDetail`, max 500 chars). The rule is data, not a hard-coded option name.
+- The reason given for an assignment, transfer or escalation must be an **active** option of `ASSIGNMENT_REASON`, `TRANSFER_REASON` or
+  `ESCALATION_REASON` (`Services/CaseReasons.cs`); it is recorded in the case event as "Label — explanation".
+- One-time bootstrap step (runs once per database, recorded in `SeedHistory`): creates the `ESCALATION_REASON` list from the values the
+  Escalate dialog used to hard-code, marks the existing "Other"/"Others" options RequiresDetail, and **deactivates** (does not delete)
+  "Escalation" in `ASSIGNMENT_REASON` — escalating is its own action. Re-activate it in Configurable Settings if wanted.
+- A transfer must name a different, active team (a team is the queue; the old free-text "queue" transfer is gone).
+
+## Assign & Reassign settings (migration `ManualAssignmentSettings`)
+
+- **`ManualAssignmentSettings`** — one row (unique index on a constant; `CHECK` on `CrossTeamMode`): `IncludeTeamLeads`, `RequireAvailable`,
+  `EnforceCapacity`, `CrossTeamMode` (`Disabled` | `SelectedTeams` | `AllTeams`). The migration inserts it with the behaviour in force
+  before it existed (team only, leads included, Available/Busy, below capacity), so applying it changes nothing.
+- **`ManualAssignmentCrossTeams`** — the teams whose members may be given other teams' cases when the mode is `SelectedTeams`.
+- **`TeamMembers.CanBeManuallyAssigned`** (default true; existing rows true) — whether a member may be CHOSEN for the team's cases.
+  Separate from `IsAssignable` (automatic routing). Team edits update member rows in place, so the flag is kept.
+- Edited under Configurable Settings → Case Management → Assign & Reassign (`GET/PUT /api/assignment-settings`, saving needs
+  `config.manage`). The default routing strategy on that tab is the existing global `AssignmentConfigurations` row, not a copy.
+  A save carries the version it was loaded at; a newer save in between returns 409 and nothing is changed.
+
+## Settings consolidation (Phase 5; seed `bootstrap.case-list-filter-fields.v1`, no schema change)
+
+- The Case Management "Master Data & Dropdowns" screen is gone. Its data is unchanged and is edited where it belongs:
+  priorities with their SLA targets on Cases SLA & Routing → Priority SLA Matrix (add, activate/deactivate, rename);
+  case types and each department's sub-categories in the Create Case field editor; departments on the Teams page;
+  channel lists in the field editor (lookup lists); assignment/transfer/escalation reasons in Assign & Reassign.
+- Renaming a case type or sub-category now follows the name into `Cases`, routing-rule conditions and exact-match skill rules
+  (one transaction). A sub-category name shared by another department is left in rules, which still match that department.
+- A priority can no longer be created without all three SLA targets (no hidden 22h/24h/240min defaults).
+- The case list's filters are the "Case Filters" field configuration. The seed step adds Priority (`severity`) and Channel
+  (`sourceChannel`) filter rows when missing, because the list showed them before they were configurable.
+
+## Masking (Phase 6, no schema change)
+
+- Masking is applied by the API (`PiiMaskingService`), never by the browser; callers with `pii.unmask` see raw values.
+- Rules are scoped by module: **Customer 360** field settings govern customer data; **Case Management → Create Case** settings
+  govern a case's own fields (custom attributes). Within a module the most restrictive rule across its form sections wins.
+- **Filters never mask**: they are search inputs. The API refuses a masking rule on a Filters field and the settings screens no
+  longer offer it. (Previously a rule anywhere applied everywhere by field name.)
+- Case screens now mask too: case details (custom attributes, the customer's name and the nested customer, sub-cases), the
+  case list/board, the audit trail and the dashboard's case lists repeat the customer's name masked.
+- Request logs contain method, route, status and timing only (no query strings or bodies).
+
+## Data reconciliation command (Phase 7)
+
+```
+dotnet CaseManagement.Api.dll --reconcile-data                                   # dry run: report only, nothing written
+dotnet CaseManagement.Api.dll --reconcile-data --apply --actor admin@bank.com    # apply (one transaction; audit events name the actor)
+                                                  [--report reconciliation.json]  # also write the report as JSON
+```
+
+* Refuses to run when migrations are pending (run `--migrate-only` first); it never changes the schema.
+* Fixes automatically: user statuses stored as numbers or unknown text (numbers → their status name, unknown → Offline);
+  open cases held by someone who is neither an active member nor the lead of the case's team → the team's active lead, with an
+  audit event (SLA clock unchanged); blank sub-category text → no sub-category.
+* Reports only (needs a person): cases in inactive teams or teams without an active lead; sub-category text that is not a
+  sub-category of the case's team; how each team is used (inactive teams with no references are safe to keep archived);
+  remaining legacy `Users.Team` / `Users.Queue` labels (no longer read: a user's teams come from team membership).
+* Unrecognised stored statuses now read as Offline (never offered for work) instead of Available.

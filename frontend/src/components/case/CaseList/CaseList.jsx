@@ -79,7 +79,7 @@ function PriorityBadgeList({ severity }) {
   const lower = norm.toLowerCase();
 
   let className = 'case-list-priority--medium';
-  let label = 'Medium';
+  let label = norm;
 
   if (lower === 'critical' || lower === 'bad') {
     className = 'case-list-priority--critical';
@@ -93,7 +93,12 @@ function PriorityBadgeList({ severity }) {
   } else if (lower === 'medium' || lower === 'info') {
     className = 'case-list-priority--medium';
     label = 'Medium';
+  } else if (lower === 'urgent' || lower === 'highest') {
+    className = 'case-list-priority--urgent';
+    label = norm;
   } else {
+    const slug = lower.replace(/[^a-z0-9]+/g, '-');
+    className = `case-list-priority--${slug} case-list-priority--custom`;
     label = norm;
   }
 

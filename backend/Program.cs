@@ -310,9 +310,11 @@ builder.Services.AddScoped<IAttachmentService, AttachmentService>();
 builder.Services.AddScoped<IMentionService, MentionService>();
 builder.Services.AddScoped<ICaseCollaborationService, CaseCollaborationService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
-builder.Services.AddScoped<IAgentPoolService, AgentPoolService>();
+builder.Services.AddScoped<IAssignmentEligibilityService, AssignmentEligibilityService>();
+builder.Services.AddScoped<IAgentPoolService>(sp => new AgentPoolService(sp.GetRequiredService<IAssignmentEligibilityService>()));
 builder.Services.AddScoped<ISkillService, SkillService>();
 builder.Services.AddScoped<IRoutingEngineService, RoutingEngineService>();
+builder.Services.AddScoped<IAssignmentSettingsService, AssignmentSettingsService>();
 
 // Database preparation (migrations + seed) runs in the background; the worker below waits for it.
 builder.Services.Configure<CaseManagement.Api.Configuration.DatabaseOptions>(
@@ -374,6 +376,34 @@ if (args.Contains("--migrate-only"))
         .RunAsync(forceMigrate: true, CancellationToken.None);
     app.Logger.LogInformation(initialised ? "Migration finished." : "Migration FAILED.");
     return initialised ? 0 : 1;
+}
+
+// One-off data reconciliation (report by default; --apply to fix). Never migrates: the schema must already be current.
+//     dotnet CaseManagement.Api.dll --reconcile-data [--apply --actor <email>] [--report <file.json>]
+if (args.Contains("--reconcile-data"))
+{
+    string? Arg(string name) { var i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+    if (pending.Count > 0)
+    {
+        Console.Error.WriteLine($"The database is not at the current schema ({pending.Count} pending migration(s): {string.Join(", ", pending)}). Run --migrate-only first.");
+        return 2;
+    }
+    var apply = args.Contains("--apply");
+    Guid? actor = null;
+    if (apply)
+    {
+        var email = Arg("--actor");
+        actor = email == null ? null : await db.Users.Where(u => u.Email == email && u.IsActive).Select(u => (Guid?)u.Id).FirstOrDefaultAsync();
+        if (actor == null) { Console.Error.WriteLine("--apply needs --actor <email of an active user>; the audit events name who made the change."); return 2; }
+    }
+    var report = await new DataReconciliationService(db, scope.ServiceProvider.GetRequiredService<IRoutingEngineService>()).RunAsync(apply, actor);
+    Console.WriteLine(DataReconciliationService.ToText(report));
+    if (Arg("--report") is { } path)
+        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+    return 0;
 }
 
 // Forward headers from reverse proxies (Render, load balancers)

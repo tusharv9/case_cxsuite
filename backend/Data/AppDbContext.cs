@@ -41,6 +41,8 @@ public class AppDbContext : DbContext
     // Case Routing & Automatic Assignment Engine
     public DbSet<RoutingRule> RoutingRules { get; set; } = null!;
     public DbSet<AssignmentConfiguration> AssignmentConfigurations { get; set; } = null!;
+    public DbSet<ManualAssignmentSettings> ManualAssignmentSettings { get; set; } = null!;
+    public DbSet<ManualAssignmentCrossTeam> ManualAssignmentCrossTeams { get; set; } = null!;
     public DbSet<AgentSkill> AgentSkills { get; set; } = null!;
     public DbSet<SkillRule> SkillRules { get; set; } = null!;
     public DbSet<TeamAssignmentPointer> TeamAssignmentPointers { get; set; } = null!;
@@ -396,6 +398,23 @@ public class AppDbContext : DbContext
             .HasForeignKey(tm => tm.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        // Manual assignment policy (one row) and the teams cross-team assignment may draw on
+        modelBuilder.Entity<ManualAssignmentSettings>()
+            .Property(m => m.CrossTeamMode).HasMaxLength(32);
+        modelBuilder.Entity<ManualAssignmentCrossTeam>()
+            .HasIndex(c => new { c.SettingsId, c.DepartmentId })
+            .IsUnique();
+        modelBuilder.Entity<ManualAssignmentCrossTeam>()
+            .HasOne(c => c.Settings)
+            .WithMany(s => s.CrossTeams)
+            .HasForeignKey(c => c.SettingsId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<ManualAssignmentCrossTeam>()
+            .HasOne(c => c.Department)
+            .WithMany()
+            .HasForeignKey(c => c.DepartmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         // Routing Rules Configuration
         modelBuilder.Entity<RoutingRule>()
             .HasIndex(r => r.EvaluationOrder);
@@ -490,8 +509,9 @@ public class AppDbContext : DbContext
     private static UserStatus ParseUserStatus(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return UserStatus.Available;
-        if (Enum.TryParse<UserStatus>(value, true, out var status)) return status;
-        return UserStatus.Available;
+        if (Enum.TryParse<UserStatus>(value, true, out var status) && Enum.IsDefined(status)) return status;
+        // An unrecognised stored value must not make someone look available for work (--reconcile-data rewrites such rows).
+        return UserStatus.Offline;
     }
 
 

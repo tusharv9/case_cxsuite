@@ -17,6 +17,12 @@ public class TeamMember : AuditableEntity
     /// team's work; turning this off keeps them on the team (and visible on the board) without routing cases to them.
     /// </summary>
     public bool IsAssignable { get; set; } = true;
+
+    /// <summary>
+    /// Whether a person may CHOOSE this member when assigning or reassigning the team's cases (Assign &amp; Reassign settings →
+    /// team membership selection). Independent of <see cref="IsAssignable"/>, which is about automatic routing. New members are included.
+    /// </summary>
+    public bool CanBeManuallyAssigned { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 }

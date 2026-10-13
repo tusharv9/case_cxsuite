@@ -23,6 +23,7 @@ public class ConfigurationEndToEndTests
         public Guid Dept, FraudSub, PaymentSub, Customer;
         public string Admin = AppUnderTest.Token("adm-1", "Admin User", new[] { "Admin" });
         public string Agent = AppUnderTest.Token("agt-1", "Agent User", new[] { "Agent" });
+        public string Agent2 = AppUnderTest.Token("agt-2", "Other Agent", new[] { "Agent" });
 
         /// <summary>Creates the world, lets <paramref name="configure"/> change configuration, THEN starts the app.</summary>
         public static async Task<Env> StartAsync(Func<AppDbContext, Task>? configure = null)
@@ -391,8 +392,27 @@ public class ConfigurationEndToEndTests
         await env.Send(HttpMethod.Get, "/api/users/me", env.Agent);   // provisions the agent's local projection
         var agentId = await env.Db.ScalarAsync<Guid>("SELECT \"Id\" FROM \"Users\" WHERE \"ExternalUserId\" = 'agt-1'");
         var startBefore = await env.Db.ScalarAsync<DateTime>($"SELECT \"SlaStartTime\" FROM \"Cases\" WHERE \"Id\" = '{id}'");
-        var (assigned, _) = await env.Send(HttpMethod.Put, $"/api/cases/{id}/assign", env.Admin, new { ownerId = agentId, reason = "load" });
+
+        // Only members of the case's team can hold it: a non-member is refused with a reason code, then accepted once they join.
+        var (refused, refusal) = await env.Send(HttpMethod.Put, $"/api/cases/{id}/assign", env.Admin, new { ownerId = agentId, reason = "Workload rebalancing" });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, refused);
+        Assert.Equal("NotTeamMember", refusal.GetProperty("code").GetString());
+        var caseDept = await env.Db.ScalarAsync<Guid>($"SELECT \"DepartmentId\" FROM \"Cases\" WHERE \"Id\" = '{id}'");
+        await using (var ctx = env.Db.NewContext())
+        {
+            ctx.TeamMembers.Add(new TeamMember { Id = Guid.NewGuid(), DepartmentId = caseDept, UserId = agentId, MemberRole = "Agent", IsActive = true, IsAssignable = true, JoinedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow });
+            await ctx.SaveChangesAsync();
+        }
+
+        var (_, options) = await env.Send(HttpMethod.Get, $"/api/cases/{id}/eligible-assignees", env.Admin);
+        Assert.Contains(options.GetProperty("candidates").EnumerateArray(), c => c.GetProperty("userId").GetGuid() == agentId && c.GetProperty("isEligible").GetBoolean());
+
+        var (assigned, _) = await env.Send(HttpMethod.Put, $"/api/cases/{id}/assign", env.Admin, new { ownerId = agentId, reason = "Workload rebalancing" });
         Assert.Equal(HttpStatusCode.OK, assigned);
+
+        // An agent outside the case's team, without cases.assign, may not move it.
+        var (forbidden, _) = await env.Send(HttpMethod.Put, $"/api/cases/{id}/assign", env.Agent2, new { ownerId = agentId, reason = "Workload rebalancing" });
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden);
         Assert.Equal(startBefore, await env.Db.ScalarAsync<DateTime>($"SELECT \"SlaStartTime\" FROM \"Cases\" WHERE \"Id\" = '{id}'"));
     }
 
@@ -734,5 +754,51 @@ public class ConfigurationEndToEndTests
         var before = await env.Db.ScalarAsync<long>($"SELECT count(*) FROM \"Notifications\" WHERE \"RecipientUserId\" = '{agentId}'");
         await env.Send(HttpMethod.Post, $"/api/cases/{id}/collaboration/notes", env.Admin, new { content = "again @agent" });
         Assert.Equal(before, await env.Db.ScalarAsync<long>($"SELECT count(*) FROM \"Notifications\" WHERE \"RecipientUserId\" = '{agentId}'"));
+    }
+
+    // ------------------------------------------------------------------------------------------ masking (CM-10)
+
+    [PostgresFact]
+    public async Task AMaskedCustomerName_IsMaskedOnCaseScreens_ForPeopleWithoutPiiUnmask()
+    {
+        await using var env = await Env.StartAsync(async ctx =>
+        {
+            ctx.FieldConfigurations.Add(new FieldConfiguration
+            {
+                Id = Guid.NewGuid(), ModuleKey = "Customer360", SectionKey = "ExistingCustomer", ApiField = "fullName", DisplayLabel = "Full Name",
+                FieldType = "Text", IsVisible = true, MaskingRule = "HideMiddle", VisibleChars = 2, DisplayOrder = 999, CreatedAt = DateTime.UtcNow
+            });
+            await ctx.SaveChangesAsync();
+        });
+        var (_, created) = await env.Send(HttpMethod.Post, "/api/cases", env.Admin, env.CaseBody());
+        var id = created.GetProperty("id").GetGuid();
+
+        // An agent (no pii.unmask) sees the configured mask on the list and on the case; the admin role sees the raw value.
+        var (_, agentList) = await env.Send(HttpMethod.Get, "/api/cases?page=1&pageSize=10", env.Agent);
+        Assert.Contains("Ah*******ak", agentList.GetRawText());
+        Assert.DoesNotContain("Ahmad Razak", agentList.GetRawText());
+        var (_, agentCase) = await env.Send(HttpMethod.Get, $"/api/cases/{id}", env.Agent);
+        Assert.Equal("Ah*******ak", agentCase.GetProperty("customerName").GetString());
+        Assert.Equal("Ah*******ak", agentCase.GetProperty("customer").GetProperty("fullName").GetString());
+
+        var (_, adminCase) = await env.Send(HttpMethod.Get, $"/api/cases/{id}", env.Admin);
+        Assert.Equal("Ahmad Razak", adminCase.GetProperty("customerName").GetString());
+    }
+
+    [PostgresFact]
+    public async Task MaskingAFilter_IsRefused()
+    {
+        await using var env = await Env.StartAsync();
+        var filterId = await env.Db.ScalarAsync<Guid>("SELECT \"Id\" FROM \"FieldConfigurations\" WHERE \"ModuleKey\" = 'CaseManagement' AND \"SectionKey\" = 'Filters' AND \"ApiField\" = 'status'");
+        var (_, fields) = await env.Send(HttpMethod.Get, "/api/configurablesettings/fields?moduleKey=CaseManagement&sectionKey=Filters", env.Admin);
+        var status = fields.EnumerateArray().Single(f => f.GetProperty("id").GetGuid() == filterId);
+        var update = JsonSerializer.Deserialize<Dictionary<string, object?>>(status.GetRawText())!;
+        update["maskingRule"] = "FullMask";
+
+        var (code, body) = await env.Send(HttpMethod.Put, "/api/configurablesettings/fields", env.Admin,
+            new { moduleKey = "CaseManagement", sectionKey = "Filters", update = new[] { update }, create = Array.Empty<object>() });
+        Assert.Equal(HttpStatusCode.BadRequest, code);
+        Assert.Contains("Masking does not apply to filters", body.GetRawText());
+        Assert.Equal("None", await env.Db.ScalarAsync<string>($"SELECT \"MaskingRule\" FROM \"FieldConfigurations\" WHERE \"Id\" = '{filterId}'"));
     }
 }

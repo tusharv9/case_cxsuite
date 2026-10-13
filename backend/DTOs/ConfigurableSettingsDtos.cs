@@ -116,6 +116,8 @@ public class LookupValueDto
     public string Label { get; set; } = string.Empty;
     public int DisplayOrder { get; set; } = 0;
     public bool IsActive { get; set; } = true;
+    /// <summary>Choosing this option needs a typed explanation (see LookupValue.RequiresDetail).</summary>
+    public bool RequiresDetail { get; set; }
 }
 
 public class CreateLookupValueDto
@@ -212,9 +214,10 @@ public class SeverityDto
 public class CreateSeverityDto
 {
     public string Name { get; set; } = string.Empty;
-    public int InternalHours { get; set; } = 22;
-    public int ExternalHours { get; set; } = 24;
-    public int FirstResponseMinutes { get; set; } = 240;
+    // No defaults: an omitted target is refused, never silently filled in.
+    public int InternalHours { get; set; }
+    public int ExternalHours { get; set; }
+    public int FirstResponseMinutes { get; set; }
     public int DisplayOrder { get; set; } = 0;
 }
 
@@ -246,6 +249,8 @@ public class LookupValueDraftDto
     public string Label { get; set; } = string.Empty;
     public int DisplayOrder { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Null = leave the stored setting unchanged (clients that do not know the flag never reset it).</summary>
+    public bool? RequiresDetail { get; set; }
 }
 
 /// <summary>Saves every pending option change of one list in a single transaction.</summary>

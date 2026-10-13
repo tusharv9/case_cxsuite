@@ -7,10 +7,12 @@ import { useState, useEffect } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../common/Button/Button.jsx';
 import { SideDrawer } from '../../common/SideDrawer/SideDrawer.jsx';
+import { Select } from '../../common/Input/Input.jsx';
+import { selectPlaceholder } from '../../../utils/fieldValidation.js';
 import { skillService } from '../../../services/skillService.js';
 import { teamService } from '../../../services/teamService.js';
 import { useToast } from '../../../hooks/useToast.js';
-import '../CreateCaseDrawer/CreateCaseDrawer.css';
+import '../../common/SideDrawer/SideDrawer.css';
 import './ManageSkillsDrawer.css';
 
 const FIELD_LABELS = {
@@ -61,11 +63,14 @@ export function ManageSkillsDrawer({ isOpen, onClose }) {
 
   if (!isOpen) return null;
 
-  const isDirty = JSON.stringify(rules) !== rulesBaseline || (agentId !== '' && JSON.stringify(agentSkills) !== agentBaseline);
-
   const updateRule = (i, patch) => setRules((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const updateSkill = (i, patch) => setAgentSkills((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
 
+  const rulesDirty = JSON.stringify(rules) !== rulesBaseline;
+  const agentDirty = agentId !== '' && JSON.stringify(agentSkills) !== agentBaseline;
+  const isDirty = rulesDirty || agentDirty;
+
+  // Each save returns whether it worked, so "Save changes" in the unsaved-changes dialog only closes after a real save.
   const saveRules = async () => {
     setSavingRules(true);
     try {
@@ -75,8 +80,10 @@ export function ManageSkillsDrawer({ isOpen, onClose }) {
       const fresh = await skillService.getRules();
       setKnownSkills(fresh.knownSkills || []);
       toast.success('Skill rules saved.');
+      return true;
     } catch (err) {
       toast.error(err?.response?.data?.error || err?.message || 'Skill rules could not be saved.');
+      return false;
     } finally {
       setSavingRules(false);
     }
@@ -89,8 +96,10 @@ export function ManageSkillsDrawer({ isOpen, onClose }) {
       setAgentSkills(saved);
       setAgentBaseline(JSON.stringify(saved));
       toast.success('Agent skills saved.');
+      return true;
     } catch (err) {
       toast.error(err?.response?.data?.error || err?.message || 'Agent skills could not be saved.');
+      return false;
     } finally {
       setSavingAgent(false);
     }
@@ -101,6 +110,14 @@ export function ManageSkillsDrawer({ isOpen, onClose }) {
       isOpen={isOpen}
       onClose={onClose}
       isDirty={isDirty}
+      unsavedSubject="configuration"
+      discardLabel="Skill rules and agent skills"
+      onSave={async () => {
+        const ok = (!rulesDirty || await saveRules()) && (!agentDirty || await saveAgent());
+        if (ok) onClose();
+        return ok;
+      }}
+      size="lg"
       className="skills-drawer"
       title="Skills"
       subtitle="What a case needs, and who can handle it — used by skill-based assignment"
@@ -131,9 +148,8 @@ export function ManageSkillsDrawer({ isOpen, onClose }) {
                 <div key={r.id || `new-${i}`} className="skills-row">
                   <input className="input-field" list="known-skills" placeholder="Skill (e.g. Fraud)" value={r.skillName} onChange={(e) => updateRule(i, { skillName: e.target.value })} aria-label="Skill" />
                   <span className="skills-row__when">when</span>
-                  <select className="input-field input-field--select" value={r.matchField} onChange={(e) => updateRule(i, { matchField: e.target.value })} aria-label="Looks at">
-                    {matchFields.map((f) => <option key={f} value={f}>{FIELD_LABELS[f] || f}</option>)}
-                  </select>
+                  <Select value={r.matchField} onChange={(e) => updateRule(i, { matchField: e.target.value })} aria-label="Looks at"
+                    options={matchFields.map((f) => ({ value: f, label: FIELD_LABELS[f] || f }))} />
                   <select className="input-field input-field--select" value={r.matchType} onChange={(e) => updateRule(i, { matchType: e.target.value })} aria-label="Match type">
                     {matchTypes.map((t) => <option key={t} value={t}>{t === 'Equals' ? 'is' : 'contains'}</option>)}
                   </select>
@@ -150,10 +166,9 @@ export function ManageSkillsDrawer({ isOpen, onClose }) {
 
           {!loading && tab === 'agents' && (
             <>
-              <select className="input-field input-field--select" value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label="Agent">
-                <option value="">Choose an agent…</option>
-                {users.map((u) => <option key={u.id} value={u.id}>{u.name} — {u.role || 'Agent'}</option>)}
-              </select>
+              <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label="Agent" placeholder={selectPlaceholder('Agent')}
+                emptyText={users.length === 0 ? 'No active users found.' : 'No matching agents'}
+                options={users.map((u) => ({ value: u.id, label: `${u.name} — ${u.role || 'Agent'}`, searchText: u.email }))} />
               {agentId && (
                 <>
                   <datalist id="known-skills-agent">{knownSkills.map((k) => <option key={k} value={k} />)}</datalist>

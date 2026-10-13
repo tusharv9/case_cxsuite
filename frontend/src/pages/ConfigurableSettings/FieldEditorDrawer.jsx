@@ -4,13 +4,13 @@
 // manages its own options here — the options live in the central lookup tables, shared by every form that uses the list.
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Save, Trash2, ListPlus, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Plus, Save, Trash2, ListPlus, AlertTriangle, CheckCircle2, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '../../components/common/Button/Button.jsx';
 import { SideDrawer } from '../../components/common/SideDrawer/SideDrawer.jsx';
 import { Input, Select, Checkbox } from '../../components/common/Input/Input.jsx';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
 import { metadataService } from '../../services/metadataService.js';
-import './AddFieldModal.css';
+import { CoreOptionsEditor } from './CoreOptionsEditor.jsx';
 import './FieldEditorDrawer.css';
 
 const FIELD_TYPE_LABELS = [
@@ -33,6 +33,9 @@ const MASKING_RULES = [
 // If the capability table cannot be fetched, every setting is offered; the server still rejects what does not apply.
 const ALL_ALLOWED = { length: true, pattern: true, range: true, lookup: true, masking: true };
 const NONE_ALLOWED = { length: false, pattern: false, range: false, lookup: false, masking: false };
+
+// Built-in Create Case dropdowns whose options live in their own master tables (see CoreOptionsEditor).
+const CORE_CASE_FIELDS = new Set(['departmentId', 'caseType', 'severity', 'subCategory']);
 
 const fieldKey = (f) => f.id || f.draftKey || f.apiField;
 const toCode = (name) => String(name || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -141,14 +144,21 @@ export function FieldEditorDrawer({
       ? ALL_ALLOWED
       : capabilityTable[form.fieldType.toLowerCase()] || NONE_ALLOWED;
 
+  const isCoreDropdown = Boolean(editingField?.apiField && CORE_CASE_FIELDS.has(editingField.apiField));
+  // Filters are search inputs: masking does not apply to them (the server refuses it).
+  const isFilterSection = sectionKey === 'Filters';
+
   const lookupType = lookupTypes.find((t) => t.code === form.lookupTypeCode);
-  const canAddOptions = mode === 'new' || lookupType?.allowAdd !== false;
-  const usesFormatRules = mode === 'existing' && Boolean(lookupType?.usesFormatRules);
+  const canAddOptions = !isCoreDropdown && (mode === 'new' || lookupType?.allowAdd !== false);
+  const usesFormatRules = !isCoreDropdown && mode === 'existing' && Boolean(lookupType?.usesFormatRules);
 
   // Load the stored options of the selected list (a draft made earlier in this session wins).
   useEffect(() => {
-    if (!isOpen || form.fieldType !== 'Dropdown' || mode !== 'existing' || !form.lookupTypeCode) return undefined;
+    if (!isOpen || form.fieldType !== 'Dropdown') return undefined;
     let current = true;
+
+    if (isCoreDropdown) return undefined;   // core options are edited by CoreOptionsEditor
+    if (mode !== 'existing' || !form.lookupTypeCode) return undefined;
     setOptionsLoading(true);
     setOptionsError('');
     configurableSettingsService.getLookupValues(form.lookupTypeCode, true, false)
@@ -163,7 +173,7 @@ export function FieldEditorDrawer({
       .catch((err) => current && setOptionsError(err.message || 'The options could not be loaded.'))
       .finally(() => current && setOptionsLoading(false));
     return () => { current = false; };
-  }, [isOpen, form.fieldType, form.lookupTypeCode, mode, lookupDrafts]);
+  }, [isOpen, form.fieldType, form.lookupTypeCode, mode, lookupDrafts, isCoreDropdown]);
 
   const isDirty = JSON.stringify(form) !== baseline || optionsTouched || newListName.trim() !== '';
 
@@ -189,13 +199,20 @@ export function FieldEditorDrawer({
   };
 
   const updateOption = (index, patch) => touchOptions(options.map((o, i) => (i === index ? { ...o, ...patch } : o)));
-  const removeNewOption = (index) => touchOptions(options.filter((_, i) => i !== index));
+  const removeNewOption = (index) => touchOptions(options.filter((_, i) => i !== index).map((o, i) => ({ ...o, displayOrder: i + 1 })));
+  // Reordering is part of the list's draft (saved with the field); the order is always renumbered 1..n.
+  const moveOption = (index, dir) => {
+    const next = [...options];
+    [next[index], next[index + dir]] = [next[index + dir], next[index]];
+    touchOptions(next.map((o, i) => ({ ...o, displayOrder: i + 1 })));
+  };
 
   const changedOptions = useMemo(() => {
+    if (isCoreDropdown) return false;
     if (!optionsTouched) return false;
     if (mode === 'new') return options.length > 0 || newListName.trim() !== '';
     return JSON.stringify(options) !== JSON.stringify(storedOptions) || Boolean(lookupDrafts[form.lookupTypeCode]);
-  }, [optionsTouched, mode, options, storedOptions, newListName, lookupDrafts, form.lookupTypeCode]);
+  }, [isCoreDropdown, optionsTouched, mode, options, storedOptions, newListName, lookupDrafts, form.lookupTypeCode]);
 
   // ---- save ----------------------------------------------------------------------------------------------------------------
   const validate = () => {
@@ -208,7 +225,7 @@ export function FieldEditorDrawer({
       next.displayOrder = `Display order ${order} is already assigned to another field. Please choose a different display order.`;
     }
 
-    if (caps.masking && (Number.isNaN(Number(form.visibleChars)) || Number(form.visibleChars) < 0)) next.visibleChars = 'Visible characters must be 0 or greater.';
+    if (caps.masking && !isFilterSection && (Number.isNaN(Number(form.visibleChars)) || Number(form.visibleChars) < 0)) next.visibleChars = 'Visible characters must be 0 or greater.';
 
     if (caps.length) {
       const minL = form.minLength === '' ? null : Number(form.minLength);
@@ -229,7 +246,7 @@ export function FieldEditorDrawer({
       if (hi !== null && Number.isNaN(hi)) next.maxValue = `Maximum must be a valid ${isDate ? 'date' : 'number'}.`;
       if (lo !== null && hi !== null && !Number.isNaN(lo) && !Number.isNaN(hi) && lo > hi) next.maxValue = 'Maximum cannot be below the minimum.';
     }
-    if (caps.lookup && mode === 'new') {
+    if (!isCoreDropdown && caps.lookup && mode === 'new') {
       const code = toCode(newListName);
       if (!newListName.trim()) next.newListName = 'Name the new list.';
       else if (code.length < 2) next.newListName = 'The list name needs at least two letters or digits.';
@@ -242,12 +259,12 @@ export function FieldEditorDrawer({
   /** The field as the form currently describes it — only what applies to the chosen type — plus any option changes. */
   const buildPayload = () => {
     const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
-    let lookupTypeCode = caps.lookup ? form.lookupTypeCode || null : null;
+    let lookupTypeCode = isCoreDropdown ? (editingField.lookupTypeCode || null) : caps.lookup ? form.lookupTypeCode || null : null;
     let lookupDraft = null;
-    if (caps.lookup && mode === 'new') {
+    if (!isCoreDropdown && caps.lookup && mode === 'new') {
       lookupTypeCode = toCode(newListName);
       lookupDraft = { typeCode: lookupTypeCode, name: newListName.trim(), values: options, stored: [] };
-    } else if (caps.lookup && changedOptions && lookupTypeCode) {
+    } else if (!isCoreDropdown && caps.lookup && changedOptions && lookupTypeCode) {
       lookupDraft = { typeCode: lookupTypeCode, name: null, values: options, stored: storedOptions };
     }
 
@@ -257,7 +274,7 @@ export function FieldEditorDrawer({
       fieldType: form.fieldType,
       isRequired: form.isRequired,
       isVisible: form.isVisible,
-      maskingRule: caps.masking ? form.maskingRule : 'None',
+      maskingRule: caps.masking && !isFilterSection ? form.maskingRule : 'None',
       visibleChars: Number(form.visibleChars) || 0,
       displayOrder: Number(form.displayOrder),
       lookupTypeCode,
@@ -298,11 +315,13 @@ export function FieldEditorDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkKey]);
 
+  // Returns whether the field was applied (the unsaved-changes dialog keeps the drawer open otherwise).
   const handleSave = async () => {
+    if (isSubmitting) return false;
     const nextErrors = validate();
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
-      return;
+      return false;
     }
 
     // A type change is only saved when the existing data still fits (the server checks again on Save Changes).
@@ -310,7 +329,7 @@ export function FieldEditorDrawer({
       const verdict = await runTypeCheck();
       if (verdict && !verdict.ok) {
         setErrors((prev) => ({ ...prev, fieldType: verdict.message }));
-        return;
+        return false;
       }
     }
 
@@ -320,8 +339,10 @@ export function FieldEditorDrawer({
     try {
       await onAdd?.(payload, editingField, lookupDraft);
       onClose();
+      return true;
     } catch {
       // The parent already surfaced the error; the drawer stays open with what was entered.
+      return false;
     } finally {
       setIsSubmitting(false);
     }
@@ -329,7 +350,8 @@ export function FieldEditorDrawer({
 
   const maskingNeedsChars = form.maskingRule === 'HideMiddle' || form.maskingRule === 'HideFirstShowLast';
   const isDate = form.fieldType === 'Date';
-  const showOptions = caps.lookup && (mode === 'new' || form.lookupTypeCode);
+  const showOptions = !isCoreDropdown && caps.lookup && (mode === 'new' || form.lookupTypeCode);
+  const showCoreOptions = isCoreDropdown && form.fieldType === 'Dropdown';
 
   const footer = useCallback(({ requestClose }) => (
     <>
@@ -353,7 +375,9 @@ export function FieldEditorDrawer({
       isOpen={isOpen}
       onClose={onClose}
       isDirty={isDirty && !isSubmitting}
-      discardLabel="Field Settings"
+      discardLabel={`Field: ${form.displayLabel || editingField?.displayLabel || 'New field'}`}
+      unsavedSubject="configuration"
+      onSave={handleSave}
       title={isEditMode ? 'Edit Configurable Field' : 'Add New Configurable Field'}
       subtitle={isEditMode ? `Editing ${editingField.apiField} — applied to the draft; Save Changes stores it` : 'Configure label, field type, requirement, visibility, and masking'}
       ariaLabel={isEditMode ? 'Edit configurable field' : 'Add new configurable field'}
@@ -398,7 +422,7 @@ export function FieldEditorDrawer({
         </section>
 
         {/* ---- Settings that depend on the type ---- */}
-        {(caps.lookup || caps.length || caps.pattern || caps.range || form.fieldType === 'Phone') && (
+        {(caps.lookup || showCoreOptions || caps.length || caps.pattern || caps.range || form.fieldType === 'Phone') && (
           <section className="field-editor__section">
             <h3 className="field-editor__heading">{form.fieldType} settings</h3>
 
@@ -406,45 +430,53 @@ export function FieldEditorDrawer({
               <p className="field-editor__note">The country list, dial codes and number-length rules come from the country settings; the number is checked against the country the user picks.</p>
             )}
 
-            {caps.lookup && (
+            {(caps.lookup || showCoreOptions) && (
               <>
-                <div className="field-editor__list-picker">
-                  <Select
-                    label="Master Lookup"
-                    value={mode === 'new' ? '__new__' : form.lookupTypeCode}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setOptionsError('');
-                      setNewOption('');
-                      if (v === '__new__') { setMode('new'); setOptions([]); setStoredOptions([]); setOptionsTouched(true); setForm((p) => ({ ...p, lookupTypeCode: '' })); }
-                      else { setMode('existing'); setNewListName(''); setOptionsTouched(false); setForm((p) => ({ ...p, lookupTypeCode: v })); }
-                    }}
-                    placeholder="Select a master lookup…"
-                    error={errors.lookupTypeCode}
-                  >
-                    <option value="">— No list (no options) —</option>
-                    {lookupTypes.map((t) => <option key={t.code} value={t.code}>{t.name || t.code} ({t.code})</option>)}
-                    <option value="__new__">+ Create a new list…</option>
-                  </Select>
-                </div>
+                {showCoreOptions ? (
+                  <CoreOptionsEditor apiField={editingField.apiField} />
+                ) : (
+                  <>
+                    <div className="field-editor__list-picker">
+                      <Select
+                        label="Master Lookup"
+                        value={mode === 'new' ? '__new__' : form.lookupTypeCode}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setOptionsError('');
+                          setNewOption('');
+                          if (v === '__new__') { setMode('new'); setOptions([]); setStoredOptions([]); setOptionsTouched(true); setForm((p) => ({ ...p, lookupTypeCode: '' })); }
+                          else { setMode('existing'); setNewListName(''); setOptionsTouched(false); setForm((p) => ({ ...p, lookupTypeCode: v })); }
+                        }}
+                        placeholder="Select a master lookup…"
+                        error={errors.lookupTypeCode}
+                      >
+                        <option value="">— No list (no options) —</option>
+                        {lookupTypes.map((t) => <option key={t.code} value={t.code}>{t.name || t.code} ({t.code})</option>)}
+                        <option value="__new__">+ Create a new list…</option>
+                      </Select>
+                    </div>
 
-                {mode === 'new' && (
-                  <Input
-                    label="New list name"
-                    required
-                    placeholder="e.g. Occupation"
-                    value={newListName}
-                    onChange={(e) => { setNewListName(e.target.value); setErrors((p) => ({ ...p, newListName: undefined })); setOptionsTouched(true); }}
-                    error={errors.newListName}
-                    helperText={toCode(newListName) ? `Code: ${toCode(newListName)}` : undefined}
-                  />
+                    {mode === 'new' && (
+                      <Input
+                        label="New list name"
+                        required
+                        placeholder="e.g. Occupation"
+                        value={newListName}
+                        onChange={(e) => { setNewListName(e.target.value); setErrors((p) => ({ ...p, newListName: undefined })); setOptionsTouched(true); }}
+                        error={errors.newListName}
+                        helperText={toCode(newListName) ? `Code: ${toCode(newListName)}` : undefined}
+                      />
+                    )}
+                  </>
                 )}
 
                 {showOptions && (
                   <div className="option-manager">
                     <div className="option-manager__head">
                       <strong><ListPlus size={14} /> Manage options</strong>
-                      <span>{options.length} option{options.length === 1 ? '' : 's'} · shared by every form that uses this list</span>
+                      <span>
+                        {options.length} option{options.length === 1 ? '' : 's'} · shared by every form that uses this list
+                      </span>
                     </div>
 
                     {optionsLoading && <p className="option-manager__empty">Loading options…</p>}
@@ -453,6 +485,10 @@ export function FieldEditorDrawer({
                     <ul className="option-manager__list">
                       {options.map((o, i) => (
                         <li key={o.id || `new-${i}`} className={`option-row ${o.isActive ? '' : 'option-row--off'}`}>
+                          <span className="core-options__order">
+                            <button type="button" onClick={() => moveOption(i, -1)} disabled={i === 0} aria-label={`Move ${o.label} up`}><ArrowUp size={12} /></button>
+                            <button type="button" onClick={() => moveOption(i, 1)} disabled={i === options.length - 1} aria-label={`Move ${o.label} down`}><ArrowDown size={12} /></button>
+                          </span>
                           <input
                             className="form-input option-row__label"
                             value={o.label}
@@ -462,7 +498,11 @@ export function FieldEditorDrawer({
                           />
                           {!o.id && <span className="option-row__new">NEW</span>}
                           <label className="option-row__active">
-                            <input type="checkbox" checked={o.isActive} onChange={(e) => updateOption(i, { isActive: e.target.checked })} />
+                            <input
+                              type="checkbox"
+                              checked={o.isActive}
+                              onChange={(e) => updateOption(i, { isActive: e.target.checked })}
+                            />
                             Active
                           </label>
                           {!o.id && (
@@ -472,13 +512,12 @@ export function FieldEditorDrawer({
                           )}
                           {usesFormatRules && (
                             <div className="option-row__format">
-                              <label>
-                                <span>ID format rule</span>
-                                <select value={o.formatRule || ''} onChange={(e) => updateOption(i, { formatRule: e.target.value })}>
-                                  <option value="">Default for “{o.label}”</option>
-                                  {idRules.map((r) => <option key={r.key} value={r.key} title={r.description}>{r.label}</option>)}
-                                </select>
-                              </label>
+                              <Select
+                                label="ID format rule"
+                                value={o.formatRule || ''}
+                                onChange={(e) => updateOption(i, { formatRule: e.target.value })}
+                                options={[{ value: '', label: `Default for “${o.label}”` }, ...idRules.map((r) => ({ value: r.key, label: r.label, searchText: r.description }))]}
+                              />
                               {o.formatRule === 'REGEX' && (
                                 <>
                                   <input className="form-input" placeholder="Pattern, e.g. ^[A-Z]{2}\d{6}$" value={o.formatRegex || ''} onChange={(e) => updateOption(i, { formatRegex: e.target.value })} aria-label={`Pattern for ${o.label}`} />
@@ -584,7 +623,7 @@ export function FieldEditorDrawer({
         </section>
 
         {/* ---- Masking ---- */}
-        {caps.masking && (
+        {caps.masking && !isFilterSection && (
           <section className="field-editor__section">
             <h3 className="field-editor__heading">Masking</h3>
             <div className="field-editor__grid">

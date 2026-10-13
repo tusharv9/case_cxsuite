@@ -33,7 +33,10 @@ runs standalone (development only) and sends a development header instead.
 | `Directory:*` | Optional. Host user-directory API (`BaseUrl`, `ListPath`, `GetPath` with `{id}`, `ItemsProperty`, `Fields` map, `ApiKey`), `SyncIntervalMinutes`, `DeactivateMissing`. |
 
 ### Permissions Case Management enforces (server side, per endpoint)
-`cases.read` `cases.write` `customers.read` `customers.write` `config.manage` `teams.manage` `monitoring.view` `monitoring.nudge` `audit.view`
+`cases.read` `cases.write` `cases.assign` `customers.read` `customers.write` `config.manage` `teams.manage` `monitoring.view` `monitoring.nudge` `audit.view`
+`cases.assign` lets someone change who holds **any** case (assign, reassign, transfer). Without it, a person with `cases.write`
+may do so only for cases they hold, or that belong to a team they lead or are an active member of. Default mapping: Team Lead,
+Supervisor, Admin (`*`). Add it to any Host role that should reassign across teams.
 (Reading shared configuration — lookups, SLA settings, departments, teams — needs only a signed-in user, because every form uses it.)
 
 ### Users

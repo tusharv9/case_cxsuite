@@ -21,7 +21,7 @@ namespace CaseManagement.Tests;
 /// </summary>
 public class PriorityConfigurationTests
 {
-    private sealed class World : IAsyncDisposable
+    internal sealed class World : IAsyncDisposable
     {
         public TempDatabase Db = null!;
         public AppDbContext Ctx = null!;

@@ -18,8 +18,12 @@ export class ErrorBoundary extends Component {
     this.props.onError?.(error, info);
   }
 
+  // eslint-disable-next-line react/no-did-update-set-state
   componentDidUpdate(prevProps) {
-    if (this.state.error && prevProps.resetKey !== this.props.resetKey) this.setState({ error: null });
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) {
+      // eslint-disable-next-line react/no-did-update-set-state
+      this.setState({ error: null });
+    }
   }
 
   render() {

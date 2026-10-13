@@ -27,6 +27,29 @@ Eligible agents = active member + assignable + active Host account + **Available
 * **Nobody can take it** (no members / none available / all at capacity) — the case is **held by the team lead**, the routing log and a `CASE_UNASSIGNED` notification say *why*. If the team has no lead it stays with its creator. It is never silently given to an overloaded agent.
 * **Concurrency** — routing runs **inside the same transaction that stores the case**, and assignments to one team are serialised with a PostgreSQL advisory transaction lock. Simultaneous cases cannot be handed to the same "least loaded" agent or the same round-robin position, and the round-robin pointer commits with the case.
 
+## Manual assign, reassign and transfer (one set of rules)
+
+`AssignmentEligibilityService` (`Services/Assignment/AssignmentEligibility.cs`) judges every person for a team; automatic routing
+(`AgentPoolService`) and the manual paths use it, so the rules cannot drift apart. The policies:
+
+| | Automatic (routing) | Manual (a person chooses) |
+|---|---|---|
+| Who | active members marked assignable | active members selected for manual assignment (`CanBeManuallyAssigned`), and team leads unless excluded; `IsAssignable` only opts out of *automatic* routing |
+| Status | Available / Busy | Available / Busy, unless the setting is off |
+| Capacity | below the team's capacity | below the case team's capacity, unless the setting is off |
+| Other teams | — | per the cross-team setting (off / selected teams / all active teams); choosing someone outside the case's team also needs `cases.assign`, and the case stays with its team |
+
+The manual column is the administrator's **Assign & Reassign** settings (Configurable Settings → Case Management), read on every
+assignment through `AssignmentEligibilityService.GetManualPolicyAsync` (cached, cleared when the settings are saved).
+
+* `GET /api/cases/{id}/eligible-assignees` — the case's team members and lead, each with live status, open cases, capacity and,
+  when they cannot take it, a reason code (`NotTeamMember`, `UserInactive`, `NotSelected`, `LeadExcluded`, `Unavailable`, `AtCapacity`, `NeedsAssignPermission`, `TeamInactive`, `CurrentOwner`) and message.
+* `PUT /api/cases/{id}/assign` — **422** `{ error, code }` when the person is not eligible; **403** when the caller may not change the holder
+  (see `cases.assign` in HOST_INTEGRATION.md). The check runs under the same per-team lock as routing, so capacity cannot be raced.
+* `PUT /api/cases/{id}/transfer` — refused (422 `TeamInactive`) for an inactive team. The receiving team's active lead takes the case;
+  without one, the team's algorithm picks an eligible agent; if nobody can, the transfer is refused (422 `NoEligibleAssignee`) instead of leaving the case with someone outside its team.
+* Existing data that breaks these rules is listed, never changed, by `backend/Data/Reports/assignment-integrity-report.sql` (read-only).
+
 ## Skills
 
 * **Skill rules** (`SkillRules`): "when *field* contains/equals *value*, the case needs *skill*". Fields: title, description, case type, channel, sub-category, priority, customer segment. Replaces the `fraud/loan/card/atm` keywords that were hard-coded.

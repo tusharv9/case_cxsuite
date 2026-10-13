@@ -5,7 +5,7 @@ import { X, Shield, User, Globe, FileText, CheckCircle2, Calendar, Briefcase, Ta
 import { Button } from '../../common/Button/Button.jsx';
 import { formatDate } from '../../../utils/dateUtils.js';
 import './CaseAuditDetailsDrawer.css';
-import '../CreateCaseDrawer/CreateCaseDrawer.css';
+import '../../common/SideDrawer/SideDrawer.css';
 
 export function CaseAuditDetailsDrawer({ isOpen, onClose, auditRecord }) {
   if (!isOpen || !auditRecord) return null;

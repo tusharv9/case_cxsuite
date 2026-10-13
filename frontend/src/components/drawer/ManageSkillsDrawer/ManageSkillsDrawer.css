@@ -1,4 +1,4 @@
-.skills-drawer { width: min(720px, 100vw); }
+/* width: SideDrawer size="lg" */
 .skills-tabs { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid #e2e8f0; }
 .skills-tab { padding: 10px 14px; border: 0; background: none; font-size: 13px; font-weight: 600; color: #64748b; border-bottom: 2px solid transparent; cursor: pointer; }
 .skills-tab--active { color: #1d4ed8; border-bottom-color: #1d4ed8; }

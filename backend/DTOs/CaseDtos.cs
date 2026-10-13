@@ -51,7 +51,10 @@ public class UpdateCaseStatusDto
 
 public class EscalateCaseDto
 {
+    /// <summary>An active ESCALATION_REASON option (its value or label).</summary>
     public string? Reason { get; set; }
+    /// <summary>The explanation, required when the chosen option RequiresDetail (e.g. "Other").</summary>
+    public string? ReasonDetail { get; set; }
     public string? Note { get; set; }
     public Guid? TargetUserId { get; set; }
     public Guid UserId { get; set; }
@@ -61,7 +64,47 @@ public class AssignCaseDto
 {
     public Guid OwnerId { get; set; }
     public Guid UserId { get; set; } // The user making the change
+    /// <summary>An active ASSIGNMENT_REASON option (its value or label).</summary>
     public string? Reason { get; set; }
+    /// <summary>The explanation, required when the chosen option RequiresDetail (e.g. "Others").</summary>
+    public string? ReasonDetail { get; set; }
+}
+
+/// <summary>Who could hold a case under the manual-assignment policy. Every figure is read from the database; nothing is inferred.</summary>
+public class EligibleAssigneesDto
+{
+    public Guid CaseId { get; set; }
+    public Guid DepartmentId { get; set; }
+    public string DepartmentName { get; set; } = string.Empty;
+    public bool DepartmentIsActive { get; set; }
+    public Guid? CurrentOwnerId { get; set; }
+    /// <summary>Open cases an agent may hold in this team (the team's own setting, else the global one).</summary>
+    public int Capacity { get; set; }
+    /// <summary>The Assign &amp; Reassign cross-team setting in force (Disabled | SelectedTeams | AllTeams).</summary>
+    public string CrossTeamMode { get; set; } = string.Empty;
+    public List<EligibleAssigneeDto> Candidates { get; set; } = new();
+}
+
+public class EligibleAssigneeDto
+{
+    public Guid UserId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Email { get; set; }
+    /// <summary>The person's role within this team (TeamMembers.MemberRole); null for a lead who has no member row.</summary>
+    public string? TeamRole { get; set; }
+    public bool IsTeamLead { get; set; }
+    public bool IsTeamMember { get; set; }
+    /// <summary>The team this person is offered from: the case's team, or another team when cross-team assignment is allowed.</summary>
+    public string HomeTeamName { get; set; } = string.Empty;
+    public bool IsCrossTeam { get; set; }
+    /// <summary>Users.Status as the agent last set it (Available, Busy, Away, Offline).</summary>
+    public string Status { get; set; } = string.Empty;
+    public int OpenCases { get; set; }
+    public bool IsCurrentOwner { get; set; }
+    public bool IsEligible { get; set; }
+    /// <summary>Machine-readable reason (IneligibilityReason name, or "CurrentOwner"); null when eligible.</summary>
+    public string? IneligibleReason { get; set; }
+    public string? IneligibleMessage { get; set; }
 }
 
 public class AddNoteDto
@@ -80,7 +123,10 @@ public class TransferDepartmentDto
     public Guid DepartmentId { get; set; }
     public string? TransferTo { get; set; } // "Queue", "Department", "Team"
     public string? TargetQueue { get; set; }
+    /// <summary>An active TRANSFER_REASON option (its value or label).</summary>
     public string? Reason { get; set; }
+    /// <summary>The explanation, required when the chosen option RequiresDetail.</summary>
+    public string? ReasonDetail { get; set; }
     public string? HandoverNote { get; set; }
 }
 
@@ -158,6 +204,7 @@ public class RequestSwarmDto
 {
     public string? Reason { get; set; }
     public Guid UserId { get; set; }
+    public List<Guid>? ParticipantUserIds { get; set; }
 }
 
 public class CaseAttachmentDto

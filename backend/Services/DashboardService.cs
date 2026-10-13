@@ -29,11 +29,13 @@ public class DashboardService : IDashboardService
 
     private readonly AppDbContext _context;
     private readonly ISlaClockProvider _slaClock;
+    private readonly IPiiMaskingService? _piiMasking;
 
-    public DashboardService(AppDbContext context, ISlaClockProvider slaClock)
+    public DashboardService(AppDbContext context, ISlaClockProvider slaClock, IPiiMaskingService? piiMasking = null)
     {
         _context = context;
         _slaClock = slaClock;
+        _piiMasking = piiMasking;
     }
 
     // ------------------------------------------------------------------------------------------------ filters
@@ -243,6 +245,12 @@ public class DashboardService : IDashboardService
         }
         result.AttentionCases = attentionIds.Where(rows.ContainsKey).Select(Shape).ToList();
         result.RecentCases = recentIds.Where(rows.ContainsKey).Select(id => Shape(id)).Select(Clone).ToList();
+        if (_piiMasking != null)
+        {
+            // The dashboard lists customers' names: masked like everywhere else.
+            await _piiMasking.MaskCasesAsync(result.AttentionCases, ct);
+            await _piiMasking.MaskCasesAsync(result.RecentCases, ct);
+        }
 
         // Activity follows the same filters as everything else, and only reports events that belong to a case.
         result.RecentActivities = await _context.CaseEvents.AsNoTracking()

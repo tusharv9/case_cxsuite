@@ -99,11 +99,25 @@ export function validateFields(fields, getValue, getOptions, skipRequired = new 
 }
 
 /**
- * The text a dropdown shows before anything is chosen: "Select Your Preferred Language", "Select Your Home Branch",
- * "Select Your ID". Built from the configured label (a leading "Choose an" / "Select your" is dropped), so a renamed
- * or newly added dropdown gets a sensible prompt with no code change.
+ * The text a configured dropdown shows before anything is chosen: "Select a Department", "Select a Preferred Language".
+ * Built from the configured label (a leading "Choose an" / "Select your" is dropped), so a renamed or newly added
+ * dropdown gets a sensible prompt with no code change.
  */
 export function dropdownPlaceholder(label) {
-  const core = String(label || 'Option').trim().replace(/^(choose|select|pick)\s+(an?\s+|the\s+|your\s+)?/i, '');
-  return `Select Your ${core || 'Option'}`;
+  const core = String(label || '').trim().replace(/^(choose|select|pick)\s+(an?\s+|the\s+|your\s+)?/i, '');
+  return selectPlaceholder(core || 'Option');
+}
+
+// Words that start with a vowel letter but a consonant sound ("a User"), and the reverse ("an Hour").
+const A_EXCEPTIONS = /^(uni|use|usu|eu|one|once)/i;
+const AN_EXCEPTIONS = /^(hour|honest|honou?r|heir)/i;
+
+/**
+ * The one placeholder wording for every dropdown: "Select a Department", "Select an Agent".
+ * @param {string} noun  what is being chosen, in the casing it should appear (e.g. "Department", "Assigned Agent")
+ */
+export function selectPlaceholder(noun) {
+  const text = String(noun || 'Option').trim();
+  const an = AN_EXCEPTIONS.test(text) || (/^[aeiou]/i.test(text) && !A_EXCEPTIONS.test(text));
+  return `Select ${an ? 'an' : 'a'} ${text}`;
 }

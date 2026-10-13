@@ -9,6 +9,12 @@ public static class Permissions
 {
     public const string CasesRead = "cases.read";
     public const string CasesWrite = "cases.write";
+
+    /// <summary>
+    /// Change who holds ANY case (assign, reassign, transfer). Without it a person may do so only for cases they own or that
+    /// belong to a team they lead or are an active member of.
+    /// </summary>
+    public const string CasesAssign = "cases.assign";
     public const string CustomersRead = "customers.read";
     public const string CustomersWrite = "customers.write";
     public const string ConfigManage = "config.manage";
@@ -27,7 +33,7 @@ public static class Permissions
 
     public static readonly string[] All =
     {
-        CasesRead, CasesWrite, CustomersRead, CustomersWrite, ConfigManage,
+        CasesRead, CasesWrite, CasesAssign, CustomersRead, CustomersWrite, ConfigManage,
         TeamsManage, MonitoringView, MonitoringNudge, AuditView, PiiUnmask
     };
 
@@ -39,8 +45,8 @@ public static class Permissions
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["Agent"] = new[] { CasesRead, CasesWrite, CustomersRead, CustomersWrite },
-            ["Team Lead"] = new[] { CasesRead, CasesWrite, CustomersRead, CustomersWrite, MonitoringView, MonitoringNudge, AuditView },
-            ["Supervisor"] = new[] { CasesRead, CasesWrite, CustomersRead, CustomersWrite, MonitoringView, MonitoringNudge, AuditView, TeamsManage },
+            ["Team Lead"] = new[] { CasesRead, CasesWrite, CasesAssign, CustomersRead, CustomersWrite, MonitoringView, MonitoringNudge, AuditView },
+            ["Supervisor"] = new[] { CasesRead, CasesWrite, CasesAssign, CustomersRead, CustomersWrite, MonitoringView, MonitoringNudge, AuditView, TeamsManage },
             ["Admin"] = new[] { Everything, PiiUnmask }
         };
 }

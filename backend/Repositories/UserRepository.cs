@@ -28,7 +28,7 @@ public class UserRepository : IUserRepository
         return await _context.Users
             .AsNoTracking()
             .Where(u => u.IsActive)   // deactivated Host users cannot be assigned work
-            .MapToUserDto()
+            .MapToUserDto(_context.TeamMembers)
             .ToListAsync(ct);
     }
 }

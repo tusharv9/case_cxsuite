@@ -111,6 +111,15 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         }
     }
 
+    /// <summary>
+    /// Filters are search inputs, not displayed data: a masking rule there would mean nothing (and used to leak into other screens'
+    /// masking). Masking is configured on the forms that show the data (Create Case for case fields, Customer 360 for customers).
+    /// </summary>
+    private static string? MaskingOnFilter(string sectionKey, string? maskingRule) =>
+        string.Equals(sectionKey, "Filters", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(maskingRule) && maskingRule != "None"
+            ? "Masking does not apply to filters. Set it on the form that shows this data instead."
+            : null;
+
     private static FieldConfiguration NewEntity(CreateCustomFieldDto dto, string moduleKey, string sectionKey)
     {
         var def = DefinitionOf(dto.DisplayLabel, dto.FieldType, dto.MaskingRule, dto.VisibleChars, dto.DisplayOrder,
@@ -193,6 +202,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
                 dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.MinValue, dto.MaxValue, dto.LookupTypeCode);
             var defErrors = await CheckDefinitionAsync(def, ct, dto.DisplayLabel);
             if (defErrors.Count > 0) { errors.AddRange(defErrors.Select(e => e with { Field = key })); continue; }
+            if (MaskingOnFilter(current.SectionKey, dto.MaskingRule) is { } filterMasking) { errors.Add(new FieldError(key, filterMasking)); continue; }
 
             var n = FieldDefinitionRules.Normalize(def, dto.ValidationMessage);
 
@@ -235,6 +245,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
                 dto.ValidationRegex, dto.MinLength, dto.MaxLength, dto.MinValue, dto.MaxValue, dto.LookupTypeCode);
             var defErrors = await CheckDefinitionAsync(def, ct, label);
             if (defErrors.Count > 0) { errors.AddRange(defErrors.Select(e => e with { Field = label })); continue; }
+            if (MaskingOnFilter(sectionKey, dto.MaskingRule) is { } filterMasking) { errors.Add(new FieldError(label, filterMasking)); continue; }
 
             var entity = NewEntity(dto, moduleKey, sectionKey);
             var keyError = CheckNewKey(entity);
@@ -473,20 +484,23 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
                 {
                     Id = Guid.NewGuid(), LookupTypeId = type.Id, TypeCode = type.Code, Value = value, Label = label,
                     DisplayOrder = draft.DisplayOrder, IsActive = draft.IsActive, CreatedAt = DateTime.UtcNow,
-                    FormatRule = formatRule, FormatRegex = formatRegex, FormatMessage = formatMessage
+                    FormatRule = formatRule, FormatRegex = formatRegex, FormatMessage = formatMessage,
+                    RequiresDetail = draft.RequiresDetail ?? false
                 };
                 _context.LookupValues.Add(added);
                 changes.Add(("CREATE", $"Added option '{label}' to list '{type.Name}'", null, $"Value: {value}, Active: {draft.IsActive}"));
             }
             else if (existing.Label != label || existing.DisplayOrder != draft.DisplayOrder || existing.IsActive != draft.IsActive
+                     || (draft.RequiresDetail.HasValue && existing.RequiresDetail != draft.RequiresDetail.Value)
                      || (type.UsesFormatRules && (existing.FormatRule != formatRule || existing.FormatRegex != formatRegex || existing.FormatMessage != formatMessage)))
             {
                 changes.Add(("UPDATE", $"Updated option '{existing.Label}' of list '{type.Name}'",
-                    $"Label: {existing.Label}, Order: {existing.DisplayOrder}, Active: {existing.IsActive}",
-                    $"Label: {label}, Order: {draft.DisplayOrder}, Active: {draft.IsActive}"));
+                    $"Label: {existing.Label}, Order: {existing.DisplayOrder}, Active: {existing.IsActive}, Needs detail: {existing.RequiresDetail}",
+                    $"Label: {label}, Order: {draft.DisplayOrder}, Active: {draft.IsActive}, Needs detail: {draft.RequiresDetail ?? existing.RequiresDetail}"));
                 existing.Label = label;
                 existing.DisplayOrder = draft.DisplayOrder;
                 existing.IsActive = draft.IsActive;
+                if (draft.RequiresDetail.HasValue) existing.RequiresDetail = draft.RequiresDetail.Value;
                 if (type.UsesFormatRules) { existing.FormatRule = formatRule; existing.FormatRegex = formatRegex; existing.FormatMessage = formatMessage; }
                 existing.UpdatedAt = DateTime.UtcNow;
             }
@@ -539,7 +553,8 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             IsActive = entity.IsActive,
             FormatRule = entity.FormatRule,
             FormatRegex = entity.FormatRegex,
-            FormatMessage = entity.FormatMessage
+            FormatMessage = entity.FormatMessage,
+            RequiresDetail = entity.RequiresDetail
         };
     }
 
@@ -607,7 +622,20 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             IsActive = dto.IsActive
         };
 
-        var updated = await _repository.UpdateCaseTypeAsync(id, entity, ct);
+        // A rename must follow the name everywhere that stores it as text, in the same transaction (cases, routing and skill rules).
+        var updated = await InTransactionAsync(async () =>
+        {
+            var result = await _repository.UpdateCaseTypeAsync(id, entity, ct);
+            if (result != null && existing != null && !string.Equals(existing.Name, result.Name, StringComparison.Ordinal))
+            {
+                await _context.Cases.Where(c => c.CaseType.ToLower() == existing.Name.ToLower())
+                    .ExecuteUpdateAsync(u => u.SetProperty(c => c.CaseType, result.Name), ct);
+                await RenameInRoutingRulesAsync(c => c.CaseType, (c, v) => c.CaseType = v, existing.Name, result.Name, ct);
+                await RenameInSkillRulesAsync("CaseType", existing.Name, result.Name, ct);
+                await _context.SaveChangesAsync(ct);
+            }
+            return result;
+        }, ct);
         if (updated == null) return null;
 
         var newVal = $"Name: {updated.Name}, Code: {updated.Code}, Prefix: {updated.Prefix}, Active: {updated.IsActive}";
@@ -714,7 +742,26 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             IsActive = dto.IsActive
         };
 
-        var updated = await _repository.UpdateSubCategoryAsync(id, entity, ct);
+        var updated = await InTransactionAsync(async () =>
+        {
+            var result = await _repository.UpdateSubCategoryAsync(id, entity, ct);
+            if (result != null && !string.Equals(existing.Name, result.Name, StringComparison.Ordinal))
+            {
+                // Cases of THIS department keep pointing at the renamed sub-category.
+                await _context.Cases.Where(c => c.DepartmentId == existing.DepartmentId && c.Subcategory != null && c.Subcategory.ToLower() == existing.Name.ToLower())
+                    .ExecuteUpdateAsync(u => u.SetProperty(c => c.Subcategory, result.Name), ct);
+                // Routing and skill rules match a sub-category by NAME across departments: rename them only when no other
+                // sub-category still uses the old name, otherwise they would silently stop applying there.
+                var nameStillUsed = await _context.DepartmentSubCategories.AnyAsync(sc => sc.Id != id && sc.Name.ToLower() == existing.Name.ToLower(), ct);
+                if (!nameStillUsed)
+                {
+                    await RenameInRoutingRulesAsync(c => c.Category, (c, v) => c.Category = v, existing.Name, result.Name, ct);
+                    await RenameInSkillRulesAsync("Subcategory", existing.Name, result.Name, ct);
+                }
+                await _context.SaveChangesAsync(ct);
+            }
+            return result;
+        }, ct);
         if (updated == null) return null;
 
         return new DepartmentSubCategoryDto
@@ -792,9 +839,12 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         if (await _context.PrioritySlaRules.AnyAsync(r => r.Priority.ToLower() == lowered, ct))
             throw new InvalidOperationException($"Priority '{name}' already exists.");
 
-        var internalHours = dto.InternalHours <= 0 ? 22 : dto.InternalHours;
-        var externalHours = dto.ExternalHours <= 0 ? 24 : dto.ExternalHours;
-        var firstResponseMinutes = dto.FirstResponseMinutes > 0 ? dto.FirstResponseMinutes : 240;
+        // A priority without SLA targets would give cases arbitrary deadlines, so every target must be stated (no built-in defaults).
+        if (dto.FirstResponseMinutes <= 0 || dto.InternalHours <= 0 || dto.ExternalHours <= 0)
+            throw new InvalidOperationException("A new priority needs its first response, internal and external SLA targets. Add priorities on Cases SLA & Routing → Priority SLA Matrix.");
+        var internalHours = dto.InternalHours;
+        var externalHours = dto.ExternalHours;
+        var firstResponseMinutes = dto.FirstResponseMinutes;
         ValidateSlaHours(internalHours, "Internal SLA");
         ValidateSlaHours(externalHours, "External SLA");
 
@@ -920,6 +970,44 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
 
         await RecordAuditLogAsync("DELETE", $"Priority: {rule.Priority}", $"Deleted priority '{rule.Priority}'", rule.Priority, null, ct);
         return true;
+    }
+
+    private async Task<T> InTransactionAsync<T>(Func<Task<T>> work, CancellationToken ct)
+    {
+        if (_context.Database.CurrentTransaction != null) return await work();
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _context.Database.BeginTransactionAsync(ct);
+            var result = await work();
+            await tx.CommitAsync(ct);
+            return result;
+        });
+    }
+
+    /// <summary>Routing rule conditions store names (exact, case-insensitive match): follow a rename of one of them.</summary>
+    private async Task RenameInRoutingRulesAsync(Func<RuleConditionsDto, string?> read, Action<RuleConditionsDto, string> write, string oldName, string newName, CancellationToken ct)
+    {
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        foreach (var rule in await _context.RoutingRules.ToListAsync(ct))
+        {
+            RuleConditionsDto? conditions;
+            try { conditions = System.Text.Json.JsonSerializer.Deserialize<RuleConditionsDto>(rule.ConditionsJson, options); }
+            catch (System.Text.Json.JsonException) { continue; }
+            if (conditions == null || !string.Equals(read(conditions), oldName, StringComparison.OrdinalIgnoreCase)) continue;
+            write(conditions, newName);
+            rule.ConditionsJson = System.Text.Json.JsonSerializer.Serialize(conditions);
+            rule.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>Skill rules that require an EXACT value follow a rename ("contains" rules match text and are left alone).</summary>
+    private async Task RenameInSkillRulesAsync(string matchField, string oldName, string newName, CancellationToken ct)
+    {
+        var rules = await _context.SkillRules
+            .Where(r => r.MatchField == matchField && r.MatchType == "Equals" && r.MatchValue.ToLower() == oldName.ToLower())
+            .ToListAsync(ct);
+        foreach (var r in rules) { r.MatchValue = newName; r.UpdatedAt = DateTime.UtcNow; }
     }
 
     private static string? ConditionPriority(string conditionsJson)

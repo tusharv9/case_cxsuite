@@ -328,7 +328,7 @@ export function TimelineInteractionBox({
                 <div className="timeline-mention-popup__item-info">
                   <span className="timeline-mention-popup__name">{u.name}</span>
                   <span className="timeline-mention-popup__meta">
-                    {u.role ? `${u.role} · ` : ''}{u.team || u.departmentName || 'Agent'}
+                    {[u.role, u.team || u.departmentName].filter(Boolean).join(' · ')}
                   </span>
                 </div>
               </button>

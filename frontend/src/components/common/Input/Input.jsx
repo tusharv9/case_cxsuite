@@ -1,15 +1,16 @@
 // ===== FORM INPUT COMPONENTS =====
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, X, Loader2, AlertCircle } from 'lucide-react';
 import './Input.css';
 
-export function FormGroup({ label, required, error, helperText, children, htmlFor }) {
+export function FormGroup({ label, required, error, helperText, children, htmlFor, labelId, errorId }) {
   return (
     <div className="form-group">
       {label && (
         <label
+          id={labelId}
           className={`form-label${required ? ' form-label--required' : ''}`}
           htmlFor={htmlFor}
         >
@@ -17,14 +18,15 @@ export function FormGroup({ label, required, error, helperText, children, htmlFo
         </label>
       )}
       {children}
-      {error && <span className="form-error">{error}</span>}
+      {error && <span className="form-error" id={errorId}>{error}</span>}
       {helperText && !error && <div className="form-helper-text">{helperText}</div>}
     </div>
   );
 }
 
 export function Input({ id, label, required, error, helperText, className = '', ...rest }) {
-  const inputId = id || `input-${Math.random().toString(36).slice(2)}`;
+  const autoId = useId();
+  const inputId = id || `input-${autoId}`;
   const inputClasses = `form-input ${error ? 'form-input--error field-error' : ''} ${className}`.trim();
   if (label) {
     return (
@@ -37,7 +39,8 @@ export function Input({ id, label, required, error, helperText, className = '', 
 }
 
 export function Textarea({ id, label, required, error, rows = 4, className = '', ...rest }) {
-  const inputId = id || `textarea-${Math.random().toString(36).slice(2)}`;
+  const autoId = useId();
+  const inputId = id || `textarea-${autoId}`;
   const textareaClasses = `form-textarea ${error ? 'form-input--error field-error' : ''} ${className}`.trim();
   if (label) {
     return (
@@ -56,14 +59,26 @@ export function Select({
   error,
   helperText,
   children,
+  options: optionsProp,
   className = '',
   value,
   onChange,
-  placeholder = 'Select option...',
-  searchPlaceholder = 'Type to search...',
+  placeholder = 'Select an option',
+  searchPlaceholder = 'Type to search…',
   disabled = false,
+  clearable = false,
+  isLoading = false,
+  emptyText = 'No matching options',
+  loadError = null,        // the options could not be loaded: shown in the list (with Retry when onRetry is given)
+  onRetry,
   ...rest
 }) {
+  const autoId = useId();
+  const inputId = id || `select-${autoId}`;
+  const labelId = `${inputId}-label`;
+  const errorId = `${inputId}-error`;
+  const listboxId = `${inputId}-listbox`;
+  const optionId = (index) => `${inputId}-option-${index}`;
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlighted, setHighlighted] = useState(0);
@@ -141,6 +156,10 @@ export function Select({
         e.stopPropagation();
         setIsOpen(false);
         setSearchQuery('');
+        triggerRef.current?.focus();
+      } else if (e.key === 'Tab') {
+        setIsOpen(false);
+        setSearchQuery('');
       }
     };
 
@@ -164,6 +183,19 @@ export function Select({
   }, [isOpen]);
 
   const options = useMemo(() => {
+    if (Array.isArray(optionsProp)) {
+      return optionsProp.map((opt) => {
+        if (typeof opt === 'object' && opt !== null) {
+          return {
+            value: opt.value !== undefined ? opt.value : opt.id,
+            label: opt.label !== undefined ? opt.label : opt.name || String(opt.value),
+            disabled: opt.disabled,
+            searchText: opt.searchText,
+          };
+        }
+        return { value: opt, label: String(opt) };
+      });
+    }
     const opts = [];
     React.Children.forEach(children, (child) => {
       if (child && child.type === 'option') {
@@ -177,7 +209,7 @@ export function Select({
       }
     });
     return opts;
-  }, [children]);
+  }, [children, optionsProp]);
 
   const selectedOption = options.find((o) => String(o.value) === String(value)) || null;
   const displayLabel = selectedOption ? selectedOption.label : placeholder;
@@ -207,14 +239,14 @@ export function Select({
     setSearchQuery('');
   };
 
-  const inputId = id || `select-${Math.random().toString(36).slice(2)}`;
-
   const selectMarkup = (
     <div className={`custom-select-container ${isOpen ? 'is-open' : ''} ${disabled ? 'is-disabled' : ''}`}>
       <div
         ref={triggerRef}
         className={`form-select custom-select-trigger ${error ? 'form-input--error field-error' : ''} ${className} ${disabled ? 'disabled' : ''}`.trim()}
-        onClick={() => {
+        onClick={(e) => {
+          // Inside a <label>, the label would re-dispatch this click and close the list again.
+          e.preventDefault();
           if (!disabled) setIsOpen(!isOpen);
         }}
         onKeyDown={(e) => {
@@ -233,6 +265,12 @@ export function Select({
           } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             setHighlighted((h) => Math.max(0, h - 1));
+          } else if (e.key === 'Home' && !searchQuery) {
+            e.preventDefault();
+            setHighlighted(0);
+          } else if (e.key === 'End' && !searchQuery) {
+            e.preventDefault();
+            setHighlighted(Math.max(0, filteredOptions.length - 1));
           } else if (e.key === 'Enter') {
             e.preventDefault();
             const opt = filteredOptions[highlighted];
@@ -244,10 +282,18 @@ export function Select({
             rest.onBlur?.(e);
           }
         }}
+        id={inputId}
         tabIndex={disabled ? -1 : 0}
         role="combobox"
         aria-haspopup="listbox"
         aria-expanded={isOpen}
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-activedescendant={isOpen && filteredOptions[highlighted] ? optionId(highlighted) : undefined}
+        aria-labelledby={label ? labelId : undefined}
+        aria-label={label ? undefined : rest['aria-label'] || placeholder}
+        aria-required={required || undefined}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         aria-disabled={disabled}
       >
         {isOpen ? (
@@ -256,7 +302,9 @@ export function Select({
             type="text"
             className="custom-select-search-inline"
             placeholder={searchPlaceholder}
-            aria-label={`Search ${label || 'options'}`}
+            aria-label={`Search ${label || rest['aria-label'] || 'options'}`}
+            aria-controls={listboxId}
+            aria-autocomplete="list"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onClick={(e) => e.stopPropagation()}
@@ -264,24 +312,62 @@ export function Select({
         ) : (
           <span className={!selectedOption ? 'custom-select-placeholder' : ''}>{displayLabel}</span>
         )}
-        <ChevronDown size={14} className="custom-select-arrow" />
+        <div className="custom-select-actions">
+          {clearable && !disabled && value !== undefined && value !== '' && value !== null && (
+            <button
+              type="button"
+              className="custom-select-clear-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange?.({ target: { value: '' } });
+              }}
+              aria-label="Clear selection"
+            >
+              <X size={14} />
+            </button>
+          )}
+          {isLoading ? (
+            <Loader2 size={14} className="custom-select-spinner" />
+          ) : (
+            <ChevronDown size={14} className="custom-select-arrow" />
+          )}
+        </div>
       </div>
 
       {isOpen && coords && createPortal(
         <div
           ref={popoverRef}
+          id={listboxId}
           className="custom-select-options scrollbar-thin"
           style={coords}
           role="listbox"
+          aria-labelledby={label ? labelId : undefined}
         >
-          {filteredOptions.length === 0 ? (
-            <div className="custom-select-empty">No options found</div>
+          {loadError ? (
+            <div className="custom-select-empty custom-select-error" role="alert">
+              <AlertCircle size={14} />
+              <span>{loadError}</span>
+              {onRetry && (
+                <button type="button" className="custom-select-retry" onClick={(e) => { e.stopPropagation(); onRetry(); }}>
+                  Retry
+                </button>
+              )}
+            </div>
+          ) : isLoading && filteredOptions.length === 0 ? (
+            <div className="custom-select-empty">
+              <Loader2 size={14} className="custom-select-spinner" style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '6px' }} />
+              Loading...
+            </div>
+          ) : filteredOptions.length === 0 ? (
+            <div className="custom-select-empty">{emptyText}</div>
           ) : (
             filteredOptions.map((opt, index) => {
               const isSelected = String(opt.value) === String(value);
               return (
                 <div
                   key={opt.value}
+                  id={optionId(index)}
+                  aria-disabled={opt.disabled || undefined}
                   className={`custom-select-option ${isSelected ? 'is-selected' : ''} ${opt.disabled ? 'is-disabled' : ''} ${index === highlighted ? 'is-highlighted' : ''}`}
                   data-highlighted={index === highlighted ? 'true' : undefined}
                   onMouseEnter={() => setHighlighted(index)}
@@ -305,7 +391,7 @@ export function Select({
 
   if (label) {
     return (
-      <FormGroup label={label} required={required} error={error} helperText={helperText} htmlFor={inputId}>
+      <FormGroup label={label} required={required} error={error} helperText={helperText} labelId={labelId} errorId={errorId}>
         {selectMarkup}
       </FormGroup>
     );
@@ -314,7 +400,8 @@ export function Select({
 }
 
 export function Checkbox({ id, label, className = '', ...rest }) {
-  const inputId = id || `checkbox-${Math.random().toString(36).slice(2)}`;
+  const autoId = useId();
+  const inputId = id || `checkbox-${autoId}`;
   return (
     <label className={`form-checkbox-wrapper ${className}`} htmlFor={inputId}>
       <input type="checkbox" id={inputId} className="form-checkbox" {...rest} />

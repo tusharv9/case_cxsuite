@@ -19,5 +19,11 @@ public class LookupValue : AuditableEntity
     /// <summary>Message shown when the pattern does not match.</summary>
     public string? FormatMessage { get; set; }
 
+    /// <summary>
+    /// Choosing this option needs a typed explanation (e.g. "Other" in a reason list). The server refuses the choice without one,
+    /// so the rule is configuration, not a hard-coded option name.
+    /// </summary>
+    public bool RequiresDetail { get; set; } = false;
+
     public LookupType? LookupType { get; set; }
 }

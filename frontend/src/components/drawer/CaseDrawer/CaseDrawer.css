@@ -16,8 +16,8 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: var(--drawer-width, 660px);
-  max-width: 90vw;
+  width: var(--drawer-width);
+  max-width: 100vw;
   height: 100vh;
   background-color: #ffffff;
   box-shadow: -8px 0 32px rgba(15, 23, 42, 0.18);
@@ -823,6 +823,97 @@
   to { opacity: 1; }
 }
 
+/* ===== DESCRIPTION TAB STYLES ===== */
+.drawer-description__header-card {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-lg, 8px);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drawer-description__header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.drawer-description__case-ref {
+  font-family: var(--font-family-mono, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-brand-primary, #1e40af);
+  letter-spacing: 0.04em;
+}
+
+.drawer-description__badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.drawer-description__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary, #0f172a);
+  line-height: 1.4;
+}
+
+.drawer-description__body-card {
+  background-color: #ffffff;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: var(--radius-lg, 8px);
+  padding: 16px 18px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.drawer-description__text {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--color-text-primary, #1e293b);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  margin: 0;
+}
+
+.drawer-description__empty-card {
+  padding: 28px 20px;
+  text-align: center;
+  background-color: #f8fafc;
+  border: 1px dashed var(--color-border, #cbd5e1);
+  border-radius: var(--radius-lg, 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawer-description__empty-icon {
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
+.drawer-description__empty-title {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.drawer-description__empty-sub {
+  margin: 0;
+  font-size: 12px;
+  color: #94a3b8;
+  max-width: 320px;
+}
+
 @media (max-width: 768px) {
   .case-drawer {
     width: 100vw !important;
@@ -832,3 +923,4 @@
     grid-template-columns: 1fr;
   }
 }
+

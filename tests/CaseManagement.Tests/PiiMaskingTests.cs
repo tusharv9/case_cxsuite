@@ -77,8 +77,8 @@ public class PiiMaskingTests
             new FieldConfiguration
             {
                 Id = Guid.NewGuid(),
-                ModuleKey = "CustomerManagement",
-                SectionKey = "Profile",
+                ModuleKey = "Customer360",
+                SectionKey = "AddNewCustomer",
                 ApiField = "nric",
                 DisplayLabel = "NRIC",
                 MaskingRule = "HideMiddle",
@@ -88,8 +88,8 @@ public class PiiMaskingTests
             new FieldConfiguration
             {
                 Id = Guid.NewGuid(),
-                ModuleKey = "CustomerManagement",
-                SectionKey = "Profile",
+                ModuleKey = "Customer360",
+                SectionKey = "AddNewCustomer",
                 ApiField = "phoneNumber",
                 DisplayLabel = "Phone Number",
                 MaskingRule = "HideFirstShowLast",
@@ -99,8 +99,8 @@ public class PiiMaskingTests
             new FieldConfiguration
             {
                 Id = Guid.NewGuid(),
-                ModuleKey = "CustomerManagement",
-                SectionKey = "Profile",
+                ModuleKey = "Customer360",
+                SectionKey = "AddNewCustomer",
                 ApiField = "dateOfBirth",
                 DisplayLabel = "Date of Birth",
                 MaskingRule = "FullMask",
@@ -311,5 +311,84 @@ public class PiiMaskingEngineTests
         var service = new PiiMaskingService(db, NewCache());
         Assert.Equal("****", service.Mask("1234", "HideMiddle", 2));
         Assert.Equal("******", service.Mask("123456", "HideMiddle", 3));
+    }
+
+    // ------------------------------------------------------------------------------------------ Phase 6 (CM-10)
+
+    private static FieldConfiguration CaseField(string apiField, string rule, int visible, string section = "CreateCase") => new()
+    {
+        Id = Guid.NewGuid(), ModuleKey = "CaseManagement", SectionKey = section, ApiField = apiField, DisplayLabel = apiField,
+        MaskingRule = rule, VisibleChars = visible, CreatedAt = DateTime.UtcNow
+    };
+
+    private static CaseDetailDto CaseWithCustomer() => new()
+    {
+        Id = Guid.NewGuid(), CaseNumber = "C-1", CustomerName = "Ahmad Razak", Customer = Customer(),
+        CustomAttributes = new() { new CustomerCustomAttributeDto { FieldKey = "occupation", FieldValue = "Government Officer" } },
+        Subcases = new() { new CaseSummaryDto { Id = Guid.NewGuid(), CaseNumber = "C-1-R01", CustomerName = "Ahmad Razak" } },
+    };
+
+    [Fact]
+    public async Task ACaseFormRule_MasksTheCasesCustomAttribute_WhichUsedToBeSentRaw()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.Add(CaseField("occupation", "HideFirstShowLast", 5));
+        await db.SaveChangesAsync();
+
+        var dto = CaseWithCustomer();
+        await new PiiMaskingService(db, NewCache(), User()).MaskCaseAsync(dto);
+
+        Assert.Equal("*************ficer", dto.CustomAttributes[0].FieldValue);
+    }
+
+    [Fact]
+    public async Task AMaskedCustomerName_IsMaskedOnTheCase_ItsSubcases_AndItsCustomer()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.Add(Field("fullName", "HideMiddle", 2));
+        await db.SaveChangesAsync();
+
+        var dto = CaseWithCustomer();
+        await new PiiMaskingService(db, NewCache(), User()).MaskCaseAsync(dto);
+
+        Assert.Equal("Ah*******ak", dto.CustomerName);
+        Assert.Equal("Ah*******ak", dto.Subcases[0].CustomerName);
+        Assert.Equal("Ah*******ak", dto.Customer.FullName);
+
+        var list = new List<CaseSummaryDto> { new() { CustomerName = "Ahmad Razak" } };
+        await new PiiMaskingService(db, NewCache(), User()).MaskCasesAsync(list);
+        Assert.Equal("Ah*******ak", list[0].CustomerName);
+    }
+
+    [Fact]
+    public async Task Rules_StayInTheirModule_AndFiltersNeverMask()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.AddRange(
+            CaseField("occupation", "FullMask", 0),                        // a CASE rule: must not mask a customer's attribute
+            Field("phoneNumber", "FullMask", 0, section: "Filters"),       // a FILTER: masks nothing
+            CaseField("customerSegment", "FullMask", 0, section: "Filters"));
+        await db.SaveChangesAsync();
+
+        var customer = Customer();
+        customer.CustomAttributes = new() { new CustomerCustomAttributeDto { FieldKey = "occupation", FieldValue = "Teacher" } };
+        await new PiiMaskingService(db, NewCache(), User()).MaskAsync(customer);
+
+        Assert.Equal("Teacher", customer.CustomAttributes[0].FieldValue);
+        Assert.Equal("+60123456789", customer.PhoneNumber);
+    }
+
+    [Fact]
+    public async Task PeopleWithPiiUnmask_SeeCaseDataRaw()
+    {
+        using var db = NewDb();
+        db.FieldConfigurations.AddRange(CaseField("occupation", "FullMask", 0), Field("fullName", "FullMask", 0));
+        await db.SaveChangesAsync();
+
+        var dto = CaseWithCustomer();
+        await new PiiMaskingService(db, NewCache(), User(Permissions.PiiUnmask)).MaskCaseAsync(dto);
+
+        Assert.Equal("Government Officer", dto.CustomAttributes[0].FieldValue);
+        Assert.Equal("Ahmad Razak", dto.CustomerName);
     }
 }

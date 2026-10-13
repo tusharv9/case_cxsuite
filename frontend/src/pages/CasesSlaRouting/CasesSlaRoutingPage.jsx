@@ -25,6 +25,11 @@ import {
 } from 'lucide-react';
 import { slaRoutingService } from '../../services/slaRoutingService.js';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard.jsx';
+import { Select, Input } from '../../components/common/Input/Input.jsx';
+import { Modal } from '../../components/common/Modal/Modal.jsx';
+import { Button } from '../../components/common/Button/Button.jsx';
+import { configurableSettingsService } from '../../services/configurableSettingsService.js';
+import { selectPlaceholder } from '../../utils/fieldValidation.js';
 import { ManageSkillsDrawer } from '../../components/drawer/ManageSkillsDrawer/ManageSkillsDrawer.jsx';
 import { routingRuleService } from '../../services/routingRuleService.js';
 import { teamService } from '../../services/teamService.js';
@@ -43,6 +48,8 @@ const ASSIGNMENT_LABELS = {
 export function CasesSlaRoutingPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Renaming a priority is its own action: the new name must follow into existing cases and routing rules (server side).
+  const [renameState, setRenameState] = useState(null);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [activeTab, setActiveTab] = useState('sla'); // 'sla' | 'operating-hours' | 'escalation'
@@ -258,7 +265,12 @@ export function CasesSlaRoutingPage() {
   }, [pristineState, priorityRules, businessHours, escalationLevels, timeZoneId]);
 
   // Unsaved edits are not thrown away by a refresh, a closed tab or a click on another page.
-  const unsavedGuard = useUnsavedChangesGuard(isDirty, 'You have unsaved changes to the SLA, operating hours or escalation configuration. If you leave now, they will be lost.');
+  // (handleSave is a function declaration further down, so it is available here.)
+  const unsavedGuard = useUnsavedChangesGuard(isDirty, 'You have changed SLA, operating hours or escalation settings that have not been saved yet.', {
+    subject: 'configuration',
+    itemName: 'Cases SLA & Routing settings',
+    onSave: () => handleSave(),
+  });
 
   // Validation: Check category collisions across priorities
   const categoryLabel = (id) => {
@@ -306,16 +318,38 @@ export function CasesSlaRoutingPage() {
     setTimeout(() => setSuccessMessage(null), 3500);
   }
 
-  // Save changes
+  // Save changes. Returns whether it was saved (the leave-page dialog only navigates away after a real save).
   async function handleSave() {
+    if (saving) return false;
     if (categoryCollisions.length > 0) {
       setError(`Cannot save: Category "${categoryCollisions.join(', ')}" is assigned to multiple priorities.`);
-      return;
+      return false;
     }
 
     if (businessHoursError) {
       setError(`Cannot save: ${businessHoursError}`);
-      return;
+      return false;
+    }
+
+    const names = priorityRules.map(r => String(r.priority || '').trim().toLowerCase());
+    const badRule = priorityRules.find(r => !String(r.priority || '').trim());
+    if (badRule) {
+      setError('Cannot save: every priority needs a name.');
+      return false;
+    }
+    if (new Set(names).size !== names.length) {
+      setError('Cannot save: two priorities have the same name.');
+      return false;
+    }
+    const targetKeys = ['firstResponseValue', 'internalResolutionValue', 'externalResolutionValue'];
+    const missingTargets = priorityRules.find(r => targetKeys.some(k => !Number.isInteger(Number(r[k])) || Number(r[k]) < 1 || r[k] === ''));
+    if (missingTargets) {
+      setError(`Cannot save: "${missingTargets.priority || 'New priority'}" needs whole-number first response, internal and external targets of at least 1.`);
+      return false;
+    }
+    if (!priorityRules.some(r => r.isActive !== false)) {
+      setError('Cannot save: at least one priority must stay active.');
+      return false;
     }
 
     setSaving(true);
@@ -325,14 +359,15 @@ export function CasesSlaRoutingPage() {
     const payload = {
       timeZoneId,
       priorityRules: priorityRules.map(r => ({
-        id: r.id,
-        priority: r.priority,
-        firstResponseValue: parseInt(r.firstResponseValue, 10) || 1,
-        firstResponseUnit: r.firstResponseUnit || 'Hours',
-        internalResolutionValue: parseInt(r.internalResolutionValue, 10) || 1,
-        internalResolutionUnit: r.internalResolutionUnit || 'Hours',
-        externalResolutionValue: parseInt(r.externalResolutionValue, 10) || 1,
-        externalResolutionUnit: r.externalResolutionUnit || 'Hours',
+        id: r.id || '00000000-0000-0000-0000-000000000000',   // empty id = a new priority
+        priority: String(r.priority).trim(),
+        isActive: r.isActive !== false,
+        firstResponseValue: Number(r.firstResponseValue),
+        firstResponseUnit: r.firstResponseUnit,
+        internalResolutionValue: Number(r.internalResolutionValue),
+        internalResolutionUnit: r.internalResolutionUnit,
+        externalResolutionValue: Number(r.externalResolutionValue),
+        externalResolutionUnit: r.externalResolutionUnit,
         appliedSubCategoryIds: r.appliedSubCategoryIds || []
       })),
       businessHours: businessHours.map(b => ({
@@ -372,6 +407,7 @@ export function CasesSlaRoutingPage() {
         timeZoneId: refreshed.timeZoneId || ''
       }));
       setTimeout(() => setSuccessMessage(null), 4000);
+      return true;
     } catch (err) {
       console.error('Failed to update configuration:', err);
       const backendErr = err?.response?.data;
@@ -381,25 +417,61 @@ export function CasesSlaRoutingPage() {
       } else {
         setError(backendErr?.error || err.message || 'Unable to save configuration. Please try again.');
       }
+      return false;
     } finally {
       setSaving(false);
     }
   }
 
+  async function handleRenamePriority() {
+    const name = renameState.name.trim();
+    if (!name) return setRenameState(st => ({ ...st, error: 'Enter a name.' }));
+    if (name === renameState.current) return setRenameState(null);
+    setRenameState(st => ({ ...st, saving: true, error: null }));
+    try {
+      await configurableSettingsService.updateSeverity(renameState.id, { name, isActive: renameState.isActive, displayOrder: renameState.displayOrder });
+      setRenameState(null);
+      await loadConfiguration();
+      setSuccessMessage(`Priority renamed to "${name}". Cases and routing rules that used "${renameState.current}" now use the new name.`);
+      setTimeout(() => setSuccessMessage(null), 4000);
+    } catch (err) {
+      setRenameState(st => ({ ...st, saving: false, error: err.message || 'The priority could not be renamed.' }));
+    }
+  }
+
   // --- Handlers: Priority SLA Matrix ---
-  function handlePriorityFieldChange(priority, field, value) {
+  // Rows are identified by id (saved priorities) or a local key (a priority being added, whose name is still being typed).
+  const rowKey = (r) => r.id || r._key;
+
+  // A new priority is a row like the others: it is saved with "Save Configuration", and only once it has a name and all three
+  // targets (there are no default targets — a priority without SLA numbers would give cases arbitrary deadlines).
+  function handleAddPriority() {
+    setPriorityRules(prev => [...prev, {
+      _key: `new-${Date.now()}`, priority: '', isActive: true,
+      firstResponseValue: '', firstResponseUnit: 'Minutes',
+      internalResolutionValue: '', internalResolutionUnit: 'Hours',
+      externalResolutionValue: '', externalResolutionUnit: 'Hours',
+      appliedSubCategoryIds: [],
+    }]);
+  }
+
+  function handleRemoveNewPriority(key) {
+    setPriorityRules(prev => prev.filter(r => rowKey(r) !== key));
+  }
+
+  function handlePriorityFieldChange(key, field, value) {
     setPriorityRules(prev => prev.map(r => {
-      if (r.priority === priority) {
+      if (rowKey(r) === key) {
         return { ...r, [field]: value };
       }
       return r;
     }));
   }
 
-  function handleAddCategoryToPriority(priority, categoryId) {
+  function handleAddCategoryToPriority(key, categoryId) {
     if (!categoryId) return;
     setPriorityRules(prev => prev.map(r => {
-      if (r.priority === priority) {
+      if (rowKey(r) === key) {
         const existing = r.appliedSubCategoryIds || [];
         if (!existing.includes(categoryId)) {
           return { ...r, appliedSubCategoryIds: [...existing, categoryId] };
@@ -409,9 +481,9 @@ export function CasesSlaRoutingPage() {
     }));
   }
 
-  function handleRemoveCategoryFromPriority(priority, categoryId) {
+  function handleRemoveCategoryFromPriority(key, categoryId) {
     setPriorityRules(prev => prev.map(r => {
-      if (r.priority === priority) {
+      if (rowKey(r) === key) {
         return {
           ...r,
           appliedSubCategoryIds: (r.appliedSubCategoryIds || []).filter(c => c !== categoryId)
@@ -724,6 +796,30 @@ export function CasesSlaRoutingPage() {
   return (
     <div className="sla-routing-page">
       {unsavedGuard.dialog}
+      <Modal
+        isOpen={Boolean(renameState)}
+        onClose={() => !renameState?.saving && setRenameState(null)}
+        title="Rename priority"
+        subtitle="Existing cases and routing rules that use this priority are updated to the new name."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRenameState(null)} disabled={renameState?.saving}>Cancel</Button>
+            <Button variant="primary" onClick={handleRenamePriority} isLoading={renameState?.saving}>Rename</Button>
+          </>
+        }
+      >
+        {renameState && (
+          <Input
+            label="Priority name"
+            required
+            maxLength={50}
+            value={renameState.name}
+            onChange={(e) => setRenameState(st => ({ ...st, name: e.target.value, error: null }))}
+            error={renameState.error}
+          />
+        )}
+      </Modal>
       {/* 1. HEADER BANNER */}
       <div className="sla-routing-page__header">
         <div className="sla-routing-banner">
@@ -849,19 +945,24 @@ export function CasesSlaRoutingPage() {
                 </div>
                 <div>
                   <h2 className="sla-card__title">Priority-Based SLA Matrix</h2>
+                  <p className="sla-card__subtitle">Priorities and their SLA targets. A new priority is saved with “Save Configuration”, and needs all three targets.</p>
                 </div>
               </div>
+              <button type="button" className="sla-btn sla-btn--outline" onClick={handleAddPriority} id="btn-add-priority">
+                <Plus size={14} /> Add priority
+              </button>
             </div>
 
             <div className="sla-card__body">
               <table className="sla-matrix-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '14%' }}>Priority</th>
-                    <th style={{ width: '21%' }}>First Response Target</th>
-                    <th style={{ width: '21%' }}>Internal Resolution</th>
-                    <th style={{ width: '21%' }}>External Resolution</th>
-                    <th style={{ width: '23%' }}>Apply To Categories</th>
+                    <th style={{ width: '13%' }}>Priority</th>
+                    <th style={{ width: '19%' }}>First Response Target</th>
+                    <th style={{ width: '19%' }}>Internal Resolution</th>
+                    <th style={{ width: '19%' }}>External Resolution</th>
+                    <th style={{ width: '14%' }}>Mapping Status</th>
+                    <th style={{ width: '16%' }}>Apply To Categories</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -872,12 +973,57 @@ export function CasesSlaRoutingPage() {
                       c => c.isActive !== false && !allApplied.has(c.id)
                     );
 
+                    const catCount = (rule.appliedSubCategoryIds || []).length;
+                    const hasValidTargets =
+                      Number(rule.firstResponseValue) > 0 &&
+                      Number(rule.internalResolutionValue) > 0 &&
+                      Number(rule.externalResolutionValue) > 0;
+
                     return (
-                      <tr key={rule.id || rule.priority} className="sla-matrix-row">
+                      <tr key={rowKey(rule)} className={`sla-matrix-row ${rule.isActive === false ? 'sla-matrix-row--inactive' : ''}`}>
                         <td>
-                          <div className={`sla-priority-badge ${badgeClass}`}>
-                            <span>{rule.priority}</span>
-                          </div>
+                          {rule.id ? (
+                            <div className="sla-priority-cell">
+                              <div className={`sla-priority-badge ${badgeClass}`}>
+                                <span>{rule.priority}</span>
+                              </div>
+                              <div className="sla-priority-cell__actions">
+                                <label className="sla-priority-active" title="Inactive priorities are not offered for new cases; cases that use one keep it.">
+                                  <input
+                                    type="checkbox"
+                                    checked={rule.isActive !== false}
+                                    onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'isActive', e.target.checked)}
+                                  />
+                                  Active
+                                </label>
+                                <button
+                                  type="button"
+                                  className="sla-priority-rename"
+                                  onClick={() => setRenameState({ id: rule.id, current: rule.priority, name: rule.priority, isActive: rule.isActive !== false, displayOrder: rule.displayOrder, error: null, saving: false })}
+                                  disabled={isDirty}
+                                  title={isDirty ? 'Save or discard your other changes first' : `Rename ${rule.priority}`}
+                                  aria-label={`Rename ${rule.priority}`}
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="sla-priority-new">
+                              <input
+                                type="text"
+                                className="sla-priority-new__name"
+                                placeholder="Priority name"
+                                aria-label="New priority name"
+                                maxLength={50}
+                                value={rule.priority}
+                                onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'priority', e.target.value)}
+                              />
+                              <button type="button" className="sla-cat-pill__remove" onClick={() => handleRemoveNewPriority(rowKey(rule))} aria-label="Remove this new priority" title="Remove this new priority">
+                                <X size={12} />
+                              </button>
+                            </div>
+                          )}
                         </td>
 
                         {/* First Response Target (Clean inputs, no redundant conversion text) */}
@@ -888,12 +1034,12 @@ export function CasesSlaRoutingPage() {
                               min="1"
                               id={`input-fr-val-${slug}`}
                               value={rule.firstResponseValue}
-                              onChange={(e) => handlePriorityFieldChange(rule.priority, 'firstResponseValue', e.target.value)}
+                              onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'firstResponseValue', e.target.value)}
                             />
                             <select
                               id={`select-fr-unit-${slug}`}
                               value={rule.firstResponseUnit}
-                              onChange={(e) => handlePriorityFieldChange(rule.priority, 'firstResponseUnit', e.target.value)}
+                              onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'firstResponseUnit', e.target.value)}
                             >
                               <option value="Minutes">Minutes</option>
                               <option value="Hours">Hours</option>
@@ -909,12 +1055,12 @@ export function CasesSlaRoutingPage() {
                               min="1"
                               id={`input-int-val-${slug}`}
                               value={rule.internalResolutionValue}
-                              onChange={(e) => handlePriorityFieldChange(rule.priority, 'internalResolutionValue', e.target.value)}
+                              onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'internalResolutionValue', e.target.value)}
                             />
                             <select
                               id={`select-int-unit-${slug}`}
                               value={rule.internalResolutionUnit}
-                              onChange={(e) => handlePriorityFieldChange(rule.priority, 'internalResolutionUnit', e.target.value)}
+                              onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'internalResolutionUnit', e.target.value)}
                             >
                               <option value="Minutes">Minutes</option>
                               <option value="Hours">Hours</option>
@@ -930,17 +1076,43 @@ export function CasesSlaRoutingPage() {
                               min="1"
                               id={`input-ext-val-${slug}`}
                               value={rule.externalResolutionValue}
-                              onChange={(e) => handlePriorityFieldChange(rule.priority, 'externalResolutionValue', e.target.value)}
+                              onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'externalResolutionValue', e.target.value)}
                             />
                             <select
                               id={`select-ext-unit-${slug}`}
                               value={rule.externalResolutionUnit}
-                              onChange={(e) => handlePriorityFieldChange(rule.priority, 'externalResolutionUnit', e.target.value)}
+                              onChange={(e) => handlePriorityFieldChange(rowKey(rule), 'externalResolutionUnit', e.target.value)}
                             >
                               <option value="Minutes">Minutes</option>
                               <option value="Hours">Hours</option>
                             </select>
                           </div>
+                        </td>
+
+                        {/* Mapping Status Indicator (Requirement 19: Clear visual indication if configuration/category mapping is complete or missing) */}
+                        <td>
+                          {catCount > 0 && hasValidTargets ? (
+                            <span
+                              className="sla-status-pill sla-status-pill--complete"
+                              title={`Configured with ${catCount} category/subcategories and active SLA targets.`}
+                            >
+                              ✓ Complete ({catCount})
+                            </span>
+                          ) : catCount === 0 ? (
+                            <span
+                              className="sla-status-pill sla-status-pill--unmapped"
+                              title="No subcategories mapped yet. Cases with this severity must have category mappings to evaluate SLA."
+                            >
+                              ⚠ Requires Mapping
+                            </span>
+                          ) : (
+                            <span
+                              className="sla-status-pill sla-status-pill--incomplete"
+                              title="One or more SLA targets (first response or resolution) are not set."
+                            >
+                              ✕ Incomplete Targets
+                            </span>
+                          )}
                         </td>
 
                         {/* Applied Categories */}
@@ -952,7 +1124,7 @@ export function CasesSlaRoutingPage() {
                                 <button
                                   type="button"
                                   className="sla-cat-pill__remove"
-                                  onClick={() => handleRemoveCategoryFromPriority(rule.priority, catId)}
+                                  onClick={() => handleRemoveCategoryFromPriority(rowKey(rule), catId)}
                                   title={`Remove ${categoryLabel(catId)}`}
                                 >
                                   <X size={12} />
@@ -962,20 +1134,20 @@ export function CasesSlaRoutingPage() {
                           </div>
 
                           {unassignedCategories.length > 0 && (
-                            <select
+                            <Select
                               className="sla-add-category-select"
+                              aria-label={`Add a sub-category to ${rule.priority}`}
+                              placeholder="+ Add Sub-category"
                               value=""
                               onChange={(e) => {
-                                handleAddCategoryToPriority(rule.priority, e.target.value);
+                                if (e.target.value) handleAddCategoryToPriority(rowKey(rule), e.target.value);
                               }}
-                            >
-                              <option value="" disabled>+ Add Category…</option>
-                              {unassignedCategories.map(cat => (
-                                <option key={cat.id} value={cat.id}>
-                                  {cat.name} ({cat.departmentName || 'General'})
-                                </option>
-                              ))}
-                            </select>
+                              options={unassignedCategories.map(cat => ({
+                                value: cat.id,
+                                label: `${cat.name} (${cat.departmentName || 'No department'})`,
+                                searchText: cat.departmentName,
+                              }))}
+                            />
                           )}
                         </td>
                       </tr>
@@ -996,21 +1168,20 @@ export function CasesSlaRoutingPage() {
                 <div>
                   <h2 className="sla-bh-card__title">Business hours</h2>
                 </div>
-                <label className="sla-bh-tz">
+                <div className="sla-bh-tz">
                   <span className="sla-bh-card__badge">Time zone · drives SLA clocks</span>
-                  <select
+                  <Select
                     id="business-hours-timezone"
-                    className="sla-field-select"
                     value={timeZoneId}
                     onChange={(e) => setTimeZoneId(e.target.value)}
                     aria-label="Business hours time zone"
-                  >
-                    {!availableTimeZones.includes(timeZoneId) && <option value={timeZoneId}>{timeZoneId || 'Choose a time zone…'}</option>}
-                    {availableTimeZones.map(z => (
-                      <option key={z} value={z}>{z}</option>
-                    ))}
-                  </select>
-                </label>
+                    placeholder={selectPlaceholder('Time Zone')}
+                    options={[
+                      ...(timeZoneId && !availableTimeZones.includes(timeZoneId) ? [timeZoneId] : []),
+                      ...availableTimeZones,
+                    ].map(z => ({ value: z, label: z }))}
+                  />
+                </div>
               </div>
 
               <div className="sla-bh-card__body">
@@ -1233,32 +1404,25 @@ export function CasesSlaRoutingPage() {
                             ))}
                           </select>
                           {(lvl.assignmentType || 'Role') === 'Role' && (
-                            <select
+                            <Select
                               className="sla-hlevel-role-select"
                               value={lvl.targetRole || ''}
                               onChange={(e) => handleEscalationFieldChange(index, 'targetRole', e.target.value)}
-                              title="Target Role"
                               aria-label={`Level ${lvl.levelNumber} role`}
-                            >
-                              <option value="" disabled>Choose a role…</option>
-                              {currentRoleList.map(role => (
-                                <option key={role} value={role}>{role}</option>
-                              ))}
-                            </select>
+                              placeholder={selectPlaceholder('Role')}
+                              emptyText={currentRoleList.length === 0 ? 'No roles are known yet. Roles come from your Host App.' : 'No matching roles'}
+                              options={currentRoleList.map(role => ({ value: role, label: role }))}
+                            />
                           )}
                           {lvl.assignmentType === 'User' && (
-                            <select
+                            <Select
                               className="sla-hlevel-role-select"
                               value={lvl.targetUserId || ''}
                               onChange={(e) => handleEscalationFieldChange(index, 'targetUserId', e.target.value)}
-                              title="Target person"
                               aria-label={`Level ${lvl.levelNumber} person`}
-                            >
-                              <option value="" disabled>Choose a person…</option>
-                              {availableUsers.map(u => (
-                                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
-                              ))}
-                            </select>
+                              placeholder={selectPlaceholder('Person')}
+                              options={availableUsers.map(u => ({ value: u.id, label: `${u.name} (${u.role})`, searchText: u.email }))}
+                            />
                           )}
                         </div>
 
@@ -1758,20 +1922,18 @@ export function CasesSlaRoutingPage() {
 
                 {escalationForm.assignmentType === 'Role' && (
                   <div className="sla-field-col">
-                    <label className="sla-field-label">
+                    <label className="sla-field-label" id="escalation-target-role-label">
                       Target Role <span className="sla-field-required">*</span>
                     </label>
-                    <select
+                    <Select
                       id="escalation-target-role-select"
-                      className="sla-field-select"
+                      aria-label="Target Role"
                       value={escalationForm.targetRole}
                       onChange={(e) => setEscalationForm(prev => ({ ...prev, targetRole: e.target.value }))}
-                    >
-                      <option value="" disabled>Choose a role…</option>
-                      {availableRoles.map(role => (
-                        <option key={role} value={role}>{role}</option>
-                      ))}
-                    </select>
+                      placeholder={selectPlaceholder('Role')}
+                      emptyText={availableRoles.length === 0 ? 'No roles are known yet. Roles come from your Host App.' : 'No matching roles'}
+                      options={availableRoles.map(role => ({ value: role, label: role }))}
+                    />
                     <div className="sla-time-hint">
                       The role is the one your Host App gives users; the engine picks an active person holding it, preferring the case&apos;s own team.
                     </div>
@@ -1783,17 +1945,14 @@ export function CasesSlaRoutingPage() {
                     <label className="sla-field-label">
                       Person <span className="sla-field-required">*</span>
                     </label>
-                    <select
+                    <Select
                       id="escalation-target-user-select"
-                      className="sla-field-select"
+                      aria-label="Person"
                       value={escalationForm.targetUserId}
                       onChange={(e) => setEscalationForm(prev => ({ ...prev, targetUserId: e.target.value }))}
-                    >
-                      <option value="" disabled>Choose a person…</option>
-                      {availableUsers.map(u => (
-                        <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
-                      ))}
-                    </select>
+                      placeholder={selectPlaceholder('Person')}
+                      options={availableUsers.map(u => ({ value: u.id, label: `${u.name} (${u.role})`, searchText: u.email }))}
+                    />
                   </div>
                 )}
 

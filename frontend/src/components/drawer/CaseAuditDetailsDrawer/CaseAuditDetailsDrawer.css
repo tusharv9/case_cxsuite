@@ -1,7 +1,7 @@
 /* ===== CASE AUDIT DETAILS DRAWER STYLES ===== */
 
 .audit-details-drawer {
-  width: var(--drawer-width, 480px);
+  width: var(--drawer-width);
   max-width: 100vw;
 }
 

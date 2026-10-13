@@ -7,16 +7,14 @@ import { useState, useEffect } from 'react';
 import { Button } from '../../common/Button/Button.jsx';
 import { SideDrawer } from '../../common/SideDrawer/SideDrawer.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
+import { Select } from '../../common/Input/Input.jsx';
 import { teamService } from '../../../services/teamService.js';
 import { routingRuleService } from '../../../services/routingRuleService.js';
 import { useToast } from '../../../hooks/useToast.js';
+import { selectPlaceholder } from '../../../utils/fieldValidation.js';
+import { ALGORITHM_LABELS } from '../../../constants/assignment.js';
 import './CreateTeamDrawer.css';
 
-export const ALGORITHM_LABELS = {
-  RoundRobin: 'Round robin — take turns',
-  LeastOccupancy: 'Least occupancy — fewest open cases first',
-  SkillBased: 'Skill based — best skill match first',
-};
 
 export function CreateTeamDrawer({ isOpen, onClose, onSuccess, team = null }) {
   const toast = useToast();
@@ -104,9 +102,10 @@ export function CreateTeamDrawer({ isOpen, onClose, onSuccess, team = null }) {
     return Object.keys(errs).length === 0;
   };
 
+  // Returns whether the team was saved (the unsaved-changes dialog keeps the drawer open otherwise).
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!validate()) return;
+    e?.preventDefault();
+    if (isLoading || !validate()) return false;
 
     setIsLoading(true);
     try {
@@ -128,8 +127,10 @@ export function CreateTeamDrawer({ isOpen, onClose, onSuccess, team = null }) {
       toast.success(`Team "${saved.name}" ${isEdit ? 'updated' : 'created'} successfully.`);
       onSuccess?.(saved);
       onClose();
+      return true;
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || 'Failed to save team.');
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -140,6 +141,9 @@ export function CreateTeamDrawer({ isOpen, onClose, onSuccess, team = null }) {
       isOpen={isOpen}
       onClose={onClose}
       isDirty={isDirty}
+      unsavedSubject="configuration"
+      discardLabel={isEdit ? `Team: ${team?.name || name}` : 'New team'}
+      onSave={() => handleSubmit()}
       className="create-team-drawer"
       title={isEdit ? 'Edit Team' : 'Create Team'}
       subtitle="Lead, members, and how new cases are given to this team's agents"
@@ -174,22 +178,16 @@ export function CreateTeamDrawer({ isOpen, onClose, onSuccess, team = null }) {
             {errors.name && <span className="form-error-msg">{errors.name}</span>}
           </div>
 
-          <div className="form-group">
-            <label className="form-label" htmlFor="team-lead-select">Team lead</label>
-            <select
-              id="team-lead-select"
-              className="input-field input-field--select"
-              value={teamLeadId}
-              onChange={(e) => setTeamLeadId(e.target.value)}
-              disabled={isLoading || dataLoading}
-            >
-              <option value="">No team lead</option>
-              {availableUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} — {u.role || 'Agent'}</option>
-              ))}
-            </select>
-            <span className="form-hint">The lead holds a case when no agent can take it, and is told.</span>
-          </div>
+          <Select
+            id="team-lead-select"
+            label="Team lead"
+            value={teamLeadId}
+            onChange={(e) => setTeamLeadId(e.target.value)}
+            disabled={isLoading}
+            isLoading={dataLoading}
+            options={[{ value: '', label: 'No team lead' }, ...availableUsers.map((u) => ({ value: u.id, label: `${u.name} — ${u.role || 'Agent'}`, searchText: u.email }))]}
+            helperText="The lead holds a case when no agent can take it, and is told."
+          />
 
           <div className="form-group">
             <label className="form-label" htmlFor="team-function-input">Function</label>
@@ -216,17 +214,14 @@ export function CreateTeamDrawer({ isOpen, onClose, onSuccess, team = null }) {
             </label>
             {!useGlobal && (
               <div className="team-assignment-own">
-                <select
-                  className="input-field input-field--select"
+                <Select
                   value={algorithm}
                   onChange={(e) => setAlgorithm(e.target.value)}
                   aria-label="Assignment algorithm"
+                  placeholder={selectPlaceholder('Algorithm')}
                   disabled={isLoading}
-                >
-                  {algorithms.map((a) => (
-                    <option key={a} value={a}>{ALGORITHM_LABELS[a] || a}</option>
-                  ))}
-                </select>
+                  options={algorithms.map((a) => ({ value: a, label: ALGORITHM_LABELS[a] || a }))}
+                />
                 <label className="team-assignment-capacity">
                   <span>Open cases per agent</span>
                   <input

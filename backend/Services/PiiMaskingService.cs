@@ -28,6 +28,15 @@ public interface IPiiMaskingService
 
     /// <summary>Applies masking in-place on a CustomerDetailDto.</summary>
     Task MaskCustomerDetailAsync(CustomerDetailDto dto, CancellationToken ct = default);
+
+    /// <summary>
+    /// Masks a case-shaped DTO in place: its custom attributes by the Case Management (Create Case) rules, the customer's name it
+    /// carries and its nested customer by the Customer 360 rules, and any sub-cases it lists.
+    /// </summary>
+    Task MaskCaseAsync(object? dto, CancellationToken ct = default);
+
+    /// <summary>Masks every case-shaped DTO of a list (rules are read once).</summary>
+    Task MaskCasesAsync(IEnumerable<object>? dtos, CancellationToken ct = default);
 }
 
 public class PiiMaskingService : IPiiMaskingService
@@ -96,36 +105,123 @@ public class PiiMaskingService : IPiiMaskingService
 
     public Task MaskCustomerDetailAsync(CustomerDetailDto dto, CancellationToken ct = default) => MaskAsync(dto, ct);
 
+    /// <summary>The module whose field settings govern customer data, and the one that governs the data of a case.</summary>
+    public const string CustomerModule = "Customer360";
+    public const string CaseModule = "CaseManagement";
+
+    private sealed record RuleSet(Dictionary<string, Rule> Customer, Dictionary<string, Rule> Case)
+    {
+        public bool IsEmpty => Customer.Count == 0 && Case.Count == 0;
+    }
+
+    /// <summary>The rules that apply to the caller, or null when the caller may see raw values (or nothing is masked).</summary>
+    private async Task<RuleSet?> RulesForCallerAsync()
+    {
+        if (_currentUser != null && _currentUser.Permissions.Contains(Permissions.PiiUnmask)) return null;
+        var rules = new RuleSet(await GetRulesAsync(CustomerModule), await GetRulesAsync(CaseModule));
+        return rules.IsEmpty ? null : rules;
+    }
+
     public async Task MaskAsync(object? dto, CancellationToken ct = default)
     {
         if (dto == null) return;
-        if (_currentUser != null && _currentUser.Permissions.Contains(Permissions.PiiUnmask)) return;
+        var rules = await RulesForCallerAsync();
+        if (rules != null) MaskCustomerObject(dto, rules, depth: 0);
+    }
 
-        var rules = await GetRulesAsync();
-        if (rules.Count == 0) return;
+    public async Task MaskCaseAsync(object? dto, CancellationToken ct = default)
+    {
+        if (dto == null) return;
+        var rules = await RulesForCallerAsync();
+        if (rules != null) MaskCaseObject(dto, rules, depth: 0);
+    }
+
+    public async Task MaskCasesAsync(IEnumerable<object>? dtos, CancellationToken ct = default)
+    {
+        if (dtos == null) return;
+        var rules = await RulesForCallerAsync();
+        if (rules == null) return;
+        foreach (var dto in dtos) if (dto != null) MaskCaseObject(dto, rules, depth: 0);
+    }
+
+    private const int MaxDepth = 3;   // case → customer → that customer's cases is as deep as any response goes
+
+    /// <summary>A customer-shaped object: its bound properties and custom attributes by the Customer 360 rules.</summary>
+    private void MaskCustomerObject(object dto, RuleSet rules, int depth)
+    {
+        if (depth > MaxDepth) return;
 
         // property rules (by DTO property name) from the field bindings
         var byProperty = new Dictionary<string, Rule>(StringComparer.OrdinalIgnoreCase);
         foreach (var (apiField, properties) in FieldBindings)
-            if (rules.TryGetValue(apiField, out var rule))
+            if (rules.Customer.TryGetValue(apiField, out var rule))
                 foreach (var property in properties) byProperty[property] = rule;
 
         foreach (var property in dto.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
-            if (!property.CanRead || !property.CanWrite) continue;
+            if (!property.CanRead || property.GetIndexParameters().Length > 0) continue;
 
-            if (byProperty.TryGetValue(property.Name, out var rule))
+            if (property.CanWrite && byProperty.TryGetValue(property.Name, out var rule))
             {
                 ApplyToProperty(dto, property, rule);
             }
-            else if (property.PropertyType == typeof(List<CustomerCustomAttributeDto>) && property.GetValue(dto) is List<CustomerCustomAttributeDto> custom)
+            else if (property.GetValue(dto) is List<CustomerCustomAttributeDto> custom)
             {
                 // Custom fields are masked by their own key.
-                foreach (var attribute in custom)
-                    if (rules.TryGetValue(attribute.FieldKey, out var customRule))
-                        attribute.FieldValue = Mask(attribute.FieldValue, customRule.MaskingRule, customRule.VisibleChars);
+                MaskAttributes(custom, rules.Customer);
+            }
+            else if (CaseList(property, dto) is { } cases)
+            {
+                foreach (var c in cases) MaskCaseObject(c, rules, depth + 1);   // the customer's cases repeat their name
             }
         }
+    }
+
+    /// <summary>
+    /// A case-shaped object: custom attributes by the Case Management rules (they are case data), the customer's name by the
+    /// Customer 360 "fullName" rule, the nested customer as a customer, and listed sub-cases as cases.
+    /// </summary>
+    private void MaskCaseObject(object dto, RuleSet rules, int depth)
+    {
+        if (depth > MaxDepth) return;
+
+        foreach (var property in dto.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (!property.CanRead || property.GetIndexParameters().Length > 0) continue;
+
+            if (property.Name == "CustomerName" && property.PropertyType == typeof(string) && property.CanWrite)
+            {
+                if (rules.Customer.TryGetValue("fullName", out var nameRule)) ApplyToProperty(dto, property, nameRule);
+            }
+            else if (property.GetValue(dto) is List<CustomerCustomAttributeDto> custom)
+            {
+                MaskAttributes(custom, rules.Case);
+            }
+            else if (property.GetValue(dto) is CustomerSummaryDto customer)
+            {
+                MaskCustomerObject(customer, rules, depth + 1);
+            }
+            else if (CaseList(property, dto) is { } cases)
+            {
+                foreach (var c in cases) MaskCaseObject(c, rules, depth + 1);
+            }
+        }
+    }
+
+    private void MaskAttributes(List<CustomerCustomAttributeDto> attributes, Dictionary<string, Rule> rules)
+    {
+        foreach (var attribute in attributes)
+            if (rules.TryGetValue(attribute.FieldKey, out var rule))
+                attribute.FieldValue = Mask(attribute.FieldValue, rule.MaskingRule, rule.VisibleChars);
+    }
+
+    /// <summary>A list property whose items carry a customer's name (case summaries): those items are masked as cases.</summary>
+    private static IEnumerable<object>? CaseList(PropertyInfo property, object dto)
+    {
+        if (property.PropertyType == typeof(string) || !typeof(System.Collections.IEnumerable).IsAssignableFrom(property.PropertyType)) return null;
+        var itemType = property.PropertyType.IsGenericType ? property.PropertyType.GetGenericArguments().FirstOrDefault() : null;
+        if (itemType == null || itemType.GetProperty("CustomerName") == null) return null;
+        return (property.GetValue(dto) as System.Collections.IEnumerable)?.Cast<object>().Where(o => o != null).ToList();
     }
 
     private void ApplyToProperty(object dto, PropertyInfo property, Rule rule)
@@ -142,15 +238,16 @@ public class PiiMaskingService : IPiiMaskingService
     }
 
     /// <summary>
-    /// Effective masking rule per configured field, across all sections that configure it. When several
-    /// rows disagree the MOST RESTRICTIVE wins (full mask, otherwise the fewest visible characters), so
-    /// a lenient duplicate row can never expose what another row hides.
+    /// Effective masking rule per configured field of ONE module (Customer 360 governs customer data, Case Management governs case
+    /// data), across the module's form sections. Filter sections are search inputs, so masking never comes from them. When several
+    /// sections disagree the MOST RESTRICTIVE wins (full mask, otherwise the fewest visible characters), so a lenient duplicate row
+    /// can never expose what another row hides.
     /// </summary>
-    private Task<Dictionary<string, Rule>> GetRulesAsync() =>
-        _cache.GetOrCreateAsync("pii-rules", async () =>
+    private Task<Dictionary<string, Rule>> GetRulesAsync(string module) =>
+        _cache.GetOrCreateAsync($"pii-rules:{module}", async () =>
         {
             var masked = await _context.FieldConfigurations.AsNoTracking()
-                .Where(f => f.MaskingRule != "None" && f.MaskingRule != "")
+                .Where(f => f.ModuleKey == module && f.SectionKey != "Filters" && f.MaskingRule != "None" && f.MaskingRule != "")
                 .ToListAsync();
 
             var result = new Dictionary<string, Rule>(StringComparer.OrdinalIgnoreCase);

@@ -50,9 +50,11 @@ public class ExceptionMiddleware
             context.Response.ContentType = "application/json";
 
             var correlationId = context.Items[CorrelationIdMiddleware.Header]?.ToString() ?? string.Empty;
-            object body = errors == null
-                ? new { error = message, correlationId }
-                : new { error = message, correlationId, errors };
+            object body = ex is AssignmentNotAllowedException notAllowed
+                ? new { error = message, correlationId, code = notAllowed.ReasonCode }
+                : errors == null
+                    ? new { error = message, correlationId }
+                    : new { error = message, correlationId, errors };
             await context.Response.WriteAsync(JsonSerializer.Serialize(body, Json));
         }
     }
@@ -63,6 +65,10 @@ public class ExceptionMiddleware
             fv.Errors.GroupBy(e => e.Field).ToDictionary(g => g.Key, g => g.Select(e => e.Message).ToArray())),
 
         KeyNotFoundException => (404, ex.Message, null),
+
+        // Signed in, but not allowed to change who holds this case; or the chosen person cannot hold it (the body carries a "code").
+        AssignmentForbiddenException => (403, ex.Message, null),
+        AssignmentNotAllowedException => (422, ex.Message, null),
         FileNotFoundException => (404, ex.Message, null),
 
         // Nobody is signed in (the permission filters answer 403 themselves for "signed in but not allowed").

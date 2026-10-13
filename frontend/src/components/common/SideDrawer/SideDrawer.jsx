@@ -8,7 +8,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { ConfirmDialog, CONFIRM_CONTEXT } from '../ConfirmDialog/ConfirmDialog.jsx';
+import { UnsavedChangesDialog } from '../UnsavedChangesDialog/UnsavedChangesDialog.jsx';
+import './SideDrawer.css';
 
 /**
  * @param {boolean}  props.isOpen
@@ -16,15 +17,19 @@ import { ConfirmDialog, CONFIRM_CONTEXT } from '../ConfirmDialog/ConfirmDialog.j
  * @param {string}   props.title
  * @param {string}  [props.subtitle]
  * @param {React.ReactNode | ((api: { requestClose: () => void }) => React.ReactNode)} [props.footer]  a function receives the guarded close (use it for Cancel)
- * @param {boolean} [props.isDirty]     ask before closing when true
- * @param {string}  [props.discardLabel] what the discard confirmation calls the form's data (e.g. "Customer Information")
+ * @param {boolean} [props.isDirty]     ask before closing when true (compare against the saved values, so reverting an edit clears it)
+ * @param {string}  [props.discardLabel] what is being edited, shown in the unsaved-changes dialog (e.g. "Field: Occupation")
+ * @param {'configuration'|'form'} [props.unsavedSubject='form'] wording of the unsaved-changes dialog
+ * @param {() => (Promise<boolean|void>|boolean|void)} [props.onSave] offers "Save changes" in that dialog; return false when the
+ *                                      save failed (the drawer then stays open with the edits). On success the save is expected to close the drawer.
+ * @param {'sm'|'md'|'lg'} [props.size='md'] width variant (tokens --drawer-width-sm/md/lg)
  * @param {boolean} [props.escapeEnabled=true] set false while another drawer is open on top, so Escape closes only the top one
  * @param {string}  [props.className]   extra class on the <aside>
  * @param {string}  [props.ariaLabel]
  * @param {'div'|'form'} [props.bodyAs] render the body as a <form> (pass id/onSubmit through bodyProps)
  * @param {object}  [props.bodyProps]
  */
-export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty = false, discardLabel = 'Form Information', escapeEnabled = true, className = '', ariaLabel, bodyAs = 'div', bodyProps = {}, children }) {
+export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty = false, discardLabel, unsavedSubject = 'form', onSave, size = 'md', escapeEnabled = true, className = '', ariaLabel, bodyAs = 'div', bodyProps = {}, children }) {
   const [confirmClose, setConfirmClose] = useState(false);
   const drawerRef = useRef(null);
   const openerRef = useRef(null);
@@ -74,7 +79,7 @@ export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty =
   return createPortal(
     <>
       <div className="create-drawer-overlay" onClick={requestClose} aria-hidden="true" />
-      <aside ref={drawerRef} tabIndex={-1} className={`create-drawer ${className}`} role="dialog" aria-modal="true" aria-label={ariaLabel || title}>
+      <aside ref={drawerRef} tabIndex={-1} className={`create-drawer${size !== 'md' ? ` create-drawer--${size}` : ''} ${className}`} role="dialog" aria-modal="true" aria-label={ariaLabel || title}>
         <div className="create-drawer__header">
           <div className="create-drawer__header-content">
             <h2>{title}</h2>
@@ -92,15 +97,14 @@ export function SideDrawer({ isOpen, onClose, title, subtitle, footer, isDirty =
         {footer && <div className="create-drawer__footer">{typeof footer === 'function' ? footer({ requestClose }) : footer}</div>}
       </aside>
 
-      <ConfirmDialog
+      <UnsavedChangesDialog
         isOpen={confirmClose}
-        title="Discard unsaved changes?"
-        context={CONFIRM_CONTEXT.FORM_DISCARD}
-        itemDetails={{ name: discardLabel }}
-        confirmLabel="Discard"
-        variant="warning"
-        onCancel={() => setConfirmClose(false)}
-        onConfirm={() => { setConfirmClose(false); onClose?.(); }}
+        subject={unsavedSubject}
+        itemName={discardLabel}
+        onContinue={() => setConfirmClose(false)}
+        onDiscard={() => { setConfirmClose(false); onClose?.(); }}
+        onSave={onSave}
+        onSaved={() => setConfirmClose(false)}
       />
     </>,
     document.body

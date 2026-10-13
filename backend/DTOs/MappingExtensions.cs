@@ -30,8 +30,6 @@ public static class MappingExtensions
             OwnerId = c.OwnerId,
             OwnerName = c.Owner != null ? c.Owner.Name : string.Empty,
             OwnerRole = c.Owner != null ? c.Owner.Role : null,
-            OwnerTeam = c.Owner != null ? c.Owner.Team : null,
-            OwnerQueue = c.Owner != null ? c.Owner.Queue : null,
             CreatedAt = c.CreatedAt,
             CustomerId = c.CustomerId,
             CustomerName = c.Customer != null ? c.Customer.FullName : string.Empty,
@@ -83,8 +81,6 @@ public static class MappingExtensions
             OwnerId = c.OwnerId,
             OwnerName = c.Owner != null ? c.Owner.Name : string.Empty,
             OwnerRole = c.Owner != null ? c.Owner.Role : null,
-            OwnerTeam = c.Owner != null ? c.Owner.Team : null,
-            OwnerQueue = c.Owner != null ? c.Owner.Queue : null,
             CreatedAt = c.CreatedAt,
             CustomerId = c.CustomerId,
             CustomerName = c.Customer != null ? c.Customer.FullName : string.Empty,
@@ -195,8 +191,6 @@ public static class MappingExtensions
                 OwnerId = sc.OwnerId,
                 OwnerName = sc.Owner != null ? sc.Owner.Name : string.Empty,
                 OwnerRole = sc.Owner != null ? sc.Owner.Role : null,
-                OwnerTeam = sc.Owner != null ? sc.Owner.Team : null,
-                OwnerQueue = sc.Owner != null ? sc.Owner.Queue : null,
                 CreatedAt = sc.CreatedAt,
                 CustomerId = sc.CustomerId,
                 CustomerName = sc.Customer != null ? sc.Customer.FullName : string.Empty,
@@ -282,7 +276,8 @@ public static class MappingExtensions
         });
     }
 
-    public static IQueryable<UserDto> MapToUserDto(this IQueryable<User> query)
+    /// <param name="memberships">TeamMembers: a person's teams come from their active memberships (the only membership source).</param>
+    public static IQueryable<UserDto> MapToUserDto(this IQueryable<User> query, IQueryable<TeamMember> memberships)
     {
         return query.Select(u => new UserDto
         {
@@ -293,8 +288,7 @@ public static class MappingExtensions
             Status = u.Status.ToString(),
             DepartmentId = u.DepartmentId,
             DepartmentName = u.Department != null ? u.Department.Name : string.Empty,
-            Team = u.Team,
-            Queue = u.Queue,
+            Team = string.Join(", ", memberships.Where(m => m.UserId == u.Id && m.IsActive).OrderBy(m => m.Department.Name).Select(m => m.Department.Name)),
             ExternalUserId = u.ExternalUserId,
             IsActive = u.IsActive
         });

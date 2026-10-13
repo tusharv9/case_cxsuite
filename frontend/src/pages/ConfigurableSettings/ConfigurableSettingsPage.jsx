@@ -6,7 +6,6 @@ import {
   Plus,
   Eye,
   EyeOff,
-  Trash2,
   Pencil,
   Sparkles,
   CheckCircle2,
@@ -20,7 +19,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/common/Button/Button.jsx';
 import { Loader } from '../../components/common/Loader/Loader.jsx';
-import { Input, Select } from '../../components/common/Input/Input.jsx';
+import { Input } from '../../components/common/Input/Input.jsx';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
 import { departmentService } from '../../services/departmentService.js';
 import { useToast } from '../../hooks/useToast.js';
@@ -28,8 +27,8 @@ import { FieldEditorDrawer } from './FieldEditorDrawer.jsx';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog/ConfirmDialog.jsx';
 import { Modal } from '../../components/common/Modal/Modal.jsx';
 import { MasterItem } from './MasterItem.jsx';
-import { MasterLookupOverview } from './MasterLookupOverview.jsx';
-import { UnsavedChangesModal } from './UnsavedChangesModal.jsx';
+import { UnsavedChangesDialog } from '../../components/common/UnsavedChangesDialog/UnsavedChangesDialog.jsx';
+import { AssignmentSettingsTab } from './AssignmentSettingsTab.jsx';
 import './ConfigurableSettingsPage.css';
 
 const MASKING_OPTIONS = [
@@ -128,12 +127,6 @@ export function ConfigurableSettingsPage() {
   });
 
   // Customer 360 master lookups
-  const [languages, setLanguages] = useState([]);
-  const [savedLanguages, setSavedLanguages] = useState([]);
-  const [branches, setBranches] = useState([]);
-  const [savedBranches, setSavedBranches] = useState([]);
-  const [idTypes, setIdTypes] = useState([]);
-  const [savedIdTypes, setSavedIdTypes] = useState([]);
 
 
 
@@ -141,11 +134,7 @@ export function ConfigurableSettingsPage() {
   const [caseTypes, setCaseTypes] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [departmentsError, setDepartmentsError] = useState(null);
-  const [subCategories, setSubCategories] = useState([]);
   const [severities, setSeverities] = useState([]);
-  const [channels, setChannels] = useState([]);
-  const [sourceChannels, setSourceChannels] = useState([]);
-  const [newSourceChannelInput, setNewSourceChannelInput] = useState('');
   const [lookupTypes, setLookupTypes] = useState([]);
   const [quickActions, setQuickActions] = useState([]);
   const [dateRanges, setDateRanges] = useState([]);
@@ -153,21 +142,10 @@ export function ConfigurableSettingsPage() {
   const [slaStatuses, setSlaStatuses] = useState([]);
 
   // Inputs
-  const [newCaseTypeCode, setNewCaseTypeCode] = useState('');
-  const [newCaseTypeName, setNewCaseTypeName] = useState('');
-  const [newCaseTypePrefix, setNewCaseTypePrefix] = useState('');
-  const [newDeptName, setNewDeptName] = useState('');
-  const [newDeptCode, setNewDeptCode] = useState('');
-  const [selectedDeptForSub, setSelectedDeptForSub] = useState('');
-  const [newSubCategoryName, setNewSubCategoryName] = useState('');
-  const [newChannelInput, setNewChannelInput] = useState('');
   const [newQuickActionInput, setNewQuickActionInput] = useState('');
   const [newDateRangeInput, setNewDateRangeInput] = useState('');
   const [newCaseStatusInput, setNewCaseStatusInput] = useState('');
   const [newSlaStatusInput, setNewSlaStatusInput] = useState('');
-  const [newSeverityName, setNewSeverityName] = useState('');
-  const [newSeverityInternal, setNewSeverityInternal] = useState('22');
-  const [newSeverityExternal, setNewSeverityExternal] = useState('24');
 
   // Dashboard Search States (SEARCH = YES, ADD = NO for fixed categories)
   const [dashQaSearch, setDashQaSearch] = useState('');
@@ -191,19 +169,32 @@ export function ConfigurableSettingsPage() {
   }, []);
 
   const currentSectionKey = topSelector === 'Customer360' ? activeSection : caseSection;
+
+  // Assign & Reassign tab: it owns its data and reports whether it has unsaved edits (and which), so the page's one guard covers it.
+  const isAssignmentTab = topSelector === 'CaseManagement' && caseSection === 'AssignReassign';
+  const assignmentTabRef = useRef(null);
+  const [assignmentStatus, setAssignmentStatus] = useState({ isDirty: false, changes: [] });
+  const handleAssignmentDirtyChange = useCallback((status) => setAssignmentStatus(status), []);
+  useEffect(() => {
+    if (!isAssignmentTab) setAssignmentStatus({ isDirty: false, changes: [] });   // leaving the tab discards its draft
+  }, [isAssignmentTab]);
   const isFieldTab = FIELD_SECTIONS.includes(currentSectionKey) || (topSelector === 'CaseManagement' && caseSection === 'Filters');
+  // Filters are search inputs: masking does not apply to them (the server refuses it), so the masking columns are not offered.
+  const isFilterSection = currentSectionKey === 'Filters';
 
   // Unsaved changes dirty state calculation across all modules
   const hasUnsavedChanges = useMemo(() => {
+    if (isAssignmentTab) return assignmentStatus.isDirty;
     // 1. Field configuration tabs (Customer 360: AddNewCustomer, ExistingCustomer, Filters; Case Management: CreateCase, Filters)
     if (isFieldTab) {
       return JSON.stringify(fields) !== JSON.stringify(savedFields) || Object.keys(lookupDrafts).length > 0;
     }
     return false;
-  }, [isFieldTab, fields, savedFields, lookupDrafts]);
+  }, [isAssignmentTab, assignmentStatus, isFieldTab, fields, savedFields, lookupDrafts]);
 
   // Dynamic Changes Summary calculation: compares draft states with saved snapshots
   const unsavedChangesList = useMemo(() => {
+    if (isAssignmentTab) return assignmentStatus.changes;
     const list = [];
     if (!isFieldTab) return list;
 
@@ -284,17 +275,17 @@ export function ConfigurableSettingsPage() {
     });
 
     return list;
-  }, [isFieldTab, fields, savedFields, lookupDrafts, serverLookups, lookupTypes]);
+  }, [isAssignmentTab, assignmentStatus.changes, isFieldTab, fields, savedFields, lookupDrafts, serverLookups, lookupTypes]);
 
   const getSectionName = useCallback(() => {
     if (topSelector === 'CaseManagement') {
       if (caseSection === 'CreateCase') return 'Create Case Form';
       if (caseSection === 'Filters') return 'Case Filters';
+      if (caseSection === 'AssignReassign') return 'Assign & Reassign settings';
     } else if (topSelector === 'Customer360') {
       if (activeSection === 'AddNewCustomer') return 'Add New Customer Form';
       if (activeSection === 'ExistingCustomer') return 'Existing Customer Details';
       if (activeSection === 'Filters') return 'Customer Directory Filters';
-      if (activeSection === 'MasterLookups') return 'Master Lookups';
     }
     return 'this page';
   }, [topSelector, caseSection, activeSection]);
@@ -359,9 +350,6 @@ export function ConfigurableSettingsPage() {
     isLeavingRef.current = true;
     // Revert local changes to last saved state
     setFields(JSON.parse(JSON.stringify(savedFields)));
-    setLanguages(JSON.parse(JSON.stringify(savedLanguages)));
-    setBranches(JSON.parse(JSON.stringify(savedBranches)));
-    setIdTypes(JSON.parse(JSON.stringify(savedIdTypes)));
 
     const action = unsavedModal.pendingAction;
     setUnsavedModal({ isOpen: false, message: null, pendingAction: null });
@@ -480,35 +468,6 @@ export function ConfigurableSettingsPage() {
     }
   }, [toast]);
 
-  const loadLookups = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      const [langs, brs, ids] = await Promise.all([
-        configurableSettingsService.getLookupValues('PREFERRED_LANGUAGE', true, false),
-        configurableSettingsService.getLookupValues('HOME_BRANCH', true, false),
-        configurableSettingsService.getLookupValues('ID_TYPE', true, false),
-      ]);
-      const cleanLangs = langs || [];
-      const cleanBrs = brs || [];
-      const cleanIds = (ids || []).filter((i) =>
-        ['NRIC Number', 'Passport Number', 'Account Number'].includes(i.value)
-      );
-      setLanguages(cleanLangs);
-      setSavedLanguages(JSON.parse(JSON.stringify(cleanLangs)));
-      setBranches(cleanBrs);
-      setSavedBranches(JSON.parse(JSON.stringify(cleanBrs)));
-      setIdTypes(cleanIds);
-      setSavedIdTypes(JSON.parse(JSON.stringify(cleanIds)));
-    } catch (err) {
-      console.error('Failed to load lookups:', err);
-      setLoadError(err.message || 'Unable to load master lookup data.');
-      toast.error(err.message || 'Unable to load master lookup data.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [toast]);
-
   const loadDepartments = useCallback(async () => {
     try {
       const depts = await departmentService.getAllDepartments(true);
@@ -530,26 +489,20 @@ export function ConfigurableSettingsPage() {
     setIsLoading(true);
     setLoadError(null);
 
-    const depts = await loadDepartments();
+    await loadDepartments();
 
     try {
-      const [cts, subs, slaList, chns, qaList, drList, csList, ssList, srcList, lkTypes] = await Promise.all([
+      const [cts, slaList, qaList, drList, csList, ssList, lkTypes] = await Promise.all([
         configurableSettingsService.getCaseTypes(false),
-        configurableSettingsService.getSubCategories(null, false),
         configurableSettingsService.getSeverities(),
-        configurableSettingsService.getLookupValues('COMMUNICATION_CHANNEL', true, false),
         configurableSettingsService.getLookupValues('DASHBOARD_QUICK_ACTION', true, false),
         configurableSettingsService.getLookupValues('DASHBOARD_DATE_RANGE', true, false),
         configurableSettingsService.getLookupValues('CASE_STATUS', true, false),
         configurableSettingsService.getLookupValues('SLA_STATUS', true, false),
-        configurableSettingsService.getLookupValues('SOURCE_CHANNEL', true, false),
         configurableSettingsService.getLookupTypes().catch(() => []),
       ]);
       setCaseTypes(cts || []);
-      setSubCategories(subs || []);
       setSeverities(slaList || []);
-      setChannels(chns || []);
-      setSourceChannels(srcList || []);
       setLookupTypes(lkTypes || []);
       setQuickActions(qaList || []);
       setDateRanges(drList || []);
@@ -563,21 +516,18 @@ export function ConfigurableSettingsPage() {
       setIsLoading(false);
     }
 
-    setSelectedDeptForSub((prev) => (prev && depts.some((d) => d.id === prev) ? prev : depts[0]?.id || ''));
   }, [loadDepartments, toast]);
 
   useEffect(() => {
     if (topSelector === 'Customer360') {
-      if (activeSection === 'MasterLookups') loadLookups();
-      else loadFields('Customer360', activeSection);
+      loadFields('Customer360', activeSection);
     } else if (topSelector === 'Dashboard') {
       loadCaseMetadata();
     } else if (caseSection === 'CreateCase' || caseSection === 'Filters') {
       loadFields('CaseManagement', caseSection);
-    } else {
-      loadCaseMetadata();
     }
-  }, [topSelector, activeSection, caseSection, loadFields, loadLookups, loadCaseMetadata]);
+    // Assign & Reassign loads its own data.
+  }, [topSelector, activeSection, caseSection, loadFields, loadCaseMetadata]);
 
   // ===== FIELD CONFIGURATION =====
   // ===== FIELD CONFIGURATION =====
@@ -672,41 +622,14 @@ export function ConfigurableSettingsPage() {
   // ===== MASTER LOOKUPS (shared by Customer 360, Communication Channels, and Dashboard) =====
   const refreshLookup = useCallback(async (typeCode) => {
     const updated = await configurableSettingsService.getLookupValues(typeCode, true, false);
-    if (typeCode === 'PREFERRED_LANGUAGE') setLanguages(updated || []);
-    if (typeCode === 'HOME_BRANCH') setBranches(updated || []);
-    if (typeCode === 'ID_TYPE') setIdTypes(updated || []);
-    if (typeCode === 'COMMUNICATION_CHANNEL') setChannels(updated || []);
-    if (typeCode === 'SOURCE_CHANNEL') setSourceChannels(updated || []);
     if (typeCode === 'DASHBOARD_QUICK_ACTION') setQuickActions(updated || []);
     if (typeCode === 'DASHBOARD_DATE_RANGE') setDateRanges(updated || []);
     if (typeCode === 'CASE_STATUS') setCaseStatuses(updated || []);
     if (typeCode === 'SLA_STATUS') setSlaStatuses(updated || []);
   }, []);
 
-  const existingLookupValues = {
-    PREFERRED_LANGUAGE: languages,
-    HOME_BRANCH: branches,
-    ID_TYPE: idTypes,
-    COMMUNICATION_CHANNEL: channels,
-    SOURCE_CHANNEL: sourceChannels,
-    DASHBOARD_QUICK_ACTION: quickActions,
-    DASHBOARD_DATE_RANGE: dateRanges,
-    CASE_STATUS: caseStatuses,
-    SLA_STATUS: slaStatuses,
-  };
 
   const handleToggleVisibility = (item, typeCode, label) => {
-    if (['PREFERRED_LANGUAGE', 'HOME_BRANCH', 'ID_TYPE'].includes(typeCode)) {
-      const newActive = !item.isActive;
-      const updateList = (prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, isActive: newActive } : i));
-      if (typeCode === 'PREFERRED_LANGUAGE') setLanguages(updateList);
-      if (typeCode === 'HOME_BRANCH') setBranches(updateList);
-      if (typeCode === 'ID_TYPE') setIdTypes(updateList);
-      toast.info(`${label} "${item.label || item.value}" is now ${newActive ? 'Visible' : 'Not Visible'} (Draft). Click "Save Changes" to persist.`);
-      return;
-    }
-
     runPending(`toggle:${item.id}`, async () => {
       const newIsActive = !item.isActive;
       try {
@@ -726,47 +649,6 @@ export function ConfigurableSettingsPage() {
     });
   };
 
-  const handleAddLookup = (typeCode, inputVal, setInputState, label) => {
-    const value = (inputVal || '').trim();
-    if (!value) {
-      toast.error(`Please enter a ${label.toLowerCase()} name.`);
-      return;
-    }
-
-    const currentList = existingLookupValues[typeCode] || [];
-    if (currentList.some((item) => (item.value || '').toLowerCase() === value.toLowerCase())) {
-      toast.error(`"${value}" already exists in this list.`);
-      return;
-    }
-
-    if (['PREFERRED_LANGUAGE', 'HOME_BRANCH', 'ID_TYPE'].includes(typeCode)) {
-      const newItem = {
-        id: `draft_${Date.now()}`,
-        value,
-        label: value,
-        displayOrder: currentList.length + 1,
-        isActive: true,
-        isNew: true,
-      };
-      if (typeCode === 'PREFERRED_LANGUAGE') setLanguages((prev) => [...prev, newItem]);
-      if (typeCode === 'HOME_BRANCH') setBranches((prev) => [...prev, newItem]);
-      if (typeCode === 'ID_TYPE') setIdTypes((prev) => [...prev, newItem]);
-      setInputState('');
-      toast.info(`Added "${value}" to draft. Click "Save Changes" to persist.`);
-      return;
-    }
-
-    runPending(`add:${typeCode}`, async () => {
-      try {
-        await configurableSettingsService.addLookupValue(typeCode, value, value, currentList.length + 1);
-        setInputState('');
-        await refreshLookup(typeCode);
-        toast.success(`Added ${label} "${value}".`);
-      } catch (err) {
-        toast.error(err.message || `Failed to add ${label.toLowerCase()}.`);
-      }
-    });
-  };
 
   const handleUpdateLookup = async (item, typeCode, values, label) => {
     const newText = (values.label || values.value || '').trim();
@@ -799,48 +681,8 @@ export function ConfigurableSettingsPage() {
     }
   };
 
-  const handleDeleteLookup = (id, typeCode, valueName, label) => {
-    openConfirm(
-      `Delete ${label}`,
-      `Are you sure you want to delete "${valueName}"? This action cannot be undone.`,
-      async () => {
-        await configurableSettingsService.deleteLookupValue(id, typeCode);
-        await refreshLookup(typeCode);
-        toast.success(`${label} "${valueName}" deleted successfully.`);
-      },
-      'Delete',
-      {
-        name: valueName,
-        type: label,
-        code: typeCode,
-      }
-    );
-  };
 
   // ===== DEPARTMENTS =====
-  const handleAddDepartment = () =>
-    runPending('add:department', async () => {
-      const name = newDeptName.trim();
-      const code = newDeptCode.trim().toUpperCase();
-      if (!name) return toast.error('Please enter a department name.');
-      if (!code) return toast.error('Please enter a department code (e.g. OPS).');
-      if (departments.some((d) => d.name.toLowerCase() === name.toLowerCase())) {
-        return toast.error(`Department "${name}" already exists.`);
-      }
-      if (departments.some((d) => (d.code || '').toLowerCase() === code.toLowerCase())) {
-        return toast.error(`Department code "${code}" is already in use.`);
-      }
-
-      try {
-        await departmentService.createDepartment({ name, code });
-        setNewDeptName('');
-        setNewDeptCode('');
-        await loadDepartments();
-        toast.success(`Department "${name}" added successfully.`);
-      } catch (err) {
-        toast.error(err.message || 'Failed to add department.');
-      }
-    });
 
   const handleUpdateDepartment = async (dept, values) => {
     const name = (values.name || '').trim();
@@ -852,8 +694,6 @@ export function ConfigurableSettingsPage() {
     try {
       await departmentService.updateDepartment(dept.id, { name, code, isActive: dept.isActive });
       await loadDepartments();
-      const subs = await configurableSettingsService.getSubCategories(null, false);
-      setSubCategories(subs || []);
       toast.success(`Department updated to "${name}".`);
     } catch (err) {
       toast.error(err.message || 'Failed to update department.');
@@ -898,29 +738,6 @@ export function ConfigurableSettingsPage() {
   };
 
   // ===== CASE TYPES =====
-  const handleAddCaseType = () =>
-    runPending('add:caseType', async () => {
-      const code = newCaseTypeCode.trim();
-      const name = newCaseTypeName.trim();
-      const prefix = newCaseTypePrefix.trim().toUpperCase();
-      if (!code || !name || !prefix) {
-        return toast.error('Code, Name and Prefix are all required for a case type.');
-      }
-      if (caseTypes.some((c) => c.code.toLowerCase() === code.toLowerCase() || c.name.toLowerCase() === name.toLowerCase())) {
-        return toast.error(`A case type with the code "${code}" or name "${name}" already exists.`);
-      }
-
-      try {
-        const created = await configurableSettingsService.addCaseType(code, name, prefix, caseTypes.length + 1);
-        setNewCaseTypeCode('');
-        setNewCaseTypeName('');
-        setNewCaseTypePrefix('');
-        setCaseTypes(await configurableSettingsService.getCaseTypes(false));
-        toast.success(`Case Type "${created.name}" (Prefix: ${created.prefix}) added successfully.`);
-      } catch (err) {
-        toast.error(err.message || 'Failed to add Case Type.');
-      }
-    });
 
   const handleUpdateCaseType = async (item, values) => {
     const code = (values.code || '').trim();
@@ -985,66 +802,9 @@ export function ConfigurableSettingsPage() {
   };
 
   // ===== SUB-CATEGORIES =====
-  const departmentSubCategories = useMemo(
-    () => subCategories.filter((s) => String(s.departmentId) === String(selectedDeptForSub)),
-    [subCategories, selectedDeptForSub]
-  );
 
-  const handleAddSubCategory = () =>
-    runPending('add:subCategory', async () => {
-      const name = newSubCategoryName.trim();
-      if (!selectedDeptForSub) return toast.error('Please select a department first.');
-      if (!name) return toast.error('Please enter a sub-category name.');
-      if (departmentSubCategories.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
-        return toast.error(`Sub-category "${name}" already exists for this department.`);
-      }
 
-      try {
-        const created = await configurableSettingsService.addSubCategory(selectedDeptForSub, name);
-        setNewSubCategoryName('');
-        setSubCategories(await configurableSettingsService.getSubCategories(null, false));
-        toast.success(`Sub-category "${created.name}" added to ${created.departmentName}.`);
-      } catch (err) {
-        toast.error(err.message || 'Failed to add Sub-category.');
-      }
-    });
 
-  const handleUpdateSubCategory = async (item, values) => {
-    const name = (values.name || '').trim();
-    if (!name) {
-      toast.error('Sub-category name cannot be empty.');
-      throw new Error('invalid');
-    }
-    try {
-      await configurableSettingsService.updateSubCategory(item.id, {
-        name,
-        displayOrder: item.displayOrder,
-        isActive: item.isActive,
-      });
-      setSubCategories(await configurableSettingsService.getSubCategories(null, false));
-      toast.success(`Sub-category updated to "${name}".`);
-    } catch (err) {
-      toast.error(err.message || 'Failed to update Sub-category.');
-      throw err;
-    }
-  };
-
-  const handleToggleSubCategoryVisibility = (item) => {
-    runPending(`toggle:subcategory:${item.id}`, async () => {
-      const newActive = !item.isActive;
-      try {
-        await configurableSettingsService.updateSubCategory(item.id, {
-          name: item.name,
-          displayOrder: item.displayOrder,
-          isActive: newActive,
-        });
-        setSubCategories(await configurableSettingsService.getSubCategories(null, false));
-        toast.success(`Sub-category "${item.name}" is now ${newActive ? 'Visible' : 'Not Visible'}.`);
-      } catch (err) {
-        toast.error(err.message || 'Failed to update visibility for Sub-category.');
-      }
-    });
-  };
 
   // ===== SEVERITIES (master data + SLA rows are written together by the API) =====
   const refreshSeverities = useCallback(async () => {
@@ -1053,29 +813,6 @@ export function ConfigurableSettingsPage() {
     return list || [];
   }, []);
 
-  const handleAddSeverity = () =>
-    runPending('add:severity', async () => {
-      const name = newSeverityName.trim();
-      if (!name) return toast.error('Please enter a severity name.');
-      if (severities.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
-        return toast.error(`Severity "${name}" already exists.`);
-      }
-      const internal = Number(newSeverityInternal);
-      const external = Number(newSeverityExternal);
-      if (!Number.isInteger(internal) || internal <= 0) return toast.error('Internal SLA must be a whole number of hours greater than 0.');
-      if (!Number.isInteger(external) || external <= 0) return toast.error('External SLA must be a whole number of hours greater than 0.');
-
-      try {
-        await configurableSettingsService.addSeverity(name, internal, external, severities.length + 1);
-        setNewSeverityName('');
-        setNewSeverityInternal('22');
-        setNewSeverityExternal('24');
-        await refreshSeverities();
-        toast.success(`Severity "${name}" added and its SLA row created (Internal ${internal}h / External ${external}h).`);
-      } catch (err) {
-        toast.error(err.message || 'Failed to add severity.');
-      }
-    });
 
   const handleUpdateSeverity = async (item, values) => {
     const name = (values.name || '').trim();
@@ -1127,17 +864,15 @@ export function ConfigurableSettingsPage() {
     );
   };
 
-  const handleSaveAndLeave = async () => {
-    const success = await handleSaveAllChanges();
+  // "Save changes" in the unsaved-changes dialog: save what this section edits; the dialog then carries on (or, on failure,
+  // returns to the page with the edits and the error).
+  const handleSaveFromDialog = () => (isAssignmentTab ? assignmentTabRef.current?.save() : handleSaveAllChanges());
 
-    if (success) {
-      isLeavingRef.current = true;
-      const action = unsavedModal.pendingAction;
-      setUnsavedModal({ isOpen: false, message: null, pendingAction: null });
-      if (action) {
-        action();
-      }
-    }
+  const handleProceedAfterSave = () => {
+    isLeavingRef.current = true;
+    const action = unsavedModal.pendingAction;
+    setUnsavedModal({ isOpen: false, message: null, pendingAction: null });
+    action?.();
   };
 
   // ===== RENDER HELPERS =====
@@ -1154,67 +889,6 @@ export function ConfigurableSettingsPage() {
     return null;
   };
 
-  const renderLookupCard = ({
-    title,
-    desc,
-    typeCode,
-    items,
-    input,
-    setInput,
-    placeholder,
-    addLabel,
-    itemLabel,
-    emptyText,
-    showDelete = true,
-    showVisibility = false,
-  }) => (
-    <div className="master-card">
-      <div>
-        <h3 className="master-card__title">{title}</h3>
-        <p className="master-card__desc">{desc}</p>
-      </div>
-      <div className="master-card__form">
-        <div className="master-card__input-row">
-          <input
-            type="text"
-            className="input-field"
-            placeholder={placeholder}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddLookup(typeCode, input, setInput, itemLabel)}
-            disabled={isPending(`add:${typeCode}`)}
-          />
-          <Button
-            variant="primary"
-            onClick={() => handleAddLookup(typeCode, input, setInput, itemLabel)}
-            isLoading={isPending(`add:${typeCode}`)}
-            leftIcon={<Plus size={14} />}
-          >
-            {addLabel}
-          </Button>
-        </div>
-      </div>
-      <div className="master-card__list scrollbar-thin">
-        {renderListState(items.length === 0, emptyText) ||
-          items.map((item) => (
-            <MasterItem
-              key={item.id}
-              fields={[{ key: 'value', placeholder: itemLabel }]}
-              initial={{ value: item.label || item.value }}
-              onSave={(values) => handleUpdateLookup(item, typeCode, values, itemLabel)}
-              onDelete={showDelete ? () => handleDeleteLookup(item.id, typeCode, item.label || item.value, itemLabel) : undefined}
-              showDelete={showDelete}
-              showVisibility={showVisibility}
-              isVisible={item.isActive !== false}
-              onToggleVisibility={showVisibility ? () => handleToggleVisibility(item, typeCode, itemLabel) : undefined}
-              isTogglingVisibility={isPending(`toggle:${item.id}`)}
-            >
-              <span className="master-card__item-title">{item.label || item.value}</span>
-            </MasterItem>
-          ))}
-      </div>
-    </div>
-  );
 
   const renderFieldTable = (showAddButton = true) => (
     <div className="table-responsive">
@@ -1226,8 +900,8 @@ export function ConfigurableSettingsPage() {
             <th style={{ width: 80, textAlign: 'center' }}>ORDER</th>
             <th style={{ width: 70, textAlign: 'center' }}>VISIBLE</th>
             <th style={{ width: 80, textAlign: 'center' }}>REQUIRED</th>
-            <th>MASKING RULE</th>
-            <th style={{ width: 100, textAlign: 'center' }}>VISIBLE CHARS</th>
+            {!isFilterSection && <th>MASKING RULE</th>}
+            {!isFilterSection && <th style={{ width: 100, textAlign: 'center' }}>VISIBLE CHARS</th>}
             <th style={{ width: 110, textAlign: 'center' }}>ACTIONS</th>
           </tr>
         </thead>
@@ -1289,6 +963,8 @@ export function ConfigurableSettingsPage() {
                     onChange={(e) => handleFieldChange(i, 'isRequired', e.target.checked)}
                   />
                 </td>
+                {!isFilterSection && (
+                  <>
                 <td>
                   <select
                     className="input-cell-masking"
@@ -1309,6 +985,8 @@ export function ConfigurableSettingsPage() {
                     onChange={(e) => handleFieldChange(i, 'visibleChars', parseInt(e.target.value, 10) || 0)}
                   />
                 </td>
+                  </>
+                )}
                 <td>
                   <div className="field-table__actions">
                     <button
@@ -1362,9 +1040,6 @@ export function ConfigurableSettingsPage() {
     </div>
   );
 
-  const departmentOptions = departments.map((d) => (
-    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-  ));
 
   const renderDashboardConfig = () => {
     const filteredQuickActions = quickActions.filter((qa) =>
@@ -1728,7 +1403,12 @@ export function ConfigurableSettingsPage() {
             </div>
           </div>
 
-          {showHeaderSave ? (
+          {isAssignmentTab ? (
+            <span className="config-settings-banner__note">
+              <Save size={13} />
+              Review, then save with the bar at the bottom of this tab
+            </span>
+          ) : showHeaderSave ? (
             <button
               className="btn-save-changes"
               onClick={handleSaveFields}
@@ -1783,294 +1463,12 @@ export function ConfigurableSettingsPage() {
           <div className="config-section-nav">
             <button className={`config-section-tab ${caseSection === 'CreateCase' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('CreateCase')} id="tab-case-create">Create Case Form</button>
             <button className={`config-section-tab ${caseSection === 'Filters' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('Filters')} id="tab-case-filters">Case Filters</button>
-            <button className={`config-section-tab ${caseSection === 'MasterData' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('MasterData')} id="tab-case-master-data">Master Data &amp; Dropdowns</button>
+            <button className={`config-section-tab ${caseSection === 'AssignReassign' ? 'config-section-tab--active' : ''}`} onClick={() => handleCaseSectionClick('AssignReassign')} id="tab-case-assign-reassign">Assign &amp; Reassign</button>
           </div>
 
           <div className="config-settings-body">
-            {caseSection === 'MasterData' ? (
-              <div className="master-data-grid">
-                {/* DEPARTMENTS */}
-                <div className="master-card">
-                  <div>
-                    <h3 className="master-card__title"><Building2 size={15} /> Departments</h3>
-                    <p className="master-card__desc">
-                      Handling departments. These populate the Department dropdowns across Case Management.
-                    </p>
-                  </div>
-                  <div className="master-card__form">
-                    <div className="master-card__input-row">
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="Department name (e.g. Compliance)"
-                        value={newDeptName}
-                        onChange={(e) => setNewDeptName(e.target.value)}
-                        disabled={isPending('add:department')}
-                        id="input-new-department-name"
-                      />
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="Code"
-                        style={{ maxWidth: 110 }}
-                        value={newDeptCode}
-                        onChange={(e) => setNewDeptCode(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddDepartment()}
-                        disabled={isPending('add:department')}
-                        id="input-new-department-code"
-                      />
-                    </div>
-                    <Button
-                      variant="primary"
-                      onClick={handleAddDepartment}
-                      isLoading={isPending('add:department')}
-                      leftIcon={<Plus size={14} />}
-                      id="btn-add-department"
-                    >
-                      Add Department
-                    </Button>
-                  </div>
-                  <div className="master-card__list scrollbar-thin">
-                    {isLoading ? (
-                      <div className="master-card__loading"><Loader size="sm" /> <span>Loading…</span></div>
-                    ) : departmentsError ? (
-                      <div className="master-card__error"><AlertCircle size={14} /> {departmentsError}</div>
-                    ) : departments.length === 0 ? (
-                      <div className="master-card__empty">No departments configured yet.</div>
-                    ) : (
-                      departments.map((d) => (
-                        <MasterItem
-                          key={d.id}
-                          fields={[
-                            { key: 'name', placeholder: 'Department name' },
-                            { key: 'code', placeholder: 'Code', width: 90 },
-                          ]}
-                          initial={{ name: d.name, code: d.code }}
-                          onSave={(values) => handleUpdateDepartment(d, values)}
-                          showDelete={false}
-                          showVisibility={true}
-                          isVisible={d.isActive !== false}
-                          onToggleVisibility={() => handleToggleDepartmentVisibility(d)}
-                          isTogglingVisibility={isPending(`toggle:dept:${d.id}`)}
-                        >
-                          <span className="master-card__item-title">{d.name}</span>
-                          <span className="prefix-badge">{d.code}</span>
-                        </MasterItem>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* CASE TYPES WITH PREFIXES */}
-                <div className="master-card">
-                  <div>
-                    <h3 className="master-card__title">Configurable Case Types &amp; Prefixes</h3>
-                    <p className="master-card__desc">
-                      Add custom Case Types. The configured prefix (e.g. IR-) governs automatic case number generation.
-                    </p>
-                  </div>
-                  <div className="master-card__form">
-                    <div className="master-card__input-row">
-                      <input type="text" className="input-field" placeholder="Code (e.g. InfoReq)" value={newCaseTypeCode} onChange={(e) => setNewCaseTypeCode(e.target.value)} disabled={isPending('add:caseType')} />
-                      <input type="text" className="input-field" placeholder="Name (e.g. Info Request)" value={newCaseTypeName} onChange={(e) => setNewCaseTypeName(e.target.value)} disabled={isPending('add:caseType')} />
-                    </div>
-                    <div className="master-card__input-row">
-                      <input type="text" className="input-field" placeholder="Prefix (e.g. IR-)" style={{ maxWidth: 130 }} value={newCaseTypePrefix} onChange={(e) => setNewCaseTypePrefix(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAddCaseType()} disabled={isPending('add:caseType')} />
-                      <Button variant="primary" onClick={handleAddCaseType} isLoading={isPending('add:caseType')} leftIcon={<Plus size={14} />} id="btn-add-case-type">
-                        Add Type
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="master-card__list scrollbar-thin">
-                    {renderListState(caseTypes.length === 0, 'No case types configured yet.') ||
-                      caseTypes.map((c) => (
-                        <MasterItem
-                          key={c.id}
-                          fields={[
-                            { key: 'code', placeholder: 'Code', width: 110 },
-                            { key: 'name', placeholder: 'Name' },
-                            { key: 'prefix', placeholder: 'Prefix', width: 90 },
-                          ]}
-                          initial={{ code: c.code, name: c.name, prefix: c.prefix }}
-                          onSave={(values) => handleUpdateCaseType(c, values)}
-                          showDelete={false}
-                          showVisibility={true}
-                          isVisible={c.isActive !== false}
-                          onToggleVisibility={() => handleToggleCaseTypeVisibility(c)}
-                          isTogglingVisibility={isPending(`toggle:casetype:${c.id}`)}
-                        >
-                          <span className="master-card__item-title">{c.name}</span>
-                          <span className="prefix-badge">Prefix: {c.prefix}</span>
-                        </MasterItem>
-                      ))}
-                  </div>
-                </div>
-
-                {/* DEPARTMENT SUB-CATEGORIES */}
-                <div className="master-card">
-                  <div>
-                    <h3 className="master-card__title">Department Sub-Categories</h3>
-                    <p className="master-card__desc">
-                      Sub-categories always belong to the department selected below.
-                    </p>
-                  </div>
-                  <div className="master-card__form">
-                    {departmentsError ? (
-                      <div className="master-card__error"><AlertCircle size={14} /> {departmentsError}</div>
-                    ) : (
-                      <Select
-                        label="Select Department"
-                        value={selectedDeptForSub}
-                        onChange={(e) => setSelectedDeptForSub(e.target.value)}
-                        placeholder={isLoading ? 'Loading departments…' : 'Select department...'}
-                      >
-                        {departmentOptions}
-                      </Select>
-                    )}
-                    <div className="master-card__input-row">
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="New sub-category name (e.g. Home Loan)"
-                        value={newSubCategoryName}
-                        onChange={(e) => setNewSubCategoryName(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddSubCategory()}
-                        disabled={isPending('add:subCategory') || !selectedDeptForSub}
-                        id="input-new-subcategory"
-                      />
-                      <Button
-                        variant="primary"
-                        onClick={handleAddSubCategory}
-                        isLoading={isPending('add:subCategory')}
-                        disabled={!selectedDeptForSub}
-                        leftIcon={<Plus size={14} />}
-                        id="btn-add-subcategory"
-                      >
-                        Add Sub-Category
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="master-card__list scrollbar-thin">
-                    {renderListState(
-                      departmentSubCategories.length === 0,
-                      selectedDeptForSub ? 'No sub-categories for this department yet.' : 'Select a department to see its sub-categories.'
-                    ) ||
-                      departmentSubCategories.map((s) => (
-                        <MasterItem
-                          key={s.id}
-                          fields={[{ key: 'name', placeholder: 'Sub-category name' }]}
-                          initial={{ name: s.name }}
-                          onSave={(values) => handleUpdateSubCategory(s, values)}
-                          showDelete={false}
-                          showVisibility={true}
-                          isVisible={s.isActive !== false}
-                          onToggleVisibility={() => handleToggleSubCategoryVisibility(s)}
-                          isTogglingVisibility={isPending(`toggle:subcategory:${s.id}`)}
-                        >
-                          <span className="master-card__item-title">{s.name}</span>
-                          <span className="master-card__item-meta">({s.departmentName})</span>
-                        </MasterItem>
-                      ))}
-                  </div>
-                </div>
-
-                {/* PREFERRED COMMUNICATION CHANNELS */}
-                {renderLookupCard({
-                  title: 'Preferred Communication Channels',
-                  desc: 'Available communication channels for Create Case and filter dropdowns.',
-                  typeCode: 'COMMUNICATION_CHANNEL',
-                  items: channels,
-                  input: newChannelInput,
-                  setInput: setNewChannelInput,
-                  placeholder: 'Add channel (e.g. WhatsApp, SMS)',
-                  addLabel: 'Add Channel',
-                  itemLabel: 'Channel',
-                  emptyText: 'No channels configured yet.',
-                  showDelete: false,
-                  showVisibility: true,
-                })}
-
-                {/* SOURCE CHANNELS */}
-                {renderLookupCard({
-                  title: 'Source Channels',
-                  desc: 'Where a case came from (e.g. Voice, Email). Used by Create Case and the channel filter.',
-                  typeCode: 'SOURCE_CHANNEL',
-                  items: sourceChannels,
-                  input: newSourceChannelInput,
-                  setInput: setNewSourceChannelInput,
-                  placeholder: 'Add source channel (e.g. Walk-in)',
-                  addLabel: 'Add Source',
-                  itemLabel: 'Source channel',
-                  emptyText: 'No source channels configured yet.',
-                  showDelete: false,
-                  showVisibility: true,
-                })}
-
-                {/* SEVERITY MANAGEMENT */}
-                <div className="master-card">
-                  <div>
-                    <h3 className="master-card__title"><ShieldAlert size={15} /> Severity Management</h3>
-                    <p className="master-card__desc">
-                      Severity levels used by Create Case and the SLA timers. Set the internal and external SLA hours when adding a severity.
-                    </p>
-                  </div>
-                  <div className="master-card__form">
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="Severity name (e.g. Urgent)"
-                      value={newSeverityName}
-                      onChange={(e) => setNewSeverityName(e.target.value)}
-                      disabled={isPending('add:severity')}
-                      id="input-new-severity"
-                    />
-                    <div className="master-card__input-row">
-                      <div className="input-unit-wrapper">
-                        <input type="number" min={1} className="sla-input-number" aria-label="Internal SLA hours for the new severity" value={newSeverityInternal} onChange={(e) => setNewSeverityInternal(e.target.value)} disabled={isPending('add:severity')} />
-                        <span className="input-unit-tag">internal hrs</span>
-                      </div>
-                      <div className="input-unit-wrapper">
-                        <input type="number" min={1} className="sla-input-number" aria-label="External SLA hours for the new severity" value={newSeverityExternal} onChange={(e) => setNewSeverityExternal(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAddSeverity()} disabled={isPending('add:severity')} />
-                        <span className="input-unit-tag">external hrs</span>
-                      </div>
-                    </div>
-                    <Button variant="primary" onClick={handleAddSeverity} isLoading={isPending('add:severity')} leftIcon={<Plus size={14} />} id="btn-add-severity">
-                      Add Severity
-                    </Button>
-                  </div>
-                  <div className="master-card__list scrollbar-thin">
-                    {renderListState(severities.length === 0, 'No severities configured yet.') ||
-                      severities.map((s) => (
-                        <MasterItem
-                          key={s.id}
-                          fields={[{ key: 'name', placeholder: 'Severity name' }]}
-                          initial={{ name: s.name }}
-                          onSave={(values) => handleUpdateSeverity(s, values)}
-                          showDelete={false}
-                          showVisibility={true}
-                          isVisible={s.isActive !== false}
-                          onToggleVisibility={() => handleToggleSeverityVisibility(s)}
-                          isTogglingVisibility={isPending(`toggle:severity:${s.id}`)}
-                        >
-                          <span
-                            className="severity-pill-badge"
-                            style={{
-                              backgroundColor: (SEVERITY_BADGES[s.name] || SEVERITY_BADGE_FALLBACK).bg,
-                              color: (SEVERITY_BADGES[s.name] || SEVERITY_BADGE_FALLBACK).text,
-                              borderColor: (SEVERITY_BADGES[s.name] || SEVERITY_BADGE_FALLBACK).border,
-                            }}
-                          >
-                            {s.name}
-                          </span>
-                          <span className="master-card__item-meta">
-                            {s.internalHours}h / {s.externalHours}h
-                            {s.casesUsing > 0 ? ` · ${s.casesUsing} case(s)` : ''}
-                          </span>
-                        </MasterItem>
-                      ))}
-                  </div>
-                </div>
-              </div>
+            {caseSection === 'AssignReassign' ? (
+              <AssignmentSettingsTab ref={assignmentTabRef} onDirtyChange={handleAssignmentDirtyChange} />
             ) : (
               renderFieldCard(
                 caseSection === 'CreateCase' ? 'Create Case Field Settings' : 'Case Directory Filter Settings',
@@ -2085,27 +1483,16 @@ export function ConfigurableSettingsPage() {
             <button className={`config-section-tab ${activeSection === 'AddNewCustomer' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('AddNewCustomer')} id="tab-add-new-customer">Add New Customer</button>
             <button className={`config-section-tab ${activeSection === 'ExistingCustomer' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('ExistingCustomer')} id="tab-existing-customer">Existing Customer</button>
             <button className={`config-section-tab ${activeSection === 'Filters' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('Filters')} id="tab-c360-filters">Customer 360 Filters</button>
-            <button className={`config-section-tab ${activeSection === 'MasterLookups' ? 'config-section-tab--active' : ''}`} onClick={() => handleSectionClick('MasterLookups')} id="tab-master-lookups">Master Lookup Overview</button>
           </div>
 
           <div className="config-settings-body">
-            {activeSection === 'MasterLookups' ? (
-              <MasterLookupOverview
-                lists={[
-                  { typeCode: 'PREFERRED_LANGUAGE', title: 'Preferred Language', items: languages },
-                  { typeCode: 'HOME_BRANCH', title: 'Home Branch', items: branches },
-                  { typeCode: 'ID_TYPE', title: 'ID Type', items: idTypes },
-                ]}
-              />
-            ) : (
-              renderFieldCard(
-                activeSection === 'AddNewCustomer'
-                  ? 'Add New Customer Field Settings'
-                  : activeSection === 'ExistingCustomer'
-                    ? 'Existing Customer Search Settings'
-                    : 'Customer 360 Filter Settings',
-                activeSection !== 'Filters'
-              )
+            {renderFieldCard(
+              activeSection === 'AddNewCustomer'
+                ? 'Add New Customer Field Settings'
+                : activeSection === 'ExistingCustomer'
+                  ? 'Existing Customer Search Settings'
+                  : 'Customer 360 Filter Settings',
+              activeSection !== 'Filters'
             )}
           </div>
         </>
@@ -2140,13 +1527,15 @@ export function ConfigurableSettingsPage() {
       />
 
       {/* CENTERED UNSAVED CHANGES CONFIRMATION MODAL WITH CHANGES SUMMARY */}
-      <UnsavedChangesModal
+      <UnsavedChangesDialog
         isOpen={unsavedModal.isOpen}
-        onStay={handleStayOnPage}
-        onLeave={handleLeaveWithoutSaving}
-        onSave={handleSaveAndLeave}
+        subject="configuration"
+        itemName={getSectionName()}
         changes={unsavedChangesList}
-        isSaving={isSaving}
+        onContinue={handleStayOnPage}
+        onDiscard={handleLeaveWithoutSaving}
+        onSave={handleSaveFromDialog}
+        onSaved={handleProceedAfterSave}
       />
     </div>
   );

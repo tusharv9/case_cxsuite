@@ -141,7 +141,7 @@ public class TransactionSafetyTests
     }
 
     [Fact]
-    public async Task TransferDepartmentAsync_ToQueue_SucceedsAndRecordsEvent()
+    public async Task TransferDepartmentAsync_WithoutADifferentTeam_IsRefused_AndRecordsNothing()
     {
         using var db = CreateInMemoryDbContext();
 
@@ -181,19 +181,20 @@ public class TransactionSafetyTests
             mockEnv.Object
         );
 
+        // A team IS the queue: "transferring" without naming another team (the old fake queue option) is refused.
         var transferDto = new TransferDepartmentDto
         {
-            DepartmentId = Guid.Empty, // Transfer to queue without changing department
+            DepartmentId = Guid.Empty,
             TransferTo = "Queue",
             TargetQueue = "Tier 2 - Escalations",
             Reason = "Complex query",
             HandoverNote = "Customer needs urgent assistance"
         };
 
-        await service.TransferDepartmentAsync(testCase.Id, transferDto, user.Id);
+        await Assert.ThrowsAsync<FieldValidationException>(() => service.TransferDepartmentAsync(testCase.Id, transferDto, user.Id));
+        await Assert.ThrowsAsync<FieldValidationException>(() => service.TransferDepartmentAsync(testCase.Id, new TransferDepartmentDto { DepartmentId = dept.Id, Reason = "Complex query" }, user.Id));
 
-        var events = await db.CaseEvents.Where(e => e.CaseId == testCase.Id).ToListAsync();
-        Assert.Contains(events, e => e.EventType == EventType.Transfer && e.Message.Contains("Tier 2 - Escalations"));
+        Assert.False(await db.CaseEvents.AnyAsync(e => e.CaseId == testCase.Id && e.EventType == EventType.Transfer));
     }
 
     [Fact]
@@ -231,6 +232,11 @@ public class TransactionSafetyTests
         var mockEnv = new Mock<IWebHostEnvironment>();
         mockEnv.Setup(e => e.ContentRootPath).Returns(Path.GetTempPath());
 
+        // The reason must be an active option of the configured escalation reason list.
+        var reasonList = new LookupType { Id = Guid.NewGuid(), Code = "ESCALATION_REASON", Name = "Escalation Reason" };
+        db.LookupTypes.Add(reasonList);
+        db.LookupValues.Add(new LookupValue { Id = Guid.NewGuid(), LookupTypeId = reasonList.Id, TypeCode = "ESCALATION_REASON", Value = "Management Escalation", Label = "Management Escalation", IsActive = true });
+
         db.EscalationLevelConfigs.AddRange(
             new EscalationLevelConfig { LevelNumber = 1, Name = "Level 1", AssignmentType = "Owner", TriggerType = "SlaPercentage", TriggerValue = 70, ReassignOwner = false, IsActive = true },
             new EscalationLevelConfig { LevelNumber = 2, Name = "Level 2", AssignmentType = "Role", TargetRole = supervisor.Role, TriggerType = "SlaPercentage", TriggerValue = 90, ReassignOwner = true, IsActive = true });
@@ -248,7 +254,7 @@ public class TransactionSafetyTests
         var escalateDto = new EscalateCaseDto
         {
             TargetUserId = supervisor.Id,
-            Reason = "Customer requested supervisor review",
+            Reason = "Management Escalation",
             Note = "Handled smoothly"
         };
 
@@ -261,7 +267,7 @@ public class TransactionSafetyTests
         Assert.Equal(2, updatedCase.EscalationLevel);
 
         var events = await db.CaseEvents.Where(e => e.CaseId == testCase.Id).ToListAsync();
-        Assert.Contains(events, e => e.EventType == EventType.Escalate);
+        Assert.Contains(events, e => e.EventType == EventType.Escalate && e.Message.Contains("Reason: Management Escalation"));
     }
 
     [Fact]

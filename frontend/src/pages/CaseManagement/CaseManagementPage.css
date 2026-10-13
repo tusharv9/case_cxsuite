@@ -208,8 +208,8 @@
 }
 
 .case-management-search__input:focus {
-  border-color: #e87722;
-  box-shadow: 0 0 0 3px rgba(232, 119, 34, 0.1);
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1);
 }
 
 .case-management-search__input::placeholder {
@@ -243,100 +243,44 @@
   flex-wrap: wrap;
 }
 
-/* Checkmark Dropdown */
+/* Filter chips: the shared searchable Select (components/common/Input) in the list's compact chip style */
 .case-filter-dropdown {
   position: relative;
 }
 
-.case-filter-dropdown__btn {
-  display: inline-flex;
-  align-items: center;
+.case-filter-dropdown .custom-select-container {
+  width: auto;
+}
+
+.custom-select-trigger.case-filter-select {
+  width: auto;
+  min-width: 140px;
   gap: 8px;
   height: 35px;
   padding: 0 12px;
   font-size: 12.5px;
   font-weight: 500;
   color: #0f2149;
-  background-color: #ffffff;
   border: 1.5px solid rgba(15, 33, 73, 0.10);
   border-radius: 9px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  font-family: inherit;
-  user-select: none;
 }
 
-.case-filter-dropdown__btn:hover {
-  border-color: rgba(15, 33, 73, 0.22);
-  background-color: #faf8f5;
-}
-
-.case-filter-dropdown__btn--active {
-  border-color: #0f2149;
-  background-color: #f1f5f9;
-  color: #0f2149;
-  font-weight: 600;
-}
-
-.case-filter-dropdown__chevron {
-  color: #9aa6bf;
-  transition: transform 0.15s ease;
-}
-
-.case-filter-dropdown__chevron.open {
-  transform: rotate(180deg);
-}
-
-.case-filter-dropdown__menu {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 0;
-  min-width: 190px;
-  background-color: #ffffff;
-  border: 1px solid rgba(15, 33, 73, 0.10);
-  border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(15, 33, 73, 0.10), 0 1px 3px rgba(15, 33, 73, 0.05);
-  padding: 5px;
-  margin: 0;
-  list-style: none;
-  z-index: 100;
-  animation: fadeInDown 0.15s ease-out;
-}
-
-.case-filter-dropdown__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  font-size: 12.5px;
-  color: #0f2149;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.12s ease;
-}
-
-.case-filter-dropdown__item:hover {
-  background-color: #f8fafc;
-}
-
-.case-filter-dropdown__item--selected {
-  font-weight: 600;
-  color: #e0470f;
-  background-color: rgba(232, 119, 34, 0.08);
-}
-
-.case-filter-dropdown__check {
-  width: 14px;
-  height: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #e0470f;
-  flex-shrink: 0;
-}
-
-.case-filter-dropdown__item-label {
+/* The inline search box takes the chip's current width instead of widening it (no layout shift while open) */
+.custom-select-trigger.case-filter-select .custom-select-search-inline {
   flex: 1;
+  width: 0;
+  min-width: 0;
+}
+
+.custom-select-trigger.case-filter-select:hover {
+  border-color: rgba(15, 33, 73, 0.22);
+  background-color: #faf8f5 !important;
+}
+
+.custom-select-trigger.case-filter-select--active {
+  border-color: #0f2149;
+  background-color: #f1f5f9 !important;
+  font-weight: 600;
 }
 
 /* Reset Filter Button */
@@ -390,4 +334,9 @@
   align-items: center;
   justify-content: center;
   padding: 48px 0;
+}
+
+.case-management-filters__error {
+  font-size: 12px;
+  color: var(--color-danger);
 }

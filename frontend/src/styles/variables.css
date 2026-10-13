@@ -160,7 +160,12 @@
   /* --- Layout --- */
   --sidebar-width: 220px;
   --header-height: 56px;
-  --drawer-width: 640px;
+  /* Side drawers: one default width and two documented variants (see SideDrawer `size`).
+     sm — narrow panels (attachments, collaboration); md — forms (default); lg — wide editors with tables. */
+  --drawer-width-sm: clamp(420px, 36vw, 600px);
+  --drawer-width: clamp(540px, 42vw, 760px);
+  --drawer-width-md: var(--drawer-width);
+  --drawer-width-lg: clamp(640px, 52vw, 960px);
 
   /* --- Transitions --- */
   --transition-fast: 0.12s ease;
@@ -176,4 +181,12 @@
   --z-modal: 10000;
   --z-tooltip: 15000;
   --z-toast: 20000;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --drawer-width-sm: 100vw;
+    --drawer-width: 100vw;
+    --drawer-width-lg: 100vw;
+  }
 }

@@ -27,6 +27,7 @@ public class CaseService : ICaseService
     private readonly IMentionService _mentions;
     private readonly ILogger<CaseService> _logger;
     private readonly IConfigCache? _configCache;
+    private readonly IAssignmentEligibilityService _eligibility;
 
     public CaseService(
         ICaseRepository caseRepository,
@@ -44,9 +45,11 @@ public class CaseService : ICaseService
         IEscalationService? escalation = null,
         IMentionService? mentions = null,
         ILogger<CaseService>? logger = null,
-        IConfigCache? configCache = null)
+        IConfigCache? configCache = null,
+        IAssignmentEligibilityService? eligibility = null)
     {
         _configCache = configCache;
+        _eligibility = eligibility ?? new AssignmentEligibilityService(context, configCache);
         _caseRepository = caseRepository;
         _notificationService = notificationService;
         _settingsService = settingsService;
@@ -253,9 +256,10 @@ public class CaseService : ICaseService
     {
         // Read-only: SLA monitoring runs in SlaEscalationBackgroundService, never on a read.
         var caseDetail = await _caseRepository.GetCaseDetailAsync(caseId, ct);
-        if (caseDetail?.Customer != null && _piiMasking != null)
+        // The case's own masked fields (custom attributes), the customer's name it repeats, the customer and its sub-cases.
+        if (caseDetail != null && _piiMasking != null)
         {
-            await _piiMasking.MaskCustomerSummaryAsync(caseDetail.Customer, ct);
+            await _piiMasking.MaskCaseAsync(caseDetail, ct);
         }
         if (caseDetail != null)
         {
@@ -298,6 +302,7 @@ public class CaseService : ICaseService
             ct);
 
         await EnrichSlaAsync(paged.Items, ct);
+        if (_piiMasking != null) await _piiMasking.MaskCasesAsync(paged.Items, ct);   // the list repeats the customer's name
         return paged;
     }
 
@@ -411,13 +416,16 @@ public class CaseService : ICaseService
         catch (Exception ex) { _logger.LogWarning(ex, "Notification Trigger Error"); }
     }
 
-    public async Task AssignCaseAsync(Guid caseId, AssignCaseDto dto)
+    public async Task AssignCaseAsync(Guid caseId, AssignCaseDto dto, bool callerMayAssignAnyCase = false)
     {
         var existingCase = await _caseRepository.GetByIdAsync(caseId);
         if (existingCase == null) throw new KeyNotFoundException("Case not found");
-        
-        if (existingCase.Status == CaseStatus.Resolved)
-            throw new InvalidOperationException("Cannot assign a resolved case.");
+
+        if (existingCase.Status is CaseStatus.Resolved or CaseStatus.Closed or CaseStatus.Cancelled)
+            throw new InvalidOperationException($"Cannot assign a case in '{existingCase.Status}' status.");
+
+        // Who may change the holder is checked before anything about the target is revealed.
+        await _eligibility.EnsureMayReassignAsync(existingCase, dto.UserId, callerMayAssignAnyCase);
 
         if (existingCase.OwnerId == dto.OwnerId)
             throw new InvalidOperationException($"{existingCase.Owner?.Name ?? "The current owner"} is already handling this case.");
@@ -426,23 +434,31 @@ public class CaseService : ICaseService
         if (newOwner == null)
             throw new KeyNotFoundException("Assigned user not found.");
 
-        // Reassigning does not touch the SLA clock: the customer's wait started when the case was opened, whoever holds it.
-        existingCase.OwnerId = dto.OwnerId;
-
-        var ownerName = newOwner.Name;
-        var reasonText = !string.IsNullOrWhiteSpace(dto.Reason) ? $" Reason: {dto.Reason}." : "";
+        var reason = await CaseReasons.ResolveAsync(_context, CaseReasons.Assignment, dto.Reason, dto.ReasonDetail);
 
         var caseEvent = new CaseEvent
         {
             CaseId = caseId,
             EventType = EventType.Assign,
-            Message = $"Reassigned to {ownerName}.{reasonText}",
+            Message = $"Reassigned to {newOwner.Name}. Reason: {reason.Text}.",
             CreatedAt = DateTime.UtcNow,
             UserId = dto.UserId
         };
 
         await ExecuteInTransactionAsync(async () =>
         {
+            // Same lock as automatic routing, so the capacity verdict below cannot be raced by a simultaneous assignment.
+            await TeamAssignmentLock.AcquireAsync(_context, existingCase.DepartmentId);
+            var policy = await _eligibility.GetManualPolicyAsync();
+            var (team, verdict) = await _eligibility.CheckAsync(existingCase.DepartmentId, dto.OwnerId, policy);
+            if (!verdict.IsEligible)
+                throw new AssignmentNotAllowedException(verdict.Reason.ToString(), verdict.Explain(team.Team.Name));
+            // Cross-team assignment is allowed by the settings AND needs the caller's permission.
+            if (verdict.IsCrossTeam && !callerMayAssignAnyCase)
+                throw new AssignmentForbiddenException((verdict with { Reason = IneligibilityReason.NeedsAssignPermission }).Explain(team.Team.Name));
+
+            // Reassigning does not touch the SLA clock: the customer's wait started when the case was opened, whoever holds it.
+            existingCase.OwnerId = dto.OwnerId;
             await _caseRepository.UpdateAsync(existingCase);
             await _caseRepository.AddEventAsync(caseEvent);
         });
@@ -459,6 +475,57 @@ public class CaseService : ICaseService
             );
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Notification Trigger Error"); }
+    }
+
+    public async Task<EligibleAssigneesDto> GetEligibleAssigneesAsync(Guid caseId, bool callerMayAssignAnyCase = false, CancellationToken ct = default)
+    {
+        var c = await _context.Cases.AsNoTracking()
+            .Where(x => x.Id == caseId)
+            .Select(x => new { x.Id, x.DepartmentId, x.OwnerId })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("Case not found");
+
+        var policy = await _eligibility.GetManualPolicyAsync(ct);
+        var team = await _eligibility.EvaluateForCaseAsync(c.DepartmentId, policy, ct);
+        return new EligibleAssigneesDto
+        {
+            CaseId = c.Id,
+            DepartmentId = team.Team.Id,
+            DepartmentName = team.Team.Name,
+            DepartmentIsActive = team.Team.IsActive,
+            CurrentOwnerId = c.OwnerId,
+            Capacity = team.Capacity,
+            CrossTeamMode = policy.CrossTeamMode,
+            Candidates = team.Candidates
+                .Select(v =>
+                {
+                    var isOwner = v.User.Id == c.OwnerId;
+                    // Offered by the settings, but this caller may not reach outside the case's team.
+                    if (v.IsEligible && v.IsCrossTeam && !callerMayAssignAnyCase) v = v with { Reason = IneligibilityReason.NeedsAssignPermission };
+                    return new EligibleAssigneeDto
+                    {
+                        UserId = v.User.Id,
+                        Name = v.User.Name,
+                        Email = v.User.Email,
+                        TeamRole = v.MemberRole,
+                        IsTeamLead = v.IsTeamLead,
+                        IsTeamMember = v.IsMember,
+                        Status = v.User.Status.ToString(),
+                        HomeTeamName = v.HomeTeamName,
+                        IsCrossTeam = v.IsCrossTeam,
+                        OpenCases = v.OpenCases,
+                        IsCurrentOwner = isOwner,
+                        // The current holder cannot be "assigned" again; everyone else carries the policy's verdict.
+                        IsEligible = v.IsEligible && !isOwner,
+                        IneligibleReason = isOwner ? "CurrentOwner" : v.IsEligible ? null : v.Reason.ToString(),
+                        IneligibleMessage = isOwner ? $"{v.User.Name} already holds this case." : v.IsEligible ? null : v.Explain(team.Team.Name),
+                    };
+                })
+                .OrderBy(x => x.IsCrossTeam)
+                .ThenByDescending(x => x.IsEligible)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        };
     }
 
     public async Task AddNoteAsync(Guid caseId, AddNoteDto dto)
@@ -527,49 +594,96 @@ public class CaseService : ICaseService
         return rows.Select(r => clock.Evaluate(r, now).Health).ToList();
     }
 
-    public async Task TransferDepartmentAsync(Guid caseId, TransferDepartmentDto dto, Guid transferredByUserId)
+    public async Task TransferDepartmentAsync(Guid caseId, TransferDepartmentDto dto, Guid transferredByUserId, bool callerMayAssignAnyCase = false)
     {
         var existingCase = await _caseRepository.GetByIdAsync(caseId);
         if (existingCase == null) throw new KeyNotFoundException("Case not found");
         
-        if (existingCase.Status == CaseStatus.Resolved)
-            throw new InvalidOperationException("Cannot transfer a resolved case.");
+        if (existingCase.Status is CaseStatus.Resolved or CaseStatus.Closed or CaseStatus.Cancelled)
+            throw new InvalidOperationException($"Cannot transfer a case in '{existingCase.Status}' status.");
 
-        if (dto.DepartmentId != Guid.Empty && dto.DepartmentId != existingCase.DepartmentId)
-        {
-            var targetDept = await _context.Departments.FindAsync(dto.DepartmentId);
-            if (targetDept == null)
-                throw new KeyNotFoundException("Target department not found.");
+        await _eligibility.EnsureMayReassignAsync(existingCase, transferredByUserId, callerMayAssignAnyCase);
 
-            existingCase.DepartmentId = dto.DepartmentId;
-            var newOwnerId = await _caseRepository.GetDepartmentOwnerAsync(dto.DepartmentId);
-            if (newOwnerId.HasValue)
-            {
-                existingCase.OwnerId = newOwnerId.Value;
-            }
-        }
+        // A transfer moves the case to another team; a team IS the queue, so there is nothing else to transfer to.
+        if (dto.DepartmentId == Guid.Empty)
+            throw new FieldValidationException(new[] { new FieldError("departmentId", "Choose the team to transfer the case to.") });
+        if (dto.DepartmentId == existingCase.DepartmentId)
+            throw new FieldValidationException(new[] { new FieldError("departmentId", "The case already belongs to this team. Choose a different team, or reassign it within the team instead.") });
+
+        User? newOwner = null;
+        var targetDept = await _context.Departments.FindAsync(dto.DepartmentId)
+                         ?? throw new KeyNotFoundException("Target department not found.");
+        if (!targetDept.IsActive)
+            throw new AssignmentNotAllowedException(nameof(IneligibilityReason.TeamInactive), $"'{targetDept.Name}' is inactive and cannot receive cases.");
+        const bool changesTeam = true;
+
+        var reason = await CaseReasons.ResolveAsync(_context, CaseReasons.Transfer, dto.Reason, dto.ReasonDetail);
 
         // SLA TARGETS DO NOT RESET: Transfer keeps SLA clock running continuously without interruption
-        var targetDesc = !string.IsNullOrWhiteSpace(dto.TargetQueue)
-            ? dto.TargetQueue
-            : (!string.IsNullOrWhiteSpace(dto.TransferTo) ? dto.TransferTo : "new department");
-        var reasonDesc = !string.IsNullOrWhiteSpace(dto.Reason) ? $" Reason: {dto.Reason}." : "";
-        var noteDesc = !string.IsNullOrWhiteSpace(dto.HandoverNote) ? $" Note: {dto.HandoverNote}" : "";
+        var noteDesc = !string.IsNullOrWhiteSpace(dto.HandoverNote) ? $" Note: {dto.HandoverNote.Trim()}" : "";
+        string BuildTransferMessage() => $"Transferred to {targetDept.Name}{(newOwner != null ? $" (Owner: {newOwner.Name})" : "")}. Reason: {reason.Text}.{noteDesc}";
 
         var caseEvent = new CaseEvent
         {
             CaseId = caseId,
             EventType = EventType.Transfer,
-            Message = $"Transferred to {targetDesc}.{reasonDesc}{noteDesc}",
+            Message = string.Empty,
             CreatedAt = DateTime.UtcNow,
             UserId = transferredByUserId
         };
 
         await ExecuteInTransactionAsync(async () =>
         {
+            if (changesTeam)
+            {
+                existingCase.DepartmentId = targetDept.Id;
+
+                // The receiving team's lead takes the case (as before). Without an active lead the team's own algorithm picks an
+                // eligible agent — the same rules as routing at creation. Nobody at all: the transfer is refused rather than
+                // leaving the case with someone outside its new team.
+                var lead = targetDept.OwnerId.HasValue
+                    ? await _context.Users.FirstOrDefaultAsync(u => u.Id == targetDept.OwnerId.Value && u.IsActive)
+                    : null;
+                if (lead != null)
+                {
+                    newOwner = lead;
+                }
+                else if (_routingEngine != null)
+                {
+                    var decision = await _routingEngine.AssignWithinTeamAsync(existingCase, existingCase.Customer, targetDept.Id, "a transfer");
+                    newOwner = decision.AssignedUserId.HasValue ? await _context.Users.FindAsync(decision.AssignedUserId.Value) : null;
+                }
+
+                if (newOwner == null)
+                    throw new AssignmentNotAllowedException("NoEligibleAssignee",
+                        $"'{targetDept.Name}' has no active team lead and no available agent below capacity, so nobody could take this case.");
+                existingCase.OwnerId = newOwner.Id;
+            }
+
+            caseEvent.Message = BuildTransferMessage();
             await _caseRepository.UpdateAsync(existingCase);
             await _caseRepository.AddEventAsync(caseEvent);
         });
+
+        // Notify new owner/lead if assigned
+        if (newOwner != null && newOwner.Id != transferredByUserId)
+        {
+            try
+            {
+                var requestingUser = await _context.Users.FindAsync(transferredByUserId);
+                await _notificationService.CreateNotificationAsync(
+                    newOwner.Id,
+                    "CASE_TRANSFERRED",
+                    "Case Transferred to Your Team",
+                    $"Case {existingCase.CaseNumber} ({existingCase.Title}) was transferred to your team by {requestingUser?.Name ?? "Agent"} and is now assigned to you.",
+                    caseId
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send transfer notification for case {CaseId}", caseId);
+            }
+        }
     }
 
     public async Task<LinkCaseResultDto> LinkCaseAsync(Guid caseId, LinkCaseDto dto)
@@ -904,7 +1018,9 @@ public class CaseService : ICaseService
 
     public async Task<PagedResponseDto<CaseAuditEventDto>> GetCaseAuditEventsAsync(int page = 1, int pageSize = 10, string? actionType = null, string? search = null, CancellationToken ct = default)
     {
-        return await _caseRepository.GetCaseAuditEventsAsync(page, pageSize, actionType, search, ct);
+        var events = await _caseRepository.GetCaseAuditEventsAsync(page, pageSize, actionType, search, ct);
+        if (_piiMasking != null) await _piiMasking.MaskCasesAsync(events.Items, ct);   // audit rows show the customer's name
+        return events;
     }
 
     public async Task AddTimelineInteractionAsync(Guid caseId, AddTimelineInteractionDto dto, Guid userId)
@@ -993,8 +1109,8 @@ public class CaseService : ICaseService
         if (existingCase.Status == CaseStatus.Resolved || existingCase.Status == CaseStatus.Closed || existingCase.Status == CaseStatus.Cancelled)
             throw new InvalidOperationException($"Cannot escalate a case in '{existingCase.Status}' status.");
 
-        if (string.IsNullOrWhiteSpace(dto.Reason))
-            throw new ArgumentException("An escalation reason is required for manual escalation.");
+        // Escalation is its own action with its own reasons (ESCALATION_REASON), separate from assignment reasons.
+        var reason = await CaseReasons.ResolveAsync(_context, CaseReasons.Escalation, dto.Reason, dto.ReasonDetail);
 
         var escalation = _escalation ?? throw new InvalidOperationException("Escalation is not configured.");
         var policy = await escalation.GetPolicyAsync();
@@ -1034,7 +1150,7 @@ public class CaseService : ICaseService
 
         var nextLevelName = nextConfig.Name;
         var targetRoleName = nextConfig.TargetRole;
-        var reasonText = dto.Reason.Trim();
+        var reasonText = reason.Text;
         var noteText = !string.IsNullOrWhiteSpace(dto.Note) ? $" Note: {dto.Note.Trim()}" : "";
         var message = $"[Manual Escalation] Case escalated to {nextLevelName} ({targetRoleName}: {targetUser.Name}) from {oldOwnerName}. Reason: {reasonText}.{noteText}";
 

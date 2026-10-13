@@ -184,22 +184,8 @@ public class RoutingEngineService : IRoutingEngineService
         UpdatedAt = c.UpdatedAt ?? c.CreatedAt
     };
 
-    private async Task<AssignmentConfiguration> ResolveConfigAsync(Guid? departmentId, CancellationToken ct)
-    {
-        // Settings change rarely and every new case reads them, so they come from the configuration cache (which is cleared the
-        // moment any setting is saved) rather than costing two database round trips per case.
-        var active = await Cached("routing:assignment-configs",
-            () => _context.AssignmentConfigurations.AsNoTracking().Where(c => c.IsActive).ToListAsync(ct));
-
-        if (departmentId.HasValue)
-        {
-            var own = active.FirstOrDefault(c => c.DepartmentId == departmentId);
-            if (own != null) return own;
-        }
-
-        return active.FirstOrDefault(c => c.DepartmentId == null)
-            ?? throw new InvalidOperationException("No assignment settings are configured. Set the assignment algorithm under Cases SLA & Routing.");
-    }
+    private Task<AssignmentConfiguration> ResolveConfigAsync(Guid? departmentId, CancellationToken ct) =>
+        AssignmentSettings.ResolveAsync(_context, _cache, departmentId, ct);
 
     private Task<T> Cached<T>(string key, Func<Task<T>> load) => _cache == null ? load() : _cache.GetOrCreateAsync(key, load);
 
@@ -344,7 +330,30 @@ public class RoutingEngineService : IRoutingEngineService
         result.TargetDepartmentName = target.Name;
         newCase.DepartmentId = target.Id;
 
-        // STAGE 2 — pick an agent. Assignments to one team are serialised so two simultaneous cases cannot both see the same
+        var ruleText = matchedRule != null && result.MatchedRuleId != null ? $"rule '{matchedRule.Name}'" : "no matching rule";
+        await AssignWithinTeamAsync(newCase, customer, target, result, ruleText, ct);
+        return result;
+    }
+
+    public async Task<RoutingDecisionResult> AssignWithinTeamAsync(Case c, Customer? customer, Guid departmentId, string via, CancellationToken ct = default)
+    {
+        var target = await _context.Departments.AsNoTracking().FirstOrDefaultAsync(d => d.Id == departmentId, ct)
+                     ?? throw new KeyNotFoundException("Target department not found.");
+        if (!target.IsActive)
+            throw new AssignmentNotAllowedException(nameof(IneligibilityReason.TeamInactive), $"'{target.Name}' is inactive and cannot receive cases.");
+
+        var result = new RoutingDecisionResult { TargetDepartmentId = target.Id, TargetDepartmentName = target.Name };
+        await AssignWithinTeamAsync(c, customer, target, result, via, ct);
+        return result;
+    }
+
+    /// <summary>
+    /// STAGE 2 — pick an agent of <paramref name="target"/> with its configured algorithm, from the eligible pool; if nobody can take
+    /// the case its lead holds it (when the team has an active lead), otherwise the owner is left unchanged and <see cref="RoutingDecisionResult.AssignedUserId"/> stays null.
+    /// </summary>
+    private async Task AssignWithinTeamAsync(Case newCase, Customer? customer, Department target, RoutingDecisionResult result, string ruleText, CancellationToken ct)
+    {
+        // Assignments to one team are serialised so two simultaneous cases cannot both see the same
         // "least loaded" agent or the same round-robin position; the lock lasts until the surrounding transaction commits.
         await LockTeamAsync(target.Id, ct);
 
@@ -359,8 +368,6 @@ public class RoutingEngineService : IRoutingEngineService
             ? await strategy.SelectAsync(new AssignmentRequest(target.Id, newCase, customer, pool.Eligible, config.MaxConcurrentCapacity), ct)
             : null;
 
-        var ruleText = matchedRule != null && result.MatchedRuleId != null ? $"rule '{matchedRule.Name}'" : "no matching rule";
-
         if (choice != null)
         {
             newCase.OwnerId = choice.User.Id;
@@ -368,7 +375,7 @@ public class RoutingEngineService : IRoutingEngineService
             result.AssignedUserName = choice.User.Name;
             result.RoutingLogMessage = $"Case routed to '{target.Name}' via {ruleText} and assigned to '{choice.User.Name}' via {config.Algorithm}" +
                                        (string.IsNullOrWhiteSpace(choice.Note) ? "." : $" ({choice.Note}).");
-            return result;
+            return;
         }
 
         // Nobody can take it: say why, and let the team lead hold it so it is not lost. The lead is told by the caller.
@@ -385,15 +392,9 @@ public class RoutingEngineService : IRoutingEngineService
         }
         result.RoutingLogMessage = $"Case routed to '{target.Name}' via {ruleText}. Pending agent assignment: {result.HeldReason}" +
                                    (lead != null ? $" Held by the team lead, {lead.Name}." : " No team lead is set, so it stays with its creator.");
-        return result;
     }
 
-    private async Task LockTeamAsync(Guid departmentId, CancellationToken ct)
-    {
-        if (!_context.Database.IsNpgsql() || _context.Database.CurrentTransaction == null) return;
-        var key = departmentId.ToString();
-        await _context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", ct);
-    }
+    private Task LockTeamAsync(Guid departmentId, CancellationToken ct) => TeamAssignmentLock.AcquireAsync(_context, departmentId, ct);
 
     private static bool Same(string? a, string? b) =>
         !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b) && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);

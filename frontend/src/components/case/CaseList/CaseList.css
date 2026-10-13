@@ -224,6 +224,19 @@
   border-color: rgba(97, 112, 143, 0.16);
 }
 
+.case-list-priority--urgent,
+.case-list-priority--highest {
+  background-color: #faf5ff;
+  color: #7c3aed;
+  border-color: rgba(124, 58, 237, 0.2);
+}
+
+.case-list-priority--custom {
+  background-color: #f8fafc;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+
 /* Status Badge & Escalation Level */
 .status-badge-container {
   display: inline-flex;

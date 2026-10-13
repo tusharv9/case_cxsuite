@@ -23,4 +23,11 @@ public interface IRoutingEngineService
     Task<RoutingVocabularyDto> GetVocabularyAsync(CancellationToken ct = default);
 
     Task<RoutingDecisionResult> RouteAndAssignCaseAsync(Case newCase, Customer? customer, CancellationToken ct = default);
+
+    /// <summary>
+    /// Assigns <paramref name="c"/> within one team with that team's algorithm and eligibility rules (stage 2 of routing, without the
+    /// rules). <paramref name="via"/> describes the trigger for the routing log (e.g. "a transfer"). Must run inside the transaction that
+    /// stores the case. <see cref="RoutingDecisionResult.AssignedUserId"/> is null when nobody — not even a lead — can hold it.
+    /// </summary>
+    Task<RoutingDecisionResult> AssignWithinTeamAsync(Case c, Customer? customer, Guid departmentId, string via, CancellationToken ct = default);
 }

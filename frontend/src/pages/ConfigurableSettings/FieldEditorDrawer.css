@@ -68,3 +68,15 @@
 .option-row__format label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #475569; }
 .option-row__format select { flex: 1; height: 30px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 0 8px; font-size: 12.5px; background: #fff; }
 .option-row__format .form-input { height: 30px; font-size: 12.5px; }
+
+/* Option ordering, and the core Create Case dropdowns (CoreOptionsEditor) */
+.core-options__order { display: inline-flex; flex-direction: column; gap: 1px; }
+.core-options__order button { border: none; background: none; padding: 0 2px; line-height: 1; color: var(--color-text-tertiary); cursor: pointer; }
+.core-options__order button:hover:not(:disabled) { color: var(--color-brand-primary); }
+.core-options__order button:disabled { opacity: 0.35; cursor: default; }
+.core-options__extra { font-size: 11px; font-weight: 600; color: var(--color-text-secondary); background: var(--color-gray-100); border-radius: 4px; padding: 2px 6px; white-space: nowrap; }
+.core-options__extra-input { flex: 0 0 110px !important; }
+.core-options--elsewhere { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid #bfdbfe; border-radius: 8px; background: var(--color-brand-primary-light); color: var(--color-brand-primary-dark); font-size: 12.5px; }
+.core-options--elsewhere p { margin: 0; line-height: 1.5; }
+.core-options__link { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--color-brand-primary); text-decoration: none; }
+.core-options__link:hover { text-decoration: underline; }

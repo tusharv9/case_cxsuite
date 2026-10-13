@@ -46,7 +46,7 @@ public class UsersController : BaseApiController
     {
         var me = await _context.Users.AsNoTracking()
             .Where(u => u.Id == CurrentUserId)
-            .MapToUserDto()
+            .MapToUserDto(_context.TeamMembers)
             .FirstOrDefaultAsync(ct);
         if (me == null) return NotFound(new { error = "User not found." });
 

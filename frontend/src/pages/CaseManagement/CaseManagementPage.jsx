@@ -1,8 +1,8 @@
 // ===== CASE MANAGEMENT PAGE — OmniConnect Reference System =====
 
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useParams } from 'react-router-dom';
-import { Plus, Search, Check, ChevronDown, RotateCcw, X, Layers } from 'lucide-react';
+import { Plus, Search, RotateCcw, X, Layers } from 'lucide-react';
 import { CaseBoard } from '../../components/case/CaseBoard/CaseBoard.jsx';
 import { CaseList } from '../../components/case/CaseList/CaseList.jsx';
 import { useCase } from '../../contexts/CaseContext.jsx';
@@ -10,10 +10,11 @@ import { useCases } from '../../hooks/useCases.js';
 import { useCaseListPage } from '../../hooks/useCaseListPage.js';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue.js';
 import { ErrorState, Loader } from '../../components/common/Loader/Loader.jsx';
+import { Select } from '../../components/common/Input/Input.jsx';
 import { configurableSettingsService } from '../../services/configurableSettingsService.js';
+import { departmentService } from '../../services/departmentService.js';
 import { Pagination } from '../../components/common/Pagination/Pagination.jsx';
 import {
-  STATUS_FILTER_OPTIONS,
   CASE_LIST_DEFAULT_PAGE_SIZE,
   CASE_LIST_PAGE_SIZE_OPTIONS,
 } from '../../constants/index.js';
@@ -28,60 +29,45 @@ const CreateCaseDrawer = lazy(() =>
   }))
 );
 
-// Generic Dropdown with Checkmark for Filters
+// Where each configurable filter of the case list gets its options, and the list query parameter it sets.
+function lookupSource(typeCode, param) {
+  return {
+    param,
+    load: () => configurableSettingsService.getLookupValues(typeCode).then((list) => (list || []).map((v) => ({ value: v.value, label: v.label || v.value }))),
+  };
+}
+
+const FILTER_SOURCES = {
+  status: lookupSource('CASE_STATUS', 'status'),
+  sourceChannel: lookupSource('SOURCE_CHANNEL', 'channel'),
+  severity: {
+    param: 'priority',
+    load: () => configurableSettingsService.getSeverities().then((list) =>
+      [...(list || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)).map((p) => ({ value: p.name, label: p.isActive === false ? `${p.name} (inactive)` : p.name }))),
+  },
+  caseType: {
+    param: 'caseType',
+    load: () => configurableSettingsService.getCaseTypes(false).then((list) => (list || []).map((c) => ({ value: c.name, label: c.isActive === false ? `${c.name} (inactive)` : c.name }))),
+  },
+  departmentId: {
+    param: 'departmentId',
+    load: () => departmentService.getAllDepartments().then((list) => (list || []).map((d) => ({ value: d.id, label: d.isActive === false ? `${d.name} (inactive)` : d.name }))),
+  },
+};
+
+// A filter chip on the case list: the shared searchable Select in the list's compact chip style ("all" = no filter).
 function FilterDropdown({ label, value, options, onChange }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const currentOption = options.find((o) => o.value === value) || options[0];
-
   return (
-    <div className="case-filter-dropdown" ref={dropdownRef}>
-      <button
-        type="button"
-        className={`case-filter-dropdown__btn ${value !== 'all' ? 'case-filter-dropdown__btn--active' : ''}`}
-        onClick={() => setIsOpen(!isOpen)}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-      >
-        <span>{currentOption?.label || label}</span>
-        <ChevronDown size={14} className={`case-filter-dropdown__chevron ${isOpen ? 'open' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <ul className="case-filter-dropdown__menu" role="listbox">
-          {options.map((option) => {
-            const isSelected = option.value === value;
-            return (
-              <li
-                key={option.value}
-                role="option"
-                aria-selected={isSelected}
-                className={`case-filter-dropdown__item ${isSelected ? 'case-filter-dropdown__item--selected' : ''}`}
-                onClick={() => {
-                  onChange(option.value);
-                  setIsOpen(false);
-                }}
-              >
-                <span className="case-filter-dropdown__check">
-                  {isSelected && <Check size={14} strokeWidth={2.5} />}
-                </span>
-                <span className="case-filter-dropdown__item-label">{option.label}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+    <div className="case-filter-dropdown">
+      <Select
+        aria-label={label}
+        className={`case-filter-select${value !== 'all' ? ' case-filter-select--active' : ''}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        options={options}
+        placeholder={label}
+        searchPlaceholder="Search…"
+      />
     </div>
   );
 }
@@ -94,31 +80,39 @@ export function CaseManagementPage() {
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'board'
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  // Priority and channel filter options come from configuration (never a hard-coded list).
-  const [priorityOptions, setPriorityOptions] = useState([{ value: 'all', label: 'All priorities' }]);
-  const [channelOptions, setChannelOptions] = useState([{ value: 'all', label: 'All channels' }]);
+  // Filters come from Configurable Settings → Case Management → Case Filters (which, in what order, under what label); each one's
+  // options come from the configured master data. A configured filter the list cannot apply is skipped, never faked.
+  const [filters, setFilters] = useState([]);            // [{ apiField, label, param, options }]
+  const [filterValues, setFilterValues] = useState({});  // apiField -> value ('all' = no filter)
+  const [filtersError, setFiltersError] = useState(null);
   useEffect(() => {
     let live = true;
-    configurableSettingsService.getSeverities()
-      .then((list) => live && setPriorityOptions([
-        { value: 'all', label: 'All priorities' },
-        ...[...(list || [])].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0)).map((p) => ({ value: p.name, label: p.name })),
-      ]))
-      .catch(() => {});
-    configurableSettingsService.getLookupValues('SOURCE_CHANNEL')
-      .then((list) => live && setChannelOptions([
-        { value: 'all', label: 'All channels' },
-        ...(list || []).map((c) => ({ value: c.value, label: c.label || c.value })),
-      ]))
-      .catch(() => {});
+    configurableSettingsService.getFields('CaseManagement', 'Filters')
+      .then(async (fields) => {
+        const visible = (fields || []).filter((f) => f.isVisible !== false).sort((a, b) => a.displayOrder - b.displayOrder);
+        const built = [];
+        for (const f of visible) {
+          const source = FILTER_SOURCES[f.apiField] || (f.lookupTypeCode ? lookupSource(f.lookupTypeCode, null) : null);
+          if (!source?.param) continue;
+          const options = await source.load().catch(() => []);
+          built.push({ apiField: f.apiField, label: f.displayLabel || f.apiField, param: source.param, options });
+        }
+        if (!live) return;
+        setFilters(built);
+        setFilterValues(Object.fromEntries(built.map((f) => [f.apiField, 'all'])));
+      })
+      .catch((err) => live && setFiltersError(err?.message || 'The filters could not be loaded.'));
     return () => { live = false; };
   }, []);
 
-  // Filters
+  // Search
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedStatusFilter, setSelectedStatusFilter] = useState('all');
-  const [selectedPriorityFilter, setSelectedPriorityFilter] = useState('all');
-  const [selectedChannelFilter, setSelectedChannelFilter] = useState('all');
+  const filterParam = (param) => {
+    const f = filters.find((x) => x.param === param);
+    return f ? filterValues[f.apiField] ?? 'all' : 'all';
+  };
+  const departmentFilter = filterParam('departmentId');
+  const effectiveDeptId = departmentFilter !== 'all' ? departmentFilter : selectedDeptId;
 
   // If URL contains a caseId, open it
   useEffect(() => {
@@ -140,16 +134,17 @@ export function CaseManagementPage() {
   // Any change to search or filters starts again from page 1.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, selectedStatusFilter, selectedPriorityFilter, selectedChannelFilter, selectedDeptId, pageSize]);
+  }, [debouncedSearch, filterValues, effectiveDeptId, pageSize]);
 
   const listPage = useCaseListPage({
     page,
     pageSize,
-    departmentId: selectedDeptId,
+    departmentId: effectiveDeptId,
     search: debouncedSearch,
-    status: selectedStatusFilter,
-    priority: selectedPriorityFilter,
-    channel: selectedChannelFilter,
+    status: filterParam('status'),
+    priority: filterParam('priority'),
+    channel: filterParam('channel'),
+    caseType: filterParam('caseType'),
     enabled: viewMode === 'list',
   });
 
@@ -161,17 +156,11 @@ export function CaseManagementPage() {
     }
   }, [listPage.isLoading, listPage.totalPages, page]);
 
-  const hasActiveFilters =
-    searchQuery.trim() !== '' ||
-    selectedStatusFilter !== 'all' ||
-    selectedPriorityFilter !== 'all' ||
-    selectedChannelFilter !== 'all';
+  const hasActiveFilters = searchQuery.trim() !== '' || Object.values(filterValues).some((v) => v !== 'all');
 
   const handleResetFilters = () => {
     setSearchQuery('');
-    setSelectedStatusFilter('all');
-    setSelectedPriorityFilter('all');
-    setSelectedChannelFilter('all');
+    setFilterValues(Object.fromEntries(filters.map((f) => [f.apiField, 'all'])));
   };
 
   const handleCardClick = (caseData) => {
@@ -268,29 +257,16 @@ export function CaseManagementPage() {
 
         {/* Filters Group */}
         <div className="case-management-filters">
-          {/* Status Filter */}
-          <FilterDropdown
-            label="All statuses"
-            value={selectedStatusFilter}
-            options={STATUS_FILTER_OPTIONS}
-            onChange={setSelectedStatusFilter}
-          />
-
-          {/* Priority Filter */}
-          <FilterDropdown
-            label="All priorities"
-            value={selectedPriorityFilter}
-            options={priorityOptions}
-            onChange={setSelectedPriorityFilter}
-          />
-
-          {/* Channel Filter (Excludes Mobile App) */}
-          <FilterDropdown
-            label="All channels"
-            value={selectedChannelFilter}
-            options={channelOptions}
-            onChange={setSelectedChannelFilter}
-          />
+          {filters.map((f) => (
+            <FilterDropdown
+              key={f.apiField}
+              label={`${f.label}: All`}
+              value={filterValues[f.apiField] ?? 'all'}
+              options={[{ value: 'all', label: `${f.label}: All` }, ...f.options]}
+              onChange={(v) => setFilterValues((prev) => ({ ...prev, [f.apiField]: v }))}
+            />
+          ))}
+          {filtersError && <span className="case-management-filters__error" title={filtersError}>Filters unavailable</span>}
 
           {/* Reset Filters */}
           {hasActiveFilters && (
@@ -341,11 +317,11 @@ export function CaseManagementPage() {
           <CaseBoard
             selectedCaseId={selectedCase?.id}
             onCardClick={handleCardClick}
-            departmentId={selectedDeptId}
+            departmentId={effectiveDeptId}
             searchQuery={searchQuery}
-            selectedStatusFilter={selectedStatusFilter}
-            selectedPriorityFilter={selectedPriorityFilter}
-            selectedChannelFilter={selectedChannelFilter}
+            selectedStatusFilter={filterParam('status')}
+            selectedPriorityFilter={filterParam('priority')}
+            selectedChannelFilter={filterParam('channel')}
           />
         )}
       </div>

@@ -1072,6 +1072,9 @@ namespace CaseManagement.Api.Migrations
                     b.Property<Guid>("LookupTypeId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("RequiresDetail")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("TypeCode")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1091,6 +1094,59 @@ namespace CaseManagement.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("LookupValues");
+                });
+
+            modelBuilder.Entity("CaseManagement.Api.Models.ManualAssignmentCrossTeam", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DepartmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SettingsId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DepartmentId");
+
+                    b.HasIndex("SettingsId", "DepartmentId")
+                        .IsUnique();
+
+                    b.ToTable("ManualAssignmentCrossTeams");
+                });
+
+            modelBuilder.Entity("CaseManagement.Api.Models.ManualAssignmentSettings", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CrossTeamMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("EnforceCapacity")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IncludeTeamLeads")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("RequireAvailable")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ManualAssignmentSettings");
                 });
 
             modelBuilder.Entity("CaseManagement.Api.Models.NotificationItem", b =>
@@ -1399,6 +1455,9 @@ namespace CaseManagement.Api.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("CanBeManuallyAssigned")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1781,6 +1840,25 @@ namespace CaseManagement.Api.Migrations
                     b.Navigation("LookupType");
                 });
 
+            modelBuilder.Entity("CaseManagement.Api.Models.ManualAssignmentCrossTeam", b =>
+                {
+                    b.HasOne("CaseManagement.Api.Models.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("CaseManagement.Api.Models.ManualAssignmentSettings", "Settings")
+                        .WithMany("CrossTeams")
+                        .HasForeignKey("SettingsId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Department");
+
+                    b.Navigation("Settings");
+                });
+
             modelBuilder.Entity("CaseManagement.Api.Models.NotificationItem", b =>
                 {
                     b.HasOne("CaseManagement.Api.Models.User", "RecipientUser")
@@ -1918,6 +1996,11 @@ namespace CaseManagement.Api.Migrations
             modelBuilder.Entity("CaseManagement.Api.Models.LookupType", b =>
                 {
                     b.Navigation("Values");
+                });
+
+            modelBuilder.Entity("CaseManagement.Api.Models.ManualAssignmentSettings", b =>
+                {
+                    b.Navigation("CrossTeams");
                 });
 
             modelBuilder.Entity("CaseManagement.Api.Models.PrioritySlaRule", b =>

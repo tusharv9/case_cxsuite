@@ -92,6 +92,13 @@ function PriorityBadge({ severity }) {
   } else if (lower === 'medium' || lower === 'info') {
     className = 'case-card-priority-badge--medium';
     label = 'Medium';
+  } else if (lower === 'urgent' || lower === 'highest') {
+    className = 'case-card-priority-badge--urgent';
+    label = norm;
+  } else {
+    const slug = lower.replace(/[^a-z0-9]+/g, '-');
+    className = `case-card-priority-badge--${slug} case-card-priority-badge--custom`;
+    label = norm;
   }
 
   return (

@@ -169,8 +169,15 @@ function DetailsTab({ caseData, onOpen360 }) {
 
             <div className="key-details-row">
               <span className="key-details-label" title="Case Type">Case Type</span>
-              <span className="key-details-value" title={caseData.caseType || 'Complaint'}>
-                {caseData.caseType || 'Complaint'}
+              <span className="key-details-value" title={caseData.caseType || ''}>
+                {caseData.caseType || '—'}
+              </span>
+            </div>
+
+            <div className="key-details-row">
+              <span className="key-details-label" title="Department">Department</span>
+              <span className="key-details-value" title={caseData.departmentName || ''}>
+                {caseData.departmentName || '—'}
               </span>
             </div>
 
@@ -191,6 +198,13 @@ function DetailsTab({ caseData, onOpen360 }) {
 
           {/* Right Column */}
           <div className="key-details-column">
+            <div className="key-details-row">
+              <span className="key-details-label" title="Sub-category">Sub-category</span>
+              <span className="key-details-value" title={caseData.subcategory || ''}>
+                {caseData.subcategory || '—'}
+              </span>
+            </div>
+
             <div className="key-details-row">
               <span className="key-details-label" title="Source Channel">Source Channel</span>
               <div className="key-details-value">
@@ -240,13 +254,10 @@ function DetailsTab({ caseData, onOpen360 }) {
             <p className="owner-card__name">{caseData.ownerName || 'Unassigned'}</p>
             <div className="owner-card__metadata-grid">
               <span className="owner-card__meta-item">
-                <span className="owner-card__meta-label">Role:</span> {caseData.ownerRole || 'Agent'}
+                <span className="owner-card__meta-label">Role:</span> {caseData.ownerRole || '—'}
               </span>
-              <span className="owner-card__meta-item">
-                <span className="owner-card__meta-label">Team:</span> {caseData.ownerTeam || '—'}
-              </span>
-              <span className="owner-card__meta-item">
-                <span className="owner-card__meta-label">Queue:</span> {caseData.ownerQueue || '—'}
+              <span className="owner-card__meta-item" title="The team this case belongs to">
+                <span className="owner-card__meta-label">Case team:</span> {caseData.departmentName || '—'}
               </span>
             </div>
           </div>
@@ -297,6 +308,49 @@ function DetailsTab({ caseData, onOpen360 }) {
   );
 }
 
+// ---- Description Tab ----
+// The case's header (reference, status, priority, channel, title) and the issue description — nothing else. Classification
+// (case type, department, sub-category) is under Details → Key Details; the customer is under Details → Customer.
+function DescriptionTab({ caseData }) {
+  const priority = caseData.severity || caseData.priority;
+  const channel = caseData.sourceChannel || caseData.communicationChannel;
+
+  return (
+    <div className="drawer-details scrollbar-thin">
+      {/* Overview Header / Summary Bar */}
+      <div className="drawer-section drawer-description__header-card">
+        <div className="drawer-description__header-top">
+          <span className="drawer-description__case-ref">{caseData.caseNumber}</span>
+          <div className="drawer-description__badges">
+            {caseData.status && <span className="badge-pill badge-pill--status">{caseData.status}</span>}
+            {priority && <span className="badge-pill badge-pill--severity">{priority}</span>}
+            {channel && <ChannelBadge channel={channel} />}
+          </div>
+        </div>
+        <h3 className="drawer-description__title">{caseData.title}</h3>
+      </div>
+
+      {/* Formatted Issue Description Card */}
+      <div className="drawer-section">
+        <p className="drawer-section-label">ISSUE DESCRIPTION</p>
+        {caseData.description && caseData.description.trim() ? (
+          <div className="drawer-description__body-card">
+            <div className="drawer-description__text">{caseData.description}</div>
+          </div>
+        ) : (
+          <div className="drawer-description__empty-card">
+            <FileText size={24} className="drawer-description__empty-icon" />
+            <p className="drawer-description__empty-title">No Description Provided</p>
+            <p className="drawer-description__empty-sub">
+              No detailed problem statement was captured when this case was logged.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---- People Tab ----
 function PeopleTab({ caseData, onRemoveCoworker, onOpenCollaboration }) {
   const coworkers = caseData.participants?.filter(
@@ -315,13 +369,10 @@ function PeopleTab({ caseData, onRemoveCoworker, onOpenCollaboration }) {
               <p className="owner-card__name">{caseData.ownerName}</p>
               <div className="owner-card__metadata-grid">
                 <span className="owner-card__meta-item">
-                  <span className="owner-card__meta-label">Role:</span> {caseData.ownerRole || 'Agent'}
+                  <span className="owner-card__meta-label">Role:</span> {caseData.ownerRole || '—'}
                 </span>
-                <span className="owner-card__meta-item">
-                  <span className="owner-card__meta-label">Team:</span> {caseData.ownerTeam || '—'}
-                </span>
-                <span className="owner-card__meta-item">
-                  <span className="owner-card__meta-label">Queue:</span> {caseData.ownerQueue || '—'}
+                <span className="owner-card__meta-item" title="The team this case belongs to">
+                  <span className="owner-card__meta-label">Case team:</span> {caseData.departmentName || '—'}
                 </span>
               </div>
             </div>
@@ -686,6 +737,13 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
           ),
         },
         {
+          key: 'description',
+          label: 'Description',
+          content: (
+            <DescriptionTab caseData={caseData} />
+          ),
+        },
+        {
           key: 'workflow',
           label: 'Workflow timeline',
           count: caseData.events?.length || 0,
@@ -908,8 +966,6 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
               onClose={() => setOpenModal(null)}
               caseId={caseData.id}
               caseData={caseData}
-              users={users}
-              currentOwnerId={caseData.ownerId}
               onSuccess={handleSuccess}
             />
             <TransferModal
@@ -917,14 +973,12 @@ export function CaseDrawer({ caseData, isLoadingCase, onClose }) {
               onClose={() => setOpenModal(null)}
               caseId={caseData.id}
               caseData={caseData}
-              departments={departments}
               onSuccess={handleSuccess}
             />
             <CoworkerModal
               isOpen={openModal === 'coworker'}
               onClose={() => setOpenModal(null)}
               caseId={caseData.id}
-              users={users}
               departments={departments}
               existingCoworkerIds={coworkerIds}
               onSuccess={handleSuccess}

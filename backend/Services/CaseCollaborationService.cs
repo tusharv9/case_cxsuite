@@ -246,58 +246,72 @@ public class CaseCollaborationService : ICaseCollaborationService
             throw new InvalidOperationException("Cannot request a swarm on a resolved case.");
 
         var requestingUser = await _context.Users.FindAsync(userId);
+        var addedUsers = new List<User>();
 
-        // 1. Resolve Team Lead dynamically from department and role architecture
-        var deptUsers = await _context.Users
-            .Where(u => u.DepartmentId == existingCase.DepartmentId)
-            .ToListAsync();
+        var specifiedIds = (dto.ParticipantUserIds ?? new List<Guid>())
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
 
-        User? teamLead = null;
-        if (existingCase.Department != null && existingCase.Department.OwnerId.HasValue)
+        if (specifiedIds.Count > 0)
         {
-            teamLead = await _context.Users.FindAsync(existingCase.Department.OwnerId.Value);
+            // Dynamic user-selected participant resolution
+            var requestedUsers = await _context.Users
+                .Where(u => specifiedIds.Contains(u.Id) && u.IsActive)
+                .ToListAsync();
+
+            foreach (var user in requestedUsers)
+            {
+                if (!existingCase.Participants.Any(p => p.UserId == user.Id))
+                {
+                    _context.CaseParticipants.Add(new CaseParticipant
+                    {
+                        CaseId = caseId,
+                        UserId = user.Id,
+                        Role = ParticipantRole.CoWorker
+                    });
+                    addedUsers.Add(user);
+                }
+            }
         }
-
-        if (teamLead == null)
+        else
         {
-            teamLead = deptUsers.FirstOrDefault(u =>
-                u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase) ||
-                u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase) ||
-                u.Role.Contains("Manager", StringComparison.OrdinalIgnoreCase)
-            );
-        }
+            // 1. Resolve Team Lead dynamically from department and role architecture
+            var deptMemberUserIds = await _context.TeamMembers
+                .Where(m => m.DepartmentId == existingCase.DepartmentId && m.IsActive)
+                .Select(m => m.UserId)
+                .ToListAsync();
 
-        if (teamLead == null)
-        {
-            teamLead = await _context.Users.FirstOrDefaultAsync(u =>
-                u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase) ||
-                u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase) ||
-                u.Role.Contains("Manager", StringComparison.OrdinalIgnoreCase)
-            );
-        }
+            var deptUsers = await _context.Users
+                .Where(u => u.DepartmentId == existingCase.DepartmentId || deptMemberUserIds.Contains(u.Id))
+                .ToListAsync();
 
-        // 2. Resolve Subject Matter Experts (SMEs) dynamically
-        var smes = deptUsers.Where(u =>
-            (teamLead == null || u.Id != teamLead.Id) &&
-            u.Id != existingCase.OwnerId &&
-            (u.Role.Contains("Senior", StringComparison.OrdinalIgnoreCase) ||
-             u.Role.Contains("Sr.", StringComparison.OrdinalIgnoreCase) ||
-             u.Role.Contains("Specialist", StringComparison.OrdinalIgnoreCase) ||
-             u.Role.Contains("Expert", StringComparison.OrdinalIgnoreCase) ||
-             u.Role.Contains("Officer", StringComparison.OrdinalIgnoreCase))
-        ).Take(2).ToList();
+            User? teamLead = null;
+            if (existingCase.Department != null && existingCase.Department.OwnerId.HasValue)
+            {
+                teamLead = await _context.Users.FindAsync(existingCase.Department.OwnerId.Value);
+            }
 
-        if (smes.Count == 0)
-        {
-            smes = deptUsers.Where(u =>
-                (teamLead == null || u.Id != teamLead.Id) &&
-                u.Id != existingCase.OwnerId
-            ).Take(1).ToList();
-        }
+            if (teamLead == null)
+            {
+                teamLead = deptUsers.FirstOrDefault(u =>
+                    u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase) ||
+                    u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase) ||
+                    u.Role.Contains("Manager", StringComparison.OrdinalIgnoreCase)
+                );
+            }
 
-        if (smes.Count == 0)
-        {
-            smes = await _context.Users.Where(u =>
+            if (teamLead == null)
+            {
+                teamLead = await _context.Users.FirstOrDefaultAsync(u =>
+                    u.Role.Contains("Lead", StringComparison.OrdinalIgnoreCase) ||
+                    u.Role.Contains("Supervisor", StringComparison.OrdinalIgnoreCase) ||
+                    u.Role.Contains("Manager", StringComparison.OrdinalIgnoreCase)
+                );
+            }
+
+            // 2. Resolve Subject Matter Experts (SMEs) dynamically
+            var smes = deptUsers.Where(u =>
                 (teamLead == null || u.Id != teamLead.Id) &&
                 u.Id != existingCase.OwnerId &&
                 (u.Role.Contains("Senior", StringComparison.OrdinalIgnoreCase) ||
@@ -305,44 +319,63 @@ public class CaseCollaborationService : ICaseCollaborationService
                  u.Role.Contains("Specialist", StringComparison.OrdinalIgnoreCase) ||
                  u.Role.Contains("Expert", StringComparison.OrdinalIgnoreCase) ||
                  u.Role.Contains("Officer", StringComparison.OrdinalIgnoreCase))
-            ).Take(2).ToListAsync();
-        }
+            ).Take(2).ToList();
 
-        if (smes.Count == 0)
-        {
-            smes = await _context.Users.Where(u =>
-                (teamLead == null || u.Id != teamLead.Id) &&
-                u.Id != existingCase.OwnerId
-            ).Take(1).ToListAsync();
-        }
-
-        // 3. Add Team Lead and SMEs as case participants if not already added
-        var addedUsers = new List<User>();
-
-        if (teamLead != null && !existingCase.Participants.Any(p => p.UserId == teamLead.Id))
-        {
-            var p = new CaseParticipant
+            if (smes.Count == 0)
             {
-                CaseId = caseId,
-                UserId = teamLead.Id,
-                Role = ParticipantRole.CoWorker
-            };
-            _context.CaseParticipants.Add(p);
-            addedUsers.Add(teamLead);
-        }
+                smes = deptUsers.Where(u =>
+                    (teamLead == null || u.Id != teamLead.Id) &&
+                    u.Id != existingCase.OwnerId
+                ).Take(1).ToList();
+            }
 
-        foreach (var sme in smes)
-        {
-            if (!existingCase.Participants.Any(p => p.UserId == sme.Id))
+            if (smes.Count == 0)
+            {
+                smes = await _context.Users.Where(u =>
+                    (teamLead == null || u.Id != teamLead.Id) &&
+                    u.Id != existingCase.OwnerId &&
+                    (u.Role.Contains("Senior", StringComparison.OrdinalIgnoreCase) ||
+                     u.Role.Contains("Sr.", StringComparison.OrdinalIgnoreCase) ||
+                     u.Role.Contains("Specialist", StringComparison.OrdinalIgnoreCase) ||
+                     u.Role.Contains("Expert", StringComparison.OrdinalIgnoreCase) ||
+                     u.Role.Contains("Officer", StringComparison.OrdinalIgnoreCase))
+                ).Take(2).ToListAsync();
+            }
+
+            if (smes.Count == 0)
+            {
+                smes = await _context.Users.Where(u =>
+                    (teamLead == null || u.Id != teamLead.Id) &&
+                    u.Id != existingCase.OwnerId
+                ).Take(1).ToListAsync();
+            }
+
+            // 3. Add Team Lead and SMEs as case participants if not already added
+            if (teamLead != null && !existingCase.Participants.Any(p => p.UserId == teamLead.Id))
             {
                 var p = new CaseParticipant
                 {
                     CaseId = caseId,
-                    UserId = sme.Id,
+                    UserId = teamLead.Id,
                     Role = ParticipantRole.CoWorker
                 };
                 _context.CaseParticipants.Add(p);
-                addedUsers.Add(sme);
+                addedUsers.Add(teamLead);
+            }
+
+            foreach (var sme in smes)
+            {
+                if (!existingCase.Participants.Any(p => p.UserId == sme.Id))
+                {
+                    var p = new CaseParticipant
+                    {
+                        CaseId = caseId,
+                        UserId = sme.Id,
+                        Role = ParticipantRole.CoWorker
+                    };
+                    _context.CaseParticipants.Add(p);
+                    addedUsers.Add(sme);
+                }
             }
         }
 

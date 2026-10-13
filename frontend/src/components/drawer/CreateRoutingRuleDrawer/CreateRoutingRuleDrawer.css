@@ -1,114 +1,11 @@
 /* ===== CREATE / EDIT ROUTING RULE DRAWER STYLES — Standard Side Drawer ===== */
 
-.crr-overlay {
-  position: fixed;
-  inset: 0;
-  background-color: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  z-index: var(--z-overlay, 1000);
-  display: flex;
-  justify-content: flex-end;
-  animation: crrFadeIn 0.2s ease;
-}
-
-.crr-drawer {
-  width: var(--drawer-width, 640px);
-  max-width: 100vw;
-  height: 100vh;
-  background-color: var(--color-white, #ffffff);
-  box-shadow: var(--shadow-drawer);
-  display: flex;
-  flex-direction: column;
-  animation: crrSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow: hidden;
-}
-
-@keyframes crrFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes crrSlideIn {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-
-/* Blue Gradient Header — consistent with Case Management drawers */
-.crr-header {
-  background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 45%, #2563eb 100%);
-  color: #ffffff;
-  padding: var(--space-5, 20px) var(--space-6, 24px);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  box-shadow: 0 2px 8px rgba(30, 58, 138, 0.2);
-}
-
-.crr-header__title-wrap {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.crr-icon-badge {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md, 8px);
-  background: rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.crr-header__title {
-  margin: 0 0 2px 0;
-  font-size: var(--font-size-xl, 20px);
-  font-weight: var(--font-weight-bold, 700);
-  color: #ffffff;
-  letter-spacing: -0.01em;
-}
-
-.crr-header__subtitle {
-  margin: 0;
-  font-size: var(--font-size-sm, 12px);
-  color: rgba(255, 255, 255, 0.85);
-}
-
-.crr-close-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm, 6px);
-  color: rgba(255, 255, 255, 0.9);
-  transition: all var(--transition-fast, 0.15s ease);
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.12);
-  border: none;
-  flex-shrink: 0;
-}
-
-.crr-close-btn:hover {
-  color: #ffffff;
-  background-color: rgba(255, 255, 255, 0.25);
-}
-
 /* Form Body */
+/* The drawer shell (padding, scrolling, background) is SideDrawer's; this only lays out the sections. */
 .crr-form {
-  padding: var(--space-6, 24px);
-  flex: 1;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-5, 20px);
-  background-color: var(--color-background, #f8fafc);
 }
 
 .crr-section {
@@ -313,22 +210,4 @@
   background-color: #fef2f2;
   border: 1px solid #fee2e2;
   color: #b91c1c;
-}
-
-/* Fixed Footer */
-.crr-footer {
-  padding: var(--space-4, 16px) var(--space-6, 24px);
-  border-top: 1px solid var(--color-gray-150, #e2e8f0);
-  background-color: var(--color-white, #ffffff);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-3, 12px);
-  flex-shrink: 0;
-}
-
-@media (max-width: 768px) {
-  .crr-drawer {
-    width: 100vw;
-  }
 }

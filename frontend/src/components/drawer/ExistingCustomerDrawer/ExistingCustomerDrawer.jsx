@@ -13,7 +13,7 @@ import { DEFAULT_PHONE_COUNTRY_ISO2 } from '../../../constants/index.js';
 import { customerService } from '../../../services/customerService.js';
 import { useToast } from '../../../hooks/useToast.js';
 import { validateIdByRule, validateIdAgainstDob } from '../../../utils/validationUtils.js';
-import '../CreateCaseDrawer/CreateCaseDrawer.css';
+import '../../common/SideDrawer/SideDrawer.css';
 import '../CreateCustomerDrawer/CreateCustomerDrawer.css';
 import './ExistingCustomerDrawer.css';
 

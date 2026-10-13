@@ -1,0 +1,312 @@
+/* ===== ASSIGN & REASSIGN SETTINGS TAB ===== */
+
+/* The shared card clips its content (overflow: hidden), which would stop the save bar from sticking to the bottom of the view. */
+.assign-settings .config-card {
+  overflow: visible;
+}
+
+.assign-settings__body {
+  padding: var(--space-5) 28px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.assign-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--color-gray-100);
+}
+
+.assign-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.assign-section__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.assign-section__desc,
+.assign-section__hint {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.assign-section__hint {
+  margin-top: calc(-1 * var(--space-2));
+  padding-left: 26px;
+  font-size: var(--font-size-sm);
+}
+
+/* 1. Scope: three radio cards */
+.assign-scope {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.assign-scope__option {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.assign-scope__option:hover {
+  border-color: var(--color-brand-primary);
+}
+
+.assign-scope__option.is-selected {
+  border-color: var(--color-brand-primary);
+  background: var(--color-brand-primary-light);
+}
+
+.assign-scope__option input {
+  margin-top: 3px;
+  accent-color: var(--color-brand-primary);
+}
+
+.assign-scope__option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.assign-scope__option strong {
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+}
+
+/* 2. Cross-team team list */
+.assign-team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-2) var(--space-4);
+}
+
+/* 4. Member selection */
+.assign-members__picker {
+  max-width: 360px;
+}
+
+.assign-members {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.assign-members__toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-gray-50);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+.assign-members__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.assign-members__actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.assign-members__actions button {
+  border: none;
+  background: none;
+  color: var(--color-brand-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.assign-members__actions button:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.assign-members__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.assign-member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-gray-100);
+}
+
+.assign-member:last-child {
+  border-bottom: none;
+}
+
+.assign-member.is-inactive {
+  opacity: 0.6;
+}
+
+.assign-member__meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.assign-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-gray-100);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.assign-chip--lead {
+  background: var(--color-brand-primary-light);
+  color: var(--color-brand-primary-dark);
+}
+
+.assign-chip--muted {
+  background: transparent;
+  border: 1px dashed var(--color-gray-200);
+}
+
+.assign-chip--danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.assign-empty {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+}
+
+.assign-warning,
+.assign-info {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+.assign-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.assign-info {
+  background: var(--color-brand-primary-light);
+  color: var(--color-brand-primary-dark);
+}
+
+.assign-warning svg,
+.assign-info svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* 7. Default routing strategy */
+.assign-routing {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  max-width: 640px;
+}
+
+/* Reasons */
+.assign-settings__body--reasons { padding-top: 0; }
+.assign-reason { justify-content: flex-start; gap: var(--space-3); }
+.assign-reason__label { flex: 1; min-width: 160px; height: 32px; padding: 4px 10px; font-size: var(--font-size-base); }
+.assign-reason__remove { border: none; background: none; color: var(--color-danger); font-size: var(--font-size-sm); font-weight: 600; cursor: pointer; }
+.assign-reason__add { display: flex; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-gray-100); }
+.assign-reason__add .form-input { flex: 1; height: 34px; }
+.core-options__order { display: inline-flex; flex-direction: column; gap: 1px; }
+.core-options__order button { border: none; background: none; padding: 0 2px; line-height: 1; color: var(--color-text-tertiary); cursor: pointer; }
+.core-options__order button:disabled { opacity: 0.35; cursor: default; }
+
+/* Save bar (stays in view at the bottom of the card while scrolling) */
+.assign-savebar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 28px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 0 0 16px 16px;
+  box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.04);
+  z-index: 2;
+}
+
+.assign-savebar__status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.assign-savebar__dirty { color: var(--color-warning); }
+.assign-savebar__clean { color: var(--color-success); }
+.assign-savebar__conflict { color: var(--color-danger); }
+
+.assign-savebar__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+@media (max-width: 900px) {
+  .assign-scope,
+  .assign-routing {
+    grid-template-columns: 1fr;
+  }
+
+  .assign-settings__body,
+  .assign-savebar {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+}

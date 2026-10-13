@@ -51,6 +51,9 @@ public static class DbSeeder
             ctx => ctx.Database.ExecuteSqlRaw(FieldMetadataDefaults.ApplySql.Replace("{", "{{").Replace("}", "}}"))),
 
         new("bootstrap.assignment-settings.v1", SeedKind.Bootstrap, EnsureGlobalAssignmentSettings),
+        new("bootstrap.assignment-and-transfer-reasons.v1", SeedKind.Bootstrap, EnsureAssignmentAndTransferReasons),
+        new("bootstrap.escalation-reasons-and-reason-detail.v1", SeedKind.Bootstrap, EnsureEscalationReasonsAndReasonDetail),
+        new("bootstrap.case-list-filter-fields.v1", SeedKind.Bootstrap, EnsureCaseListFilterFields),
 
         new("development.users-and-departments.v1", SeedKind.Development, SeedDevUsers),
         new("development.team-memberships.v1", SeedKind.Development, EnsureDevTeamMemberships),
@@ -1130,6 +1133,205 @@ public static class DbSeeder
             Id = Guid.NewGuid(), DepartmentId = null, Algorithm = "RoundRobin", MaxConcurrentCapacity = 5, IsActive = true, CreatedAt = DateTime.UtcNow
         });
         context.SaveChanges();
+    }
+
+    /// <summary>
+    /// BOOTSTRAP (runs once per database): the case list's filters now come from the "Case Filters" configuration. The list used to
+    /// show Priority and Channel filters that were not configured; they are added here (visible, after the existing ones) so the list
+    /// keeps them, and an administrator can hide, rename or reorder them like any other filter. Existing rows are never changed.
+    /// </summary>
+    private static void EnsureCaseListFilterFields(AppDbContext context)
+    {
+        const string module = "CaseManagement", section = "Filters";
+        var existing = context.FieldConfigurations.Where(f => f.ModuleKey == module && f.SectionKey == section).ToList();
+        var nextOrder = existing.Count == 0 ? 1 : existing.Max(f => f.DisplayOrder) + 1;
+        foreach (var (apiField, label) in new[] { ("severity", "Priority"), ("sourceChannel", "Channel") })
+        {
+            if (existing.Any(f => f.ApiField == apiField)) continue;
+            context.FieldConfigurations.Add(new FieldConfiguration
+            {
+                Id = Guid.NewGuid(), ModuleKey = module, SectionKey = section, ApiField = apiField, DisplayLabel = label,
+                FieldType = "Dropdown", IsVisible = true, IsRequired = false, MaskingRule = "None", DisplayOrder = nextOrder++,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+        context.SaveChanges();
+    }
+
+    /// <summary>
+    /// BOOTSTRAP (runs once per database): makes the reason lists the whole story for CM-06.
+    /// 1. ESCALATION_REASON — the escalation reasons the Escalate dialog used to hard-code, now an editable list.
+    /// 2. "Other" / "Others" options of the three reason lists need a typed explanation (RequiresDetail).
+    /// 3. "Escalation" is deactivated (never deleted) in ASSIGNMENT_REASON: escalating is its own action with its own
+    ///    reasons, not a reason for reassigning. Past events keep their text; an administrator can re-activate it.
+    /// Existing values an administrator already changed are not overwritten (only missing ones are added).
+    /// </summary>
+    private static void EnsureEscalationReasonsAndReasonDetail(AppDbContext context)
+    {
+        var now = DateTime.UtcNow;
+
+        var type = context.LookupTypes.FirstOrDefault(t => t.Code == "ESCALATION_REASON");
+        if (type == null)
+        {
+            type = new LookupType
+            {
+                Id = Guid.NewGuid(),
+                Code = "ESCALATION_REASON",
+                Name = "Escalation Reason",
+                Description = "Why a case is escalated to the next level of the escalation matrix",
+                AllowAdd = true,
+                CreatedAt = now
+            };
+            context.LookupTypes.Add(type);
+            context.SaveChanges();
+        }
+
+        var escalationReasons = new[]
+        {
+            "SLA Breach / Risk", "Complex Technical Issue", "Customer Complaint Repeat", "Regulatory / Compliance",
+            "Management Escalation", "Fraud Risk", "Other"
+        };
+        var order = 1;
+        foreach (var reason in escalationReasons)
+        {
+            if (!context.LookupValues.Any(v => v.TypeCode == "ESCALATION_REASON" && (v.Value == reason || v.Label == reason)))
+            {
+                context.LookupValues.Add(new LookupValue
+                {
+                    Id = Guid.NewGuid(), LookupTypeId = type.Id, TypeCode = "ESCALATION_REASON", Value = reason, Label = reason,
+                    DisplayOrder = order, IsActive = true, CreatedAt = now
+                });
+            }
+            order++;
+        }
+        context.SaveChanges();
+
+        var reasonLists = new[] { "ASSIGNMENT_REASON", "TRANSFER_REASON", "ESCALATION_REASON" };
+        foreach (var other in context.LookupValues.Where(v => reasonLists.Contains(v.TypeCode) && (v.Value == "Other" || v.Value == "Others")))
+        {
+            other.RequiresDetail = true;
+            other.UpdatedAt = now;
+        }
+
+        foreach (var escalation in context.LookupValues.Where(v => v.TypeCode == "ASSIGNMENT_REASON" && v.Value == "Escalation" && v.IsActive))
+        {
+            escalation.IsActive = false;
+            escalation.UpdatedAt = now;
+        }
+        context.SaveChanges();
+    }
+
+    /// <summary>BOOTSTRAP: Seeds ASSIGNMENT_REASON and TRANSFER_REASON lookup types and standard values.</summary>
+    private static void EnsureAssignmentAndTransferReasons(AppDbContext context)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+
+            // 1. ASSIGNMENT_REASON
+            var assignType = context.LookupTypes.FirstOrDefault(lt => lt.Code == "ASSIGNMENT_REASON");
+            if (assignType == null)
+            {
+                assignType = new LookupType
+                {
+                    Id = Guid.NewGuid(),
+                    Code = "ASSIGNMENT_REASON",
+                    Name = "Assignment Reason",
+                    Description = "Reasons for manual case assignment to agents or leads",
+                    AllowAdd = true,
+                    CreatedAt = now
+                };
+                context.LookupTypes.Add(assignType);
+                context.SaveChanges();
+            }
+
+            var defaultAssignmentReasons = new[]
+            {
+                "Escalation",
+                "Workload rebalancing",
+                "Specialist required",
+                "Shift handover",
+                "Leave / absence coverage",
+                "Customer request",
+                "Others"
+            };
+
+            int assignOrder = 1;
+            foreach (var reason in defaultAssignmentReasons)
+            {
+                var exists = context.LookupValues.Any(lv => lv.TypeCode == "ASSIGNMENT_REASON" && (lv.Value == reason || lv.Label == reason));
+                if (!exists)
+                {
+                    context.LookupValues.Add(new LookupValue
+                    {
+                        Id = Guid.NewGuid(),
+                        LookupTypeId = assignType.Id,
+                        TypeCode = "ASSIGNMENT_REASON",
+                        Value = reason,
+                        Label = reason,
+                        DisplayOrder = assignOrder,
+                        IsActive = true,
+                        CreatedAt = now
+                    });
+                }
+                assignOrder++;
+            }
+
+            // 2. TRANSFER_REASON
+            var transferType = context.LookupTypes.FirstOrDefault(lt => lt.Code == "TRANSFER_REASON");
+            if (transferType == null)
+            {
+                transferType = new LookupType
+                {
+                    Id = Guid.NewGuid(),
+                    Code = "TRANSFER_REASON",
+                    Name = "Transfer Reason",
+                    Description = "Reasons for transferring cases between teams or departments",
+                    AllowAdd = true,
+                    CreatedAt = now
+                };
+                context.LookupTypes.Add(transferType);
+                context.SaveChanges();
+            }
+
+            var defaultTransferReasons = new[]
+            {
+                "Escalation to specialist team",
+                "Workload distribution",
+                "Incorrect routing",
+                "Multi-department collaboration",
+                "Shift handover",
+                "Customer request",
+                "Others"
+            };
+
+            int transferOrder = 1;
+            foreach (var reason in defaultTransferReasons)
+            {
+                var exists = context.LookupValues.Any(lv => lv.TypeCode == "TRANSFER_REASON" && (lv.Value == reason || lv.Label == reason));
+                if (!exists)
+                {
+                    context.LookupValues.Add(new LookupValue
+                    {
+                        Id = Guid.NewGuid(),
+                        LookupTypeId = transferType.Id,
+                        TypeCode = "TRANSFER_REASON",
+                        Value = reason,
+                        Label = reason,
+                        DisplayOrder = transferOrder,
+                        IsActive = true,
+                        CreatedAt = now
+                    });
+                }
+                transferOrder++;
+            }
+
+            context.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Seed step 'EnsureAssignmentAndTransferReasons' failed: {ex.Message}", ex);
+        }
     }
 
     /// <summary>DEVELOPMENT DATA: the sample users belong to their team, because membership is what makes someone eligible for its cases.</summary>

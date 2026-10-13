@@ -74,6 +74,19 @@
   border: 1px solid #bbf7d0;
 }
 
+.case-card-priority-badge--urgent,
+.case-card-priority-badge--highest {
+  background-color: #faf5ff;
+  color: #7c3aed;
+  border: 1px solid #e9d5ff;
+}
+
+.case-card-priority-badge--custom {
+  background-color: #f8fafc;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+
 /* SLA Badges */
 .case-card-sla-badge {
   display: inline-flex;

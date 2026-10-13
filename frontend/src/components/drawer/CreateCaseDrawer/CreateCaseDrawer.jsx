@@ -75,19 +75,11 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       .then((data) => {
         setMeta(data);
 
-        // Start from blanks. A required dropdown with options is pre-selected with its first option, purely as a
-        // convenience; an optional one starts empty.
+        // Start from blanks. Required dropdowns must not be pre-selected so that the user makes an explicit choice.
         const initial = {};
         for (const field of data.fields) {
           if (!isFieldVisible(field)) continue;
           initial[field.apiField] = '';
-        }
-        for (const field of data.fields) {
-          if (!isFieldVisible(field) || !isFieldRequired(field)) continue;
-          if (field.apiField === 'caseType' && data.caseTypes.length > 0) initial.caseType = data.caseTypes[0].name;
-          else if (field.lookupTypeCode && (data.lookups[field.lookupTypeCode] || []).length > 0) {
-            initial[field.apiField] = data.lookups[field.lookupTypeCode][0].value;
-          }
         }
         setValues(initial);
       })
@@ -329,7 +321,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           value={values.subCategory}
           options={optionsFor(field)}
           disabled={!departmentId}
-          placeholder={!departmentId ? 'Select department first…' : undefined}
+          placeholder={!departmentId ? 'Select a Department first' : undefined}
           onChange={(v) => setValue('subCategory', v)}
           error={errors.subCategory}
         />

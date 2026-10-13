@@ -14,6 +14,7 @@ export function useCaseListPage({
   status = 'all',
   priority = 'all',
   channel = 'all',
+  caseType = 'all',
   enabled = true,
 }) {
   const { boardRefreshKey, lastStatusChange } = useCase();
@@ -42,6 +43,7 @@ export function useCaseListPage({
         status,
         priority,
         channel,
+        caseType,
         signal: controller.signal,
       });
       setItems(res.items || []);
@@ -55,7 +57,7 @@ export function useCaseListPage({
       setError(err.message || 'Failed to load cases');
       setIsLoading(false);
     }
-  }, [enabled, page, pageSize, departmentId, search, status, priority, channel]);
+  }, [enabled, page, pageSize, departmentId, search, status, priority, channel, caseType]);
 
   useEffect(() => {
     fetchPage();

@@ -30,8 +30,6 @@ public class CaseSummaryDto
     public string OwnerName { get; set; } = string.Empty;
     public Guid OwnerId { get; set; }
     public string? OwnerRole { get; set; }
-    public string? OwnerTeam { get; set; }
-    public string? OwnerQueue { get; set; }
     public DateTime CreatedAt { get; set; }
     public Guid CustomerId { get; set; }
     public string CustomerName { get; set; } = string.Empty;
@@ -167,8 +165,8 @@ public class UserDto
     public string Status { get; set; } = string.Empty;
     public Guid? DepartmentId { get; set; }
     public string DepartmentName { get; set; } = string.Empty;
+    /// <summary>The teams the person is an active member of (comma-separated), from team membership.</summary>
     public string? Team { get; set; }
-    public string? Queue { get; set; }
     public string? ExternalUserId { get; set; }
     public bool IsActive { get; set; } = true;
 }

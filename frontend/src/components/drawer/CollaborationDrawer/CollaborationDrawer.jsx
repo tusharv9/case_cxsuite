@@ -1,10 +1,12 @@
 // ===== CASE COLLABORATION DRAWER =====
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Zap, UserPlus, Send, MessageSquare, ShieldAlert, Check } from 'lucide-react';
+import { X, Zap, UserPlus, Send, MessageSquare } from 'lucide-react';
 import { Modal } from '../../common/Modal/Modal.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
 import { Button } from '../../common/Button/Button.jsx';
+import { Input, Textarea, Checkbox, Select } from '../../common/Input/Input.jsx';
+import { selectPlaceholder } from '../../../utils/fieldValidation.js';
 import { useToast } from '../../../hooks/useToast.js';
 import { caseService } from '../../../services/caseService.js';
 import { userService } from '../../../services/userService.js';
@@ -26,6 +28,10 @@ export function CollaborationDrawer({
   const [selectedWatcherId, setSelectedWatcherId] = useState('');
   const [isAddingWatcher, setIsAddingWatcher] = useState(false);
   const [isRequestingSwarm, setIsRequestingSwarm] = useState(false);
+  const [isSwarmModalOpen, setIsSwarmModalOpen] = useState(false);
+  const [swarmReason, setSwarmReason] = useState('');
+  const [selectedSwarmUserIds, setSelectedSwarmUserIds] = useState([]);
+  const [swarmSearch, setSwarmSearch] = useState('');
   const [message, setMessage] = useState('');
   const [isPostingMessage, setIsPostingMessage] = useState(false);
   const [pendingRemoveUser, setPendingRemoveUser] = useState(null);
@@ -114,6 +120,17 @@ export function CollaborationDrawer({
       !existingParticipantIds.includes(String(u.id))
   );
 
+  const filteredSwarmUsers = !swarmSearch.trim()
+    ? availableUsers
+    : availableUsers.filter((u) => {
+        const q = swarmSearch.toLowerCase().trim();
+        return (
+          (u.name && u.name.toLowerCase().includes(q)) ||
+          (u.role && u.role.toLowerCase().includes(q)) ||
+          (u.departmentName && u.departmentName.toLowerCase().includes(q))
+        );
+      });
+
   // Mention suggestions filter
   const mentionSuggestions = mentionQuery !== null
     ? users.filter((u) =>
@@ -198,12 +215,19 @@ export function CollaborationDrawer({
     }
   };
 
-  const handleRequestSwarm = async () => {
+  const handleConfirmSwarm = async () => {
     if (!activeCaseId) return;
     setIsRequestingSwarm(true);
     try {
-      const res = await caseService.requestSwarm(activeCaseId);
-      toast.success(res.message || 'Swarm requested successfully!');
+      const payload = {
+        reason: swarmReason.trim() || undefined,
+        participantUserIds: selectedSwarmUserIds.length > 0 ? selectedSwarmUserIds : undefined,
+      };
+      const res = await caseService.requestSwarm(activeCaseId, payload);
+      toast.success(res?.message || 'Swarm requested successfully!');
+      setIsSwarmModalOpen(false);
+      setSwarmReason('');
+      setSelectedSwarmUserIds([]);
       afterChange();
     } catch (err) {
       toast.error(err.message || 'Failed to request swarm.');
@@ -286,23 +310,20 @@ export function CollaborationDrawer({
             </div>
 
             <div className="collaboration-drawer__add-watcher-select-wrap">
-              <select
-                className="collaboration-drawer__add-watcher-select"
+              <Select
+                aria-label="Add a watcher"
+                placeholder={`+ ${selectPlaceholder('Watcher')}`}
                 value={selectedWatcherId}
                 disabled={isAddingWatcher}
+                isLoading={isAddingWatcher}
+                emptyText={availableUsers.length === 0 ? 'Everyone available is already watching.' : 'No matching people'}
+                options={availableUsers.map((u) => ({ value: u.id, label: `${u.name} (${u.role || u.departmentName || 'Agent'})`, searchText: u.email }))}
                 onChange={(e) => {
                   const val = e.target.value;
                   setSelectedWatcherId(val);
                   if (val) handleAddWatcher(val);
                 }}
-              >
-                <option value="">+ Add watcher...</option>
-                {availableUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} ({u.role || u.departmentName || 'Agent'})
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </div>
 
@@ -312,7 +333,7 @@ export function CollaborationDrawer({
               className="collaboration-drawer__swarm-btn"
               isLoading={isRequestingSwarm}
               leftIcon={<Zap size={14} className="swarm-zap-icon" />}
-              onClick={handleRequestSwarm}
+              onClick={() => setIsSwarmModalOpen(true)}
               title="Escalate case attention, pulling in Team Lead and Subject Matter Experts"
             >
               Request swarm
@@ -483,6 +504,106 @@ export function CollaborationDrawer({
         onCancel={() => setPendingRemoveUser(null)}
         onConfirm={confirmRemoveUser}
       />
+
+      {/* Dynamic Swarm Participant Selection Modal */}
+      <Modal
+        isOpen={isSwarmModalOpen}
+        onClose={() => setIsSwarmModalOpen(false)}
+        title="Mobilize Case Swarm"
+        subtitle={`${caseData.caseNumber || ''} • Escalate attention and pull in senior specialists or leads`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setIsSwarmModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              isLoading={isRequestingSwarm}
+              leftIcon={<Zap size={14} className="swarm-zap-icon" />}
+              onClick={handleConfirmSwarm}
+            >
+              {selectedSwarmUserIds.length > 0
+                ? `Mobilize Swarm (${selectedSwarmUserIds.length} Selected)`
+                : 'Mobilize Swarm (Auto-Resolve Leads & SMEs)'}
+            </Button>
+          </>
+        }
+      >
+        <div className="action-modal-form">
+          <div className="transfer-explanation-banner">
+            <Zap size={18} color="#f59e0b" />
+            <span>Requesting a swarm elevates case priority and brings designated participants directly into this collaboration channel.</span>
+          </div>
+
+          <Textarea
+            label="Swarm Justification / Objective"
+            rows={3}
+            placeholder="Describe why swarm escalation is requested (e.g. Critical SLA breach risk, complex cross-system bug)..."
+            value={swarmReason}
+            onChange={(e) => setSwarmReason(e.target.value)}
+          />
+
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <p className="form-label" style={{ margin: 0 }}>
+                Select Specific Participants ({selectedSwarmUserIds.length} selected)
+              </p>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <Input
+                placeholder="Search specialists by name, role, or department..."
+                value={swarmSearch}
+                onChange={(e) => setSwarmSearch(e.target.value)}
+              />
+            </div>
+
+            {selectedSwarmUserIds.length === 0 && (
+              <p style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic', margin: '0 0 10px' }}>
+                💡 No participants selected. The system will automatically mobilize the department Team Lead and senior SMEs. Or pick specific users below:
+              </p>
+            )}
+
+            <div className="user-select-list scrollbar-thin" style={{ maxHeight: 220 }}>
+              {filteredSwarmUsers.length === 0 ? (
+                <p className="user-select-empty">No matching users available.</p>
+              ) : (
+                filteredSwarmUsers.map((user) => {
+                  const isChecked = selectedSwarmUserIds.includes(user.id);
+                  return (
+                    <div
+                      key={user.id}
+                      className={`user-select-card ${isChecked ? 'user-select-card--selected' : ''}`}
+                      onClick={() => {
+                        setSelectedSwarmUserIds((prev) =>
+                          prev.includes(user.id) ? prev.filter((id) => id !== user.id) : [...prev, user.id]
+                        );
+                      }}
+                    >
+                      <Checkbox checked={isChecked} onChange={() => {}} />
+                      <Avatar name={user.name} size="sm" />
+                      <div className="user-select-card__info">
+                        <span className="user-select-card__name">{user.name}</span>
+                        <span className="user-select-card__role">
+                          {user.role || 'Specialist'} {user.departmentName ? `• ${user.departmentName}` : ''}
+                        </span>
+                      </div>
+                      <span
+                        className={`status-dot-indicator ${
+                          user.status?.toLowerCase() === 'available'
+                            ? 'status-dot-indicator--online'
+                            : 'status-dot-indicator--offline'
+                        }`}
+                        title={user.status || 'Available'}
+                      />
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

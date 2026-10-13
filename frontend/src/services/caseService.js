@@ -86,6 +86,11 @@ export const caseService = {
     return api.put(`/api/cases/${caseId}/assign`, dto).then((r) => r.data);
   },
 
+  /** The case's team members and lead, with live status, open cases, capacity and why someone cannot take it. */
+  getEligibleAssignees(caseId) {
+    return api.get(`/api/cases/${caseId}/eligible-assignees`).then((r) => r.data);
+  },
+
   /**
    * Update case status (Resolve, Escalate, etc.)
    * dto: { status: string, note?: string }

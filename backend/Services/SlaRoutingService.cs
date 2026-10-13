@@ -168,7 +168,7 @@ public class SlaRoutingService : ISlaRoutingService
                 Id = u.Id,
                 Name = u.Name,
                 Role = u.Role,
-                Team = u.Team
+                Team = string.Join(", ", _context.TeamMembers.Where(m => m.UserId == u.Id && m.IsActive).OrderBy(m => m.Department.Name).Select(m => m.Department.Name))
             })
             .ToListAsync(ct);
 
@@ -234,6 +234,21 @@ public class SlaRoutingService : ISlaRoutingService
                     }
                 }
 
+                // Names are unique (case-insensitive), and at least one priority stays active for new cases.
+                var duplicateNames = request.PriorityRules
+                    .GroupBy(r => r.Priority.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+                if (duplicateNames.Count > 0)
+                    throw new InvalidOperationException($"Each priority needs a different name. Used more than once: {string.Join(", ", duplicateNames)}.");
+                var newNames = request.PriorityRules.Where(r => r.Id == Guid.Empty).Select(r => r.Priority.Trim()).ToList();
+                var clash = existingRules.FirstOrDefault(e => newNames.Contains(e.Priority, StringComparer.OrdinalIgnoreCase));
+                if (clash != null)
+                    throw new InvalidOperationException($"A priority named '{clash.Priority}' already exists.");
+                var activeAfter = existingRules.Count(e => request.PriorityRules.FirstOrDefault(r => r.Id == e.Id)?.IsActive ?? e.IsActive)
+                                  + request.PriorityRules.Count(r => r.Id == Guid.Empty && r.IsActive);
+                if (activeAfter == 0)
+                    throw new InvalidOperationException("At least one priority must stay active.");
+
                 // One priority per sub-category, and every referenced sub-category must exist.
                 var allIds = request.PriorityRules.SelectMany(r => r.AppliedSubCategoryIds ?? new()).ToList();
                 var duplicated = allIds.GroupBy(id => id).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
@@ -273,7 +288,7 @@ public class SlaRoutingService : ISlaRoutingService
                             Id = Guid.NewGuid(),
                             Priority = inputRule.Priority.Trim(),
                             DisplayOrder = existingRules.Count == 0 ? 1 : existingRules.Max(r => r.DisplayOrder) + 1,
-                            IsActive = true,
+                            IsActive = inputRule.IsActive,
                             Version = 1,
                             CreatedAt = now
                         };
@@ -287,6 +302,9 @@ public class SlaRoutingService : ISlaRoutingService
                                       || rule.InternalResolutionMinutes != intMinutes
                                       || rule.ExternalResolutionMinutes != extMinutes;
                         if (changed) { rule.Version += 1; rule.UpdatedAt = now; }
+                        // Inactive = not offered for new cases; cases that already use it keep it. (Renaming is a separate action:
+                        // it must follow the name into cases and routing rules — see ConfigurableSettingsService.UpdateSeverityAsync.)
+                        if (rule.IsActive != inputRule.IsActive) { rule.IsActive = inputRule.IsActive; rule.UpdatedAt = now; }
                     }
 
                     rule.FirstResponseValue = inputRule.FirstResponseValue;

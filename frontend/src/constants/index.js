@@ -61,16 +61,6 @@ export const BOARD_COLUMNS = [
   { key: 'Resolved',          label: 'RESOLVED',              statusClass: 'col--resolved' },
 ];
 
-// Defined Filter Options for Case Management
-export const STATUS_FILTER_OPTIONS = [
-  { value: 'all', label: 'All statuses' },
-  { value: 'Open', label: 'Open' },
-  { value: 'InProgress', label: 'In Progress' },
-  { value: 'WaitingOnCustomer', label: 'Waiting on Customer' },
-  { value: 'Escalated', label: 'Escalated' },
-  { value: 'Resolved', label: 'Resolved' },
-];
-
 // Resolve dispositions
 export const RESOLVE_DISPOSITIONS = [
   'Resolved on First Contact',
