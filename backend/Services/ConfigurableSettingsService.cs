@@ -687,6 +687,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             DepartmentName = s.Department?.Name ?? string.Empty,
             Name = s.Name,
             Code = s.Code,
+            Description = s.Description,
             DisplayOrder = s.DisplayOrder,
             IsActive = s.IsActive
         });
@@ -698,7 +699,8 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         {
             DepartmentId = dto.DepartmentId,
             Name = dto.Name.Trim(),
-            Code = string.IsNullOrWhiteSpace(dto.Code) ? dto.Name.Trim().Replace(" ", "_") : dto.Code.Trim(),
+            Code = await SubCategoryCodeAsync(dto.Code, dto.Name, null, ct),
+            Description = string.IsNullOrWhiteSpace(dto.Description) ? null : dto.Description.Trim(),
             DisplayOrder = dto.DisplayOrder,
             IsActive = true
         };
@@ -717,6 +719,7 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             DepartmentName = created.Department?.Name ?? string.Empty,
             Name = created.Name,
             Code = created.Code,
+            Description = created.Description,
             DisplayOrder = created.DisplayOrder,
             IsActive = created.IsActive
         };
@@ -737,7 +740,8 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
         var entity = new DepartmentSubCategory
         {
             Name = dto.Name.Trim(),
-            Code = string.IsNullOrWhiteSpace(dto.Code) ? dto.Name.Trim().Replace(" ", "_") : dto.Code.Trim(),
+            Code = await SubCategoryCodeAsync(dto.Code, dto.Name, id, ct),
+            Description = dto.Description == null ? existing.Description : (string.IsNullOrWhiteSpace(dto.Description) ? null : dto.Description.Trim()),
             DisplayOrder = dto.DisplayOrder,
             IsActive = dto.IsActive
         };
@@ -771,9 +775,33 @@ public class ConfigurableSettingsService : IConfigurableSettingsService
             DepartmentName = updated.Department?.Name ?? string.Empty,
             Name = updated.Name,
             Code = updated.Code,
+            Description = updated.Description,
             DisplayOrder = updated.DisplayOrder,
             IsActive = updated.IsActive
         };
+    }
+
+    /// <summary>
+    /// The code is the sub-category's business identifier and unique across departments. A code someone typed must be free; a code
+    /// generated from the name (when none is given) gets a numeric suffix if another sub-category already uses it.
+    /// </summary>
+    private async Task<string> SubCategoryCodeAsync(string? requested, string name, Guid? excludeId, CancellationToken ct)
+    {
+        async Task<DepartmentSubCategory?> HolderAsync(string code) => await _context.DepartmentSubCategories.AsNoTracking().Include(s => s.Department)
+            .FirstOrDefaultAsync(s => s.Id != excludeId && s.Code.ToLower() == code.ToLower(), ct);
+
+        if (!string.IsNullOrWhiteSpace(requested))
+        {
+            var code = requested.Trim();
+            if (await HolderAsync(code) is { } holder)
+                throw new InvalidOperationException($"The code '{code}' is already used by '{holder.Department.Name} / {holder.Name}'. Each sub-category needs its own code.");
+            return code;
+        }
+
+        var generated = name.Trim().Replace(" ", "_");
+        var candidate = generated;
+        for (var n = 2; await HolderAsync(candidate) != null; n++) candidate = $"{generated}_{n}";
+        return candidate;
     }
 
     public async Task<bool> DeleteSubCategoryAsync(Guid id, CancellationToken ct = default)

@@ -40,8 +40,9 @@ function ManagedElsewhere({ source, to, text }) {
 }
 
 /** Shared list UI: rename, active, move up/down, add. Every change is saved at once (these lists are shared master data). */
-function OptionList({ title, items, busy, onRename, onToggle, onMove, onAdd, addPlaceholder, extraInput, emptyText }) {
+function OptionList({ title, items, busy, onRename, onToggle, onMove, onAdd, addPlaceholder, extraInput, emptyText, onDescribe }) {
   const [drafts, setDrafts] = useState({});
+  const [descriptions, setDescriptions] = useState({});
   const [newName, setNewName] = useState('');
   const [newExtra, setNewExtra] = useState('');
 
@@ -49,6 +50,12 @@ function OptionList({ title, items, busy, onRename, onToggle, onMove, onAdd, add
     const name = (drafts[item.id] ?? item.name).trim();
     if (!name || name === item.name) { setDrafts((d) => ({ ...d, [item.id]: undefined })); return; }
     onRename(item, name).then((ok) => ok !== false && setDrafts((d) => ({ ...d, [item.id]: undefined })));
+  };
+
+  const commitDescription = (item) => {
+    const text = descriptions[item.id];
+    if (text === undefined || text.trim() === (item.description || '')) { setDescriptions((d) => ({ ...d, [item.id]: undefined })); return; }
+    onDescribe(item, text.trim()).then((ok) => ok !== false && setDescriptions((d) => ({ ...d, [item.id]: undefined })));
   };
 
   return (
@@ -80,6 +87,18 @@ function OptionList({ title, items, busy, onRename, onToggle, onMove, onAdd, add
               <input type="checkbox" checked={item.isActive} disabled={busy} onChange={(e) => onToggle(item, e.target.checked)} />
               Active
             </label>
+            {onDescribe && (
+              <input
+                className="form-input core-options__description"
+                value={descriptions[item.id] ?? item.description ?? ''}
+                placeholder="Description shown to agents on Create Case"
+                onChange={(e) => setDescriptions((d) => ({ ...d, [item.id]: e.target.value }))}
+                onBlur={() => commitDescription(item)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                disabled={busy}
+                aria-label={`Description of ${item.name}`}
+              />
+            )}
           </li>
         ))}
       </ul>
@@ -195,12 +214,13 @@ function SubCategoryOptions() {
       {departmentId && (
         <OptionList
           title={`Sub-categories of ${departments.find((d) => d.id === departmentId)?.name || 'this department'}`}
-          items={items}
+          items={items.map((sc) => ({ ...sc, extra: sc.code }))}
           busy={busy}
           emptyText="No sub-categories yet: this department is not offered on Create Case until it has one."
           addPlaceholder="New sub-category, e.g. Home Loan"
           onRename={(sc, name) => run(() => save(sc, { name }), `Sub-category renamed to "${name}".`)}
           onToggle={(sc, isActive) => run(() => save(sc, { isActive }), `"${sc.name}" ${isActive ? 'activated' : 'deactivated'}.`)}
+          onDescribe={(sc, description) => run(() => save(sc, { description }), `Description of "${sc.name}" saved.`)}
           onMove={(i, dir) => run(() => moveAndRenumber(items, i, dir, save))}
           onAdd={(name) => name
             ? run(() => configurableSettingsService.addSubCategory(departmentId, name, null, items.length + 1), `Sub-category "${name}" added.`)

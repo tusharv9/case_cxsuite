@@ -344,6 +344,12 @@ public class AppDbContext : DbContext
             .HasIndex(r => r.Priority)
             .IsUnique();
 
+        // The sub-category code is its business identifier: unique across departments when set.
+        modelBuilder.Entity<DepartmentSubCategory>()
+            .HasIndex(s => s.Code)
+            .IsUnique()
+            .HasFilter("\"Code\" <> ''");
+
         // One priority per sub-category.
         modelBuilder.Entity<PriorityCategoryMapping>()
             .HasIndex(m => m.DepartmentSubCategoryId)

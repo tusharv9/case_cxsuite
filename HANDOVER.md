@@ -36,6 +36,20 @@ to Micro Finance. Inactive teams Campaign Studio and Marketing Team stay archive
 
 ---
 
+## 1b. Workbook reconciliation — applied 2026-10-14
+
+The business workbook (`RMA_OmniCX_Case_Categories_Banking`) is now the case classification on the shared database:
+- 11 active teams, one per category;
+- 64 active sub-categories, each with its workbook ID, name, description and default priority;
+- the workbook's SLA matrix.
+
+Details, decisions and verification are in `WORKBOOK_RECONCILIATION_PLAN.md`. The 6 new teams (Cards, Deposits & Savings, Payments &
+Transfers, Digital Banking, Branch & ATM Services, KYC & Compliance) have no members yet: staff them on the Teams page.
+
+Known: automatic SLA escalation to a named person (e.g. Level 4, Head of Customer Experience) makes that person the owner even when
+they are outside the case's team (case C-01226). Decide whether escalation should change ownership; `--reconcile-data` hands such
+cases back to their team.
+
 ## 2. Requirement status
 
 | ID | Requirement | Status | Where |

@@ -140,7 +140,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
       switch (field.apiField) {
         case 'caseType': return (meta?.caseTypes || []).map((c) => ({ value: c.name, label: `${c.name} (${c.prefix})` }));
         case 'departmentId': return usableDepartments.map((d) => ({ value: d.id, label: d.name }));
-        case 'subCategory': return (selectedDepartment?.subCategories || []).map((s) => ({ value: s.name, label: s.name }));
+        case 'subCategory': return (selectedDepartment?.subCategories || []).map((s) => ({ value: s.name, label: s.name, searchText: `${s.code || ''} ${s.description || ''}` }));
         case 'severity': return (meta?.priorities || []).map((p) => ({ value: p.name, label: p.name }));
         default: return field.lookupTypeCode ? meta?.lookups?.[field.lookupTypeCode] || [] : [];
       }
@@ -324,6 +324,7 @@ export function CreateCaseDrawer({ isOpen, onClose, onSuccess }) {
           placeholder={!departmentId ? 'Select a Department first' : undefined}
           onChange={(v) => setValue('subCategory', v)}
           error={errors.subCategory}
+          helperText={selectedDepartment?.subCategories?.find((s) => s.name === values.subCategory)?.description || undefined}
         />
       );
     }

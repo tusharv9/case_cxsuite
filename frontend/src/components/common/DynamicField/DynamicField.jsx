@@ -74,7 +74,7 @@ export function DynamicField({
         placeholder={placeholder ?? (options.length > 0 ? dropdownPlaceholder(label) : 'No options configured')}
       >
         {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label || o.value}</option>
+          <option key={o.value} value={o.value} searchText={o.searchText}>{o.label || o.value}</option>
         ))}
       </Select>
     );

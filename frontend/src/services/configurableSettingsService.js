@@ -174,14 +174,16 @@ export const configurableSettingsService = {
     return response.data;
   },
 
-  async addSubCategory(departmentId, name, code = null, displayOrder = 1) {
-    const payload = { departmentId, name, code: code || name, displayOrder };
+  // Without a code the server generates a unique one from the name (codes are unique across departments).
+  async addSubCategory(departmentId, name, code = null, displayOrder = 1, description = null) {
+    const payload = { departmentId, name, code: code || null, description, displayOrder };
     const response = await api.post('/api/ConfigurableSettings/subcategories', payload);
     return response.data;
   },
 
-  async updateSubCategory(id, { name, code = null, displayOrder = 1, isActive = true }) {
-    const payload = { name, code: code || name, displayOrder, isActive };
+  // description: undefined = unchanged, '' = cleared.
+  async updateSubCategory(id, { name, code = null, description, displayOrder = 1, isActive = true }) {
+    const payload = { name, code: code || null, description, displayOrder, isActive };
     const response = await api.put(`/api/ConfigurableSettings/subcategories/${id}`, payload);
     return response.data;
   },

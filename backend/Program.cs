@@ -406,6 +406,50 @@ if (args.Contains("--reconcile-data"))
     return 0;
 }
 
+// One-off reconciliation with the business workbook (see WorkbookReconciliationService):
+//     dotnet CaseManagement.Api.dll --reconcile-workbook <folder with the worksheet CSVs> --decisions <file.json> [--apply --actor <email>] [--report <file.json>]
+if (args.Contains("--reconcile-workbook"))
+{
+    string? Arg(string name) { var i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+    if (pending.Count > 0)
+    {
+        Console.Error.WriteLine($"The database is not at the current schema ({pending.Count} pending migration(s): {string.Join(", ", pending)}). Run --migrate-only first.");
+        return 2;
+    }
+    if (Arg("--reconcile-workbook") is not { } folder || Arg("--decisions") is not { } decisionsPath)
+    {
+        Console.Error.WriteLine("Usage: --reconcile-workbook <folder with the worksheet CSVs> --decisions <file.json> [--apply --actor <email>] [--report <file.json>]");
+        return 2;
+    }
+    var apply = args.Contains("--apply");
+    Guid? actor = null;
+    if (apply)
+    {
+        var email = Arg("--actor");
+        actor = email == null ? null : await db.Users.Where(u => u.Email == email && u.IsActive).Select(u => (Guid?)u.Id).FirstOrDefaultAsync();
+        if (actor == null) { Console.Error.WriteLine("--apply needs --actor <email of an active user>; the audit events name who made the change."); return 2; }
+    }
+    try
+    {
+        var workbook = WorkbookReconciliationService.ReadWorkbook(folder);
+        var decisions = WorkbookReconciliationService.ReadDecisions(decisionsPath);
+        var report = await new WorkbookReconciliationService(db).RunAsync(workbook, decisions, apply, actor);
+        Console.WriteLine(WorkbookReconciliationService.ToText(report));
+        if (Arg("--report") is { } path)
+            await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        Console.Error.WriteLine("Nothing was written.");
+        return 1;
+    }
+    return 0;
+}
+
 // Forward headers from reverse proxies (Render, load balancers)
 var forwardedHeadersOptions = new ForwardedHeadersOptions
 {

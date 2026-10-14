@@ -277,6 +277,7 @@ public class ConfigurableSettingsRepository : IConfigurableSettingsRepository
 
         target.Name = updated.Name;
         target.Code = updated.Code;
+        target.Description = updated.Description;
         target.DisplayOrder = updated.DisplayOrder;
         target.IsActive = updated.IsActive;
         target.UpdatedAt = DateTime.UtcNow;

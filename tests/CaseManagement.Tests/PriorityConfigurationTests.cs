@@ -46,7 +46,7 @@ public class PriorityConfigurationTests
             await w.Ctx.SaveChangesAsync();
             w.Ctx.AddRange(
                 new DepartmentSubCategory { Id = w.FraudA, DepartmentId = w.DeptA, Name = "Fraud", Code = "F", IsActive = true, CreatedAt = DateTime.UtcNow },
-                new DepartmentSubCategory { Id = w.FraudB, DepartmentId = w.DeptB, Name = "Fraud", Code = "F", IsActive = true, CreatedAt = DateTime.UtcNow },
+                new DepartmentSubCategory { Id = w.FraudB, DepartmentId = w.DeptB, Name = "Fraud", Code = "FB", IsActive = true, CreatedAt = DateTime.UtcNow },
                 new DepartmentSubCategory { Id = w.PaymentA, DepartmentId = w.DeptA, Name = "Payment Issue", Code = "P", IsActive = true, CreatedAt = DateTime.UtcNow });
             await w.Ctx.SaveChangesAsync();
 

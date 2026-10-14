@@ -1,0 +1,17 @@
+{
+  // Approved 2026-10-14 (WORKBOOK_RECONCILIATION_PLAN.md, decisions D1–D8).
+  // Workbook category ID -> code of the existing team that is the same business entity (renamed in place, history kept).
+  "renameTeams": {
+    "LN": "MF",
+    "FD": "FI",
+    "IN": "PBS",
+    "AC": "SDR",
+    "CF": "CC"
+  },
+  // Active teams that are not a workbook category (D8).
+  "deactivateTeams": ["SP"],
+  // D3: Premier customers would otherwise all go to Investments & Insurance.
+  "deactivateRoutingRules": ["Premier Segment Fast-Lane"],
+  // D4: the workbook defines response and resolution only; keep today's internal targets.
+  "internalResolution": "keep"
+}

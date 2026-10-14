@@ -43,7 +43,7 @@ public class MetadataService : IMetadataService
                 .ToListAsync(ct);
             var subCategories = await _context.DepartmentSubCategories.AsNoTracking()
                 .Where(s => s.IsActive).OrderBy(s => s.DisplayOrder).ThenBy(s => s.Name)
-                .Select(s => new { s.DepartmentId, Option = new SubCategoryOptionDto { Id = s.Id, Name = s.Name } })
+                .Select(s => new { s.DepartmentId, Option = new SubCategoryOptionDto { Id = s.Id, Name = s.Name, Code = s.Code, Description = s.Description } })
                 .ToListAsync(ct);
             foreach (var department in departments)
                 department.SubCategories = subCategories.Where(s => s.DepartmentId == department.Id).Select(s => s.Option).ToList();
