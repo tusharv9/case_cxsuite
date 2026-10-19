@@ -4,10 +4,12 @@
 //
 //   Host-managed  (Host passed getAccessToken): requests carry `Authorization: Bearer <token>`.
 //                 Case Management stores no identity of its own.
-//   Standalone    (no Host): a development user picked in the dev picker is sent as `X-User-Id`.
-//                 The backend refuses this mode outside development unless explicitly allowed.
+//   Standalone    (no Host): the person signs in with their OmniConnect account (standaloneSession.js) and
+//                 requests carry that token, exactly as inside the Host. Failing that, a demo user picked
+//                 on the sign-in screen is sent as `X-User-Id` (only where the backend allows it).
 
 import { API_BASE_URL, LOGGED_IN_USER_ID_KEY } from '../constants/index.js';
+import { getStandaloneToken, hasStandaloneSession, clearStandaloneSession } from './standaloneSession.js';
 
 let host = { getAccessToken: null, onUnauthorized: null, apiBaseUrl: undefined };
 
@@ -42,6 +44,10 @@ export async function getAuthHeaders() {
     const token = await host.getAccessToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
+  if (hasStandaloneSession()) {
+    const token = await getStandaloneToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
   const id = getStandaloneUserId();
   return id ? { 'X-User-Id': id } : {};
 }
@@ -49,5 +55,6 @@ export async function getAuthHeaders() {
 /** The backend rejected our credentials. Tell the Host (it owns the session) and the UI. */
 export function notifyUnauthorized() {
   try { host.onUnauthorized?.(); } catch (e) { console.error('Host onUnauthorized handler failed', e); }
+  if (!isHostManaged()) clearStandaloneSession();
   window.dispatchEvent(new CustomEvent('cm:unauthorized'));
 }

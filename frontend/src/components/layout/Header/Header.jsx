@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Bell, Menu } from 'lucide-react';
+import { Search, Bell, Menu, LogOut } from 'lucide-react';
 import { useApp } from '../../../contexts/AppContext.jsx';
 import { Avatar } from '../../common/Avatar/Avatar.jsx';
 import { searchService } from '../../../services/searchService.js';
@@ -51,7 +51,7 @@ function playNotificationChime() {
 }
 
 export function Header() {
-  const { currentUser, isSidebarOpen, dispatch } = useApp();
+  const { currentUser, isSidebarOpen, dispatch, isStandalone, signOut } = useApp();
   const navigate = useNavigate();
   const [searchValue, setSearchValue] = useState('');
   const [customers, setCustomers] = useState([]);
@@ -373,6 +373,13 @@ export function Header() {
               </span>
             </div>
           </div>
+        )}
+
+        {/* Standalone site only: inside a Host App the Host owns sign-out. */}
+        {currentUser && isStandalone && (
+          <button className="header__icon-btn" onClick={signOut} title="Sign out" aria-label="Sign out">
+            <LogOut size={18} />
+          </button>
         )}
       </div>
     </header>

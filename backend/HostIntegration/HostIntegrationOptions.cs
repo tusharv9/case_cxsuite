@@ -12,7 +12,14 @@ public enum HostIntegrationMode
     /// The Host App owns identity: callers must present a Host-issued JWT; users are provisioned
     /// from its claims and, optionally, its user directory.
     /// </summary>
-    Host
+    Host,
+
+    /// <summary>
+    /// One backend for both ways the UI runs: inside the Host App (Host token) and as its own site, where the
+    /// person signs in with the same Host account and the UI sends the same kind of token. Optionally also
+    /// accepts the development header when no token is sent (<see cref="HostIntegrationOptions.HybridAllowsDevHeader"/>).
+    /// </summary>
+    Hybrid
 }
 
 /// <summary>
@@ -44,14 +51,31 @@ public class HostIntegrationOptions
     /// </summary>
     public Dictionary<string, string[]> RolePermissions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Granted when the token's <see cref="ClaimSettings.Administrator"/> claim is "true".</summary>
+    public string[] AdministratorPermissions { get; set; } = { Permissions.Everything };
+
     /// <summary>Granted to every authenticated Host user in addition to role permissions.</summary>
     public string[] BaselinePermissions { get; set; } = { Permissions.CasesRead, Permissions.CustomersRead };
+
+    /// <summary>
+    /// Hybrid only: also accept the <c>X-User-Id</c> development header from callers that send no token (a demo
+    /// user picker on the standalone site). It is not authentication, so outside Development it additionally
+    /// needs <see cref="AllowStandaloneInProduction"/>. A request that carries a token never falls back to it.
+    /// </summary>
+    public bool HybridAllowsDevHeader { get; set; }
 
     /// <summary>Permissions of the standalone dev user. "*" = everything.</summary>
     public string[] StandalonePermissions { get; set; } = { "*" };
 
     /// <summary>How long a resolved user (id, active flag, permissions) is cached per process.</summary>
     public int ProvisionCacheSeconds { get; set; } = 60;
+
+    /// <summary>Whether the <c>X-User-Id</c> development header identifies callers in <paramref name="mode"/>.</summary>
+    public bool AcceptsDevHeader(HostIntegrationMode mode) =>
+        mode == HostIntegrationMode.Standalone || (mode == HostIntegrationMode.Hybrid && HybridAllowsDevHeader);
+
+    /// <summary>Whether Host-issued tokens are accepted in <paramref name="mode"/>.</summary>
+    public static bool AcceptsHostTokens(HostIntegrationMode mode) => mode != HostIntegrationMode.Standalone;
 
     public HostIntegrationMode ResolveMode(bool isDevelopment) =>
         Mode ?? (isDevelopment || AllowStandaloneInProduction ? HostIntegrationMode.Standalone : throw new InvalidOperationException(
@@ -68,6 +92,12 @@ public class HostIntegrationOptions
         public string? Issuer { get; set; }
         public string? Audience { get; set; }
 
+        /// <summary>
+        /// The Host's RSA public key (PEM, "-----BEGIN PUBLIC KEY-----…"), for a Host that signs RS256 tokens but
+        /// publishes no discovery document (OmniConnect AuthService). Only the public half: this service never signs.
+        /// </summary>
+        public string? PublicKeyPem { get; set; }
+
         /// <summary>HMAC signing key. For local development and automated tests ONLY; use Authority in real deployments.</summary>
         public string? SymmetricKey { get; set; }
 
@@ -82,6 +112,9 @@ public class HostIntegrationOptions
         public string Email { get; set; } = "email";
         public string Roles { get; set; } = "role";
         public string Permissions { get; set; } = "permissions";
+
+        /// <summary>Claim that marks a Host administrator ("true"); empty = not used. OmniConnect issues "administrator".</summary>
+        public string? Administrator { get; set; }
     }
 
     public class DirectorySettings

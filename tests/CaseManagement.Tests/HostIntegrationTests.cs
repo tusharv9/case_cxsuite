@@ -412,6 +412,148 @@ public class StandaloneModeTests
     }
 }
 
+public class HybridModeTests
+{
+    private static Dictionary<string, string> Hybrid(bool devHeader = false, bool allowInProduction = false) => new()
+    {
+        ["HostIntegration:Mode"] = "Hybrid",
+        ["HostIntegration:HybridAllowsDevHeader"] = devHeader ? "true" : "false",
+        ["HostIntegration:AllowStandaloneInProduction"] = allowInProduction ? "true" : "false",
+        ["Database:Seed"] = "Development",
+    };
+
+    private static async Task<JsonElement> Options(HttpClient client) =>
+        JsonDocument.Parse(await (await client.GetAsync("/api/session/options")).Content.ReadAsStringAsync()).RootElement;
+
+    private static HttpRequestMessage WithHeader(string url, string userId, string? bearer = null)
+    {
+        var request = AppUnderTest.Get(url, bearer);
+        request.Headers.Add("X-User-Id", userId);
+        return request;
+    }
+
+    [PostgresFact]
+    public async Task WithoutTheDevHeader_ItBehavesLikeHostMode()
+    {
+        await using var db = await TempDatabase.CreateAsync();
+        await using var app = new AppUnderTest(db.ConnectionString, Hybrid());
+        var client = await app.ReadyClientAsync();
+
+        var options = await Options(client);
+        Assert.Equal("Hybrid", options.GetProperty("mode").GetString());
+        Assert.True(options.GetProperty("hostTokens").GetBoolean());
+        Assert.False(options.GetProperty("demoUsers").GetBoolean());
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/users")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(WithHeader("/api/users/me", "anyone"))).StatusCode);
+
+        var token = AppUnderTest.Token("host-7", name: "Token User");
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(AppUnderTest.Get("/api/users/me", token))).StatusCode);
+    }
+
+    [PostgresFact]
+    public async Task TheDevHeader_IsRefusedOutsideDevelopment_UnlessExplicitlyAllowed()
+    {
+        await using var db = await TempDatabase.CreateAsync();
+        await using var refused = new AppUnderTest(db.ConnectionString, Hybrid(devHeader: true));
+        var ex = Assert.ThrowsAny<Exception>(() => refused.CreateClient());
+        Assert.Contains("NO real", ex.ToString());
+    }
+
+    [PostgresFact]
+    public async Task TokensAndTheDevHeader_BothWork_ButAnInvalidTokenNeverFallsBackToTheHeader()
+    {
+        await using var db = await TempDatabase.CreateAsync();
+        await using var app = new AppUnderTest(db.ConnectionString, Hybrid(devHeader: true, allowInProduction: true));
+        var client = await app.ReadyClientAsync();
+
+        Assert.True((await Options(client)).GetProperty("demoUsers").GetBoolean());
+
+        // The demo picker lists users without an identity, and a listed user's Host id signs them in.
+        var users = await client.GetAsync("/api/users");
+        Assert.Equal(HttpStatusCode.OK, users.StatusCode);
+        var demoId = JsonDocument.Parse(await users.Content.ReadAsStringAsync()).RootElement[0].GetProperty("externalUserId").GetString()!;
+        var demo = await client.SendAsync(WithHeader("/api/users/me", demoId));
+        Assert.Equal(HttpStatusCode.OK, demo.StatusCode);
+        Assert.Contains("*", JsonDocument.Parse(await demo.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("permissions").EnumerateArray().Select(e => e.GetString()));
+
+        // The header never provisions anyone.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(WithHeader("/api/users/me", "made-up-id"))).StatusCode);
+
+        // A bad token is a 401 even when a valid demo header rides along.
+        var forged = AppUnderTest.Token("x", signingKey: "a-completely-different-signing-key-32bytes!!");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(WithHeader("/api/users/me", demoId, forged))).StatusCode);
+
+        // A Host token provisions and gets role permissions, not the demo "*".
+        var token = AppUnderTest.Token("host-8", name: "Agent Eight", roles: new[] { "Agent" });
+        var me = await client.SendAsync(AppUnderTest.Get("/api/users/me", token));
+        Assert.Equal(HttpStatusCode.OK, me.StatusCode);
+        var permissions = JsonDocument.Parse(await me.Content.ReadAsStringAsync()).RootElement.GetProperty("permissions")
+            .EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Contains(Permissions.CasesWrite, permissions);
+        Assert.DoesNotContain("*", permissions);
+    }
+}
+
+public class RsaHostTokenTests
+{
+    private const string RsaIssuer = "omniconnect-auth-service";
+    private const string RsaAudience = "omniconnect-host";
+
+    private static string Sign(System.Security.Cryptography.RSA rsa, IDictionary<string, object> claims) =>
+        new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+        {
+            Issuer = RsaIssuer,
+            Audience = RsaAudience,
+            Claims = claims,
+            NotBefore = DateTime.UtcNow.AddMinutes(-1),
+            Expires = DateTime.UtcNow.AddMinutes(15),
+            SigningCredentials = new SigningCredentials(new RsaSecurityKey(rsa), SecurityAlgorithms.RsaSha256)
+        });
+
+    [PostgresFact]
+    public async Task OmniConnectStyleTokens_ValidateAgainstThePublicKey_AndTheAdministratorClaimGrantsEverything()
+    {
+        using var hostKey = System.Security.Cryptography.RSA.Create(2048);
+        using var otherKey = System.Security.Cryptography.RSA.Create(2048);
+
+        await using var db = await TempDatabase.CreateAsync();
+        await using var app = new AppUnderTest(db.ConnectionString, new Dictionary<string, string>
+        {
+            ["HostIntegration:Mode"] = "Hybrid",
+            ["HostIntegration:Jwt:SymmetricKey"] = "",
+            // One line with literal \n, the way it usually arrives through an environment variable.
+            ["HostIntegration:Jwt:PublicKeyPem"] = hostKey.ExportSubjectPublicKeyInfoPem().Replace("\n", "\\n"),
+            ["HostIntegration:Jwt:Issuer"] = RsaIssuer,
+            ["HostIntegration:Jwt:Audience"] = RsaAudience,
+            ["HostIntegration:Claims:Permissions"] = "perms",
+            ["HostIntegration:Claims:Administrator"] = "administrator",
+        });
+        var client = await app.ReadyClientAsync();
+
+        var admin = Sign(hostKey, new Dictionary<string, object>
+        {
+            ["sub"] = Guid.NewGuid().ToString(), ["name"] = "Host Admin", ["email"] = "admin@host.example",
+            ["administrator"] = "true", ["perms"] = "[]"
+        });
+        var response = await client.SendAsync(AppUnderTest.Get("/api/users/me", admin));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("*", JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("permissions").EnumerateArray().Select(e => e.GetString()));
+
+        var plain = Sign(hostKey, new Dictionary<string, object> { ["sub"] = Guid.NewGuid().ToString(), ["administrator"] = "false" });
+        var plainMe = JsonDocument.Parse(await (await client.SendAsync(AppUnderTest.Get("/api/users/me", plain))).Content.ReadAsStringAsync()).RootElement;
+        Assert.DoesNotContain("*", plainMe.GetProperty("permissions").EnumerateArray().Select(e => e.GetString()));
+
+        var foreign = Sign(otherKey, new Dictionary<string, object> { ["sub"] = "intruder", ["administrator"] = "true" });
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(AppUnderTest.Get("/api/users/me", foreign))).StatusCode);
+
+        // An HMAC token is refused outright when only an RSA key is configured.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(AppUnderTest.Get("/api/users/me", AppUnderTest.Token("hmac", audience: RsaAudience, issuer: RsaIssuer)))).StatusCode);
+    }
+}
+
 public class DirectorySyncTests
 {
     private sealed class FixedDirectory : IHostUserDirectory

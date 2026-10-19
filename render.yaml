@@ -25,12 +25,25 @@ services:
       # users. Existing databases are never re-seeded either way.
       - key: Database__Seed
         value: "Development"
-      # No Host App exists yet, so this deployment runs in Standalone mode, which has NO real
-      # authentication (callers name themselves with a header). It is refused in production unless
-      # allowed explicitly, as here. When the Host is ready: set HostIntegration__Mode=Host, remove
-      # AllowStandaloneInProduction and configure HostIntegration__Jwt__* (see HOST_INTEGRATION.md).
+      # Hybrid: one backend for both the Host App and the standalone site. Both send OmniConnect AuthService
+      # tokens (the standalone site signs people in with their OmniConnect account). See HOST_INTEGRATION.md §5.
+      # Set HostIntegration__Jwt__PublicKeyPem in the dashboard BEFORE deploying: without a key the service refuses to start.
       - key: HostIntegration__Mode
-        value: Standalone
+        value: Hybrid
+      - key: HostIntegration__Jwt__PublicKeyPem
+        sync: false
+      - key: HostIntegration__Jwt__Issuer
+        value: omniconnect-auth-service
+      - key: HostIntegration__Jwt__Audience
+        value: omniconnect-host
+      - key: HostIntegration__Claims__Permissions
+        value: perms
+      - key: HostIntegration__Claims__Administrator
+        value: administrator
+      # Demo user picker on the standalone site (callers WITHOUT a token name themselves with a header: no real
+      # authentication). Remove both lines to allow OmniConnect sign-in only.
+      - key: HostIntegration__HybridAllowsDevHeader
+        value: "true"
       - key: HostIntegration__AllowStandaloneInProduction
         value: "true"
       - key: AllowedHosts

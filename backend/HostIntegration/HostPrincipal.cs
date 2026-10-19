@@ -9,7 +9,23 @@ public sealed record HostPrincipal(
     string? Name,
     string? Email,
     IReadOnlyList<string> Roles,
-    IReadOnlyList<string> Permissions);
+    IReadOnlyList<string> Permissions)
+{
+    /// <summary>How the caller proved who they are. Only a Host token may provision a new local user.</summary>
+    public HostIdentitySource Source { get; init; } = HostIdentitySource.HostToken;
+
+    /// <summary>The token said this person is a Host administrator.</summary>
+    public bool IsAdministrator { get; init; }
+}
+
+public enum HostIdentitySource
+{
+    /// <summary>A validated Host-issued JWT.</summary>
+    HostToken,
+
+    /// <summary>The <c>X-User-Id</c> development header (no authentication).</summary>
+    DevelopmentHeader
+}
 
 /// <summary>A user as listed by the Host's directory (or the local stand-in).</summary>
 public sealed record HostUserInfo(
