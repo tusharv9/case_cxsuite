@@ -16,6 +16,9 @@ public sealed class ConfiguredPermissionProvider : IPermissionProvider
     {
         var result = new HashSet<string>(_options.BaselinePermissions, StringComparer.OrdinalIgnoreCase);
 
+        if (principal.IsAdministrator)
+            foreach (var permission in _options.AdministratorPermissions) result.Add(permission);
+
         foreach (var permission in principal.Permissions) result.Add(permission);
 
         var map = _options.RolePermissions.Count > 0
@@ -52,4 +55,23 @@ public sealed class StandalonePermissionProvider : IPermissionProvider
         new HashSet<string>(_options.StandalonePermissions, StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlySet<string>? RolesGranting(string permission) => null;   // no roles in standalone: everyone has the same set
+}
+
+/// <summary>HYBRID: Host-token callers get role/claim permissions; development-header callers get the standalone set.</summary>
+public sealed class HybridPermissionProvider : IPermissionProvider
+{
+    private readonly ConfiguredPermissionProvider _host;
+    private readonly StandalonePermissionProvider _devHeader;
+
+    public HybridPermissionProvider(IOptions<HostIntegrationOptions> options)
+    {
+        _host = new ConfiguredPermissionProvider(options);
+        _devHeader = new StandalonePermissionProvider(options);
+    }
+
+    public IReadOnlySet<string> Resolve(HostPrincipal principal) =>
+        principal.Source == HostIdentitySource.DevelopmentHeader ? _devHeader.Resolve(principal) : _host.Resolve(principal);
+
+    // Real people carry roles here, so "who may do X" follows the role map.
+    public IReadOnlySet<string>? RolesGranting(string permission) => _host.RolesGranting(permission);
 }

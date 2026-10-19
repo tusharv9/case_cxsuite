@@ -6,14 +6,24 @@ import {
   getStandaloneUserId,
   setStandaloneUserId,
 } from '../services/hostBridge.js';
+import {
+  isStandaloneSignInConfigured,
+  hasStandaloneSession,
+  restoreSession,
+  signIn as signInToAuthService,
+  signOut as signOutOfAuthService,
+  clearStandaloneSession,
+} from '../services/standaloneSession.js';
 
 // How long to wait for the backend to finish starting (migrations, cold database) before giving up.
 const BACKEND_READY_TIMEOUT_MS = 150_000;
 
 // --- State Shape ---
 const initialState = {
-  // Startup/identity gate: connecting → identifying → ready | error
+  // Startup/identity gate: connecting → identifying → ready | error, or signin (standalone site, nobody signed in yet)
   bootstrap: { phase: 'connecting', message: 'Connecting to the server…', error: null, elapsedMs: 0 },
+  // Standalone only: which ways of signing in this deployment offers (see loadSignInOptions).
+  signInOptions: null,
   currentUser: null,
   permissions: [],
   users: [],
@@ -34,6 +44,17 @@ function appReducer(state, action) {
         permissions: action.payload.permissions || [],
         isLoadingUser: false,
         bootstrap: { phase: 'ready', message: '', error: null, elapsedMs: state.bootstrap.elapsedMs },
+      };
+    case 'SET_SIGN_IN_OPTIONS':
+      return { ...state, signInOptions: action.payload };
+    case 'SIGNED_OUT':
+      return {
+        ...state,
+        currentUser: null,
+        permissions: [],
+        users: [],
+        isLoadingUser: false,
+        bootstrap: { phase: 'signin', message: '', error: action.payload || null, elapsedMs: 0 },
       };
     case 'SET_USERS':
       return { ...state, users: action.payload };
@@ -85,27 +106,38 @@ async function waitForBackend(isCancelled, onProgress) {
   }
 }
 
-/** Resolves who the caller is. Standalone mode first has to choose a development user. */
-async function identify() {
-  if (!isHostManaged() && !getStandaloneUserId()) {
-    const users = await userService.getAllUsers();
-    if (!users?.length) throw new Error('No users exist yet. Seed the database or connect the Host App.');
-    setStandaloneUserId(users[0].id);
-  }
+/**
+ * Standalone only: how this deployment lets someone sign in.
+ *   account   — OmniConnect email + password (needs VITE_AUTH_SERVICE_URL and a backend that accepts Host tokens)
+ *   demoUsers — pick a user without a password (only where the backend allows the development header)
+ * A backend from before /api/session/options (404) only knew the development header.
+ */
+async function loadSignInOptions() {
+  let backend = { hostTokens: false, demoUsers: true };
+  const response = await fetch(`${getApiBaseUrl()}/api/session/options`, { cache: 'no-store' });
+  if (response.ok) backend = await response.json();
+  else if (response.status !== 404) throw new Error('Could not load the sign-in options. Please try again.');
 
-  try {
-    return await userService.getMe();
-  } catch (error) {
-    // A remembered development user that no longer exists: pick again once.
-    if (!isHostManaged() && error.status === 401) {
-      setStandaloneUserId(null);
-      const users = await userService.getAllUsers();
-      if (!users?.length) throw error;
-      setStandaloneUserId(users[0].id);
-      return userService.getMe();
-    }
-    throw error;
-  }
+  return {
+    account: isStandaloneSignInConfigured() && Boolean(backend.hostTokens),
+    demoUsers: Boolean(backend.demoUsers),
+  };
+}
+
+/**
+ * Standalone only: is there an identity to try? Restores an account session from AuthService's refresh cookie,
+ * or uses the demo user remembered from last time. False means "show the sign-in screen".
+ */
+async function hasStandaloneIdentity(options) {
+  if (options.account && !hasStandaloneSession() && await restoreSession()) return true;
+  if (hasStandaloneSession()) return true;
+  return options.demoUsers && Boolean(getStandaloneUserId());
+}
+
+/** Standalone: forget whoever was signed in here (account session and demo user). */
+function forgetStandaloneIdentity() {
+  clearStandaloneSession();
+  setStandaloneUserId(null);
 }
 
 // --- Context ---
@@ -131,7 +163,19 @@ export function AppProvider({ children }) {
         if (cancelled) return;
 
         dispatch({ type: 'BOOTSTRAP', payload: { phase: 'identifying', message: 'Signing you in…' } });
-        const me = await identify();
+
+        if (!isHostManaged()) {
+          const options = await loadSignInOptions();
+          if (cancelled) return;
+          dispatch({ type: 'SET_SIGN_IN_OPTIONS', payload: options });
+          if (!(await hasStandaloneIdentity(options))) {
+            if (!cancelled) dispatch({ type: 'SIGNED_OUT' });
+            return;
+          }
+          if (cancelled) return;
+        }
+
+        const me = await userService.getMe();
         if (cancelled) return;
 
         identified.current = true;
@@ -142,6 +186,13 @@ export function AppProvider({ children }) {
         // (SLA state — holidays, working hours, pauses — is computed by the server and arrives on each case.)
       } catch (error) {
         if (cancelled) return;
+        // Standalone: a refused identity (expired session, removed or deactivated user) means "sign in again",
+        // not a dead end. This is what used to leave a stale demo user stuck on "does not have access".
+        if (!isHostManaged() && (error?.status === 401 || error?.status === 403)) {
+          forgetStandaloneIdentity();
+          dispatch({ type: 'SIGNED_OUT', payload: friendlyBootstrapError(error) });
+          return;
+        }
         dispatch({
           type: 'BOOTSTRAP',
           payload: { phase: 'error', error: friendlyBootstrapError(error), message: '' },
@@ -155,8 +206,13 @@ export function AppProvider({ children }) {
   // The backend rejected our credentials after sign-in (expired Host token, deactivated user…).
   useEffect(() => {
     const onUnauthorized = () => {
-      if (!identified.current || !isHostManaged()) return;
+      if (!identified.current) return;
       identified.current = false;
+      if (!isHostManaged()) {
+        forgetStandaloneIdentity();
+        dispatch({ type: 'SIGNED_OUT', payload: 'Your session has expired. Please sign in again.' });
+        return;
+      }
       dispatch({
         type: 'BOOTSTRAP',
         payload: { phase: 'error', error: 'Your session has expired or is no longer valid. Please sign in again.', message: '' },
@@ -182,9 +238,33 @@ export function AppProvider({ children }) {
     [state.permissions]
   );
 
+  // Standalone sign-in. Each starts the startup sequence again, which identifies the new person.
+  const signInWithAccount = useCallback(async (email, password) => {
+    setStandaloneUserId(null);
+    await signInToAuthService(email, password);
+    setAttempt();
+  }, [setAttempt]);
+
+  const signInAsDemoUser = useCallback((externalUserId) => {
+    clearStandaloneSession();
+    setStandaloneUserId(externalUserId);
+    setAttempt();
+  }, [setAttempt]);
+
+  const signOut = useCallback(async () => {
+    identified.current = false;
+    setStandaloneUserId(null);
+    await signOutOfAuthService();
+    dispatch({ type: 'SIGNED_OUT' });
+  }, []);
+
   const value = {
     ...state,
     can,
+    isStandalone: !isHostManaged(),
+    signInWithAccount,
+    signInAsDemoUser,
+    signOut,
     retryBootstrap: setAttempt,
     addToast,
     removeToast,
@@ -201,7 +281,9 @@ function useRetryCounter() {
 
 function friendlyBootstrapError(error) {
   if (error?.status === 401) return 'You are not signed in, or your session is no longer valid.';
-  if (error?.status === 403) return 'Your account does not have access to Case Management.';
+  if (error?.status === 403) return error?.message && !/permission to do that/i.test(error.message)
+    ? error.message
+    : 'Your account does not have access to Case Management.';
   return error?.message || 'Could not connect to the server.';
 }
 

@@ -219,11 +219,19 @@ if (hostMode == HostIntegrationMode.Standalone)
 }
 else
 {
+    // Host and Hybrid both validate Host-issued tokens. Hybrid may additionally accept the development header.
+    if (hostMode == HostIntegrationMode.Hybrid && hostOptions.HybridAllowsDevHeader &&
+        !builder.Environment.IsDevelopment() && !hostOptions.AllowStandaloneInProduction)
+        throw new InvalidOperationException(
+            "HostIntegration:HybridAllowsDevHeader lets callers without a token name themselves with a header (NO real " +
+            "authentication). Outside Development it also needs HostIntegration:AllowStandaloneInProduction=true.");
+
     var jwt = hostOptions.Jwt;
-    if (string.IsNullOrWhiteSpace(jwt.Authority) && string.IsNullOrWhiteSpace(jwt.MetadataAddress) && string.IsNullOrWhiteSpace(jwt.SymmetricKey))
-        throw new InvalidOperationException("HostIntegration:Mode=Host needs a way to validate Host tokens: set HostIntegration:Jwt:Authority (or MetadataAddress), or SymmetricKey for local testing.");
+    if (string.IsNullOrWhiteSpace(jwt.Authority) && string.IsNullOrWhiteSpace(jwt.MetadataAddress) &&
+        string.IsNullOrWhiteSpace(jwt.PublicKeyPem) && string.IsNullOrWhiteSpace(jwt.SymmetricKey))
+        throw new InvalidOperationException($"HostIntegration:Mode={hostMode} needs a way to validate Host tokens: set HostIntegration:Jwt:Authority (or MetadataAddress), PublicKeyPem, or SymmetricKey for local testing.");
     if (string.IsNullOrWhiteSpace(jwt.Audience))
-        throw new InvalidOperationException("HostIntegration:Jwt:Audience is required in Host mode, so tokens issued for other applications are rejected.");
+        throw new InvalidOperationException($"HostIntegration:Jwt:Audience is required in {hostMode} mode, so tokens issued for other applications are rejected.");
     if (!string.IsNullOrWhiteSpace(jwt.SymmetricKey) && Encoding.UTF8.GetByteCount(jwt.SymmetricKey) < 32)
         throw new InvalidOperationException("HostIntegration:Jwt:SymmetricKey must be at least 32 bytes.");
 
@@ -248,14 +256,22 @@ else
                 ClockSkew = TimeSpan.FromSeconds(jwt.ClockSkewSeconds),
                 NameClaimType = hostOptions.Claims.Name,
                 RoleClaimType = hostOptions.Claims.Roles,
-                IssuerSigningKey = string.IsNullOrWhiteSpace(jwt.SymmetricKey)
-                    ? null
-                    : new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SymmetricKey))
+                IssuerSigningKeys = HostSigningKeys.Create(jwt),
+                // A Host whose keys we were given directly signs with exactly one algorithm; never accept another.
+                ValidAlgorithms = HostSigningKeys.Algorithms(jwt)
             };
         });
 
-    builder.Services.AddScoped<IHostIdentityResolver, JwtIdentityResolver>();
-    builder.Services.AddScoped<IPermissionProvider, ConfiguredPermissionProvider>();
+    if (hostMode == HostIntegrationMode.Hybrid)
+    {
+        builder.Services.AddScoped<IHostIdentityResolver, HybridIdentityResolver>();
+        builder.Services.AddScoped<IPermissionProvider, HybridPermissionProvider>();
+    }
+    else
+    {
+        builder.Services.AddScoped<IHostIdentityResolver, JwtIdentityResolver>();
+        builder.Services.AddScoped<IPermissionProvider, ConfiguredPermissionProvider>();
+    }
 
     if (!string.IsNullOrWhiteSpace(hostOptions.Directory.BaseUrl))
     {
@@ -470,7 +486,7 @@ if (!app.Environment.IsDevelopment())
 
 // Before anything that touches the database: API calls get a clean 503 until it is ready.
 app.UseMiddleware<DatabaseReadinessMiddleware>();
-if (hostMode == HostIntegrationMode.Host) app.UseAuthentication();   // validates the Host-issued JWT
+if (HostIntegrationOptions.AcceptsHostTokens(hostMode)) app.UseAuthentication();   // validates the Host-issued JWT
 app.UseMiddleware<HostIdentityMiddleware>();
 app.UseAuthorization();
 

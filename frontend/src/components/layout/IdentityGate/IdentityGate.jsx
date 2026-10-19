@@ -6,6 +6,7 @@
 
 import { useApp } from '../../../contexts/AppContext.jsx';
 import { Loader, ErrorState } from '../../common/Loader/Loader.jsx';
+import { SignInScreen } from '../SignIn/SignInScreen.jsx';
 
 function seconds(ms) {
   return Math.max(0, Math.round((ms || 0) / 1000));
@@ -15,6 +16,9 @@ export function IdentityGate({ children }) {
   const { bootstrap, retryBootstrap } = useApp();
 
   if (bootstrap.phase === 'ready') return children;
+
+  // Standalone site, nobody signed in (never shown inside a Host App: the Host signs people in).
+  if (bootstrap.phase === 'signin') return <SignInScreen />;
 
   if (bootstrap.phase === 'error') {
     return (

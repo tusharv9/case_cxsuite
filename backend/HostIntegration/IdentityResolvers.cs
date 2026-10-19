@@ -18,7 +18,10 @@ public sealed class StandaloneIdentityResolver : IHostIdentityResolver
             return Task.FromResult<HostPrincipal?>(null);
 
         var id = value.ToString().Trim();
-        return Task.FromResult<HostPrincipal?>(new HostPrincipal(id, null, null, Array.Empty<string>(), Array.Empty<string>()));
+        return Task.FromResult<HostPrincipal?>(new HostPrincipal(id, null, null, Array.Empty<string>(), Array.Empty<string>())
+        {
+            Source = HostIdentitySource.DevelopmentHeader
+        });
     }
 }
 
@@ -47,7 +50,11 @@ public sealed class JwtIdentityResolver : IHostIdentityResolver
             First(user, _claims.Name),
             First(user, _claims.Email),
             Many(user, _claims.Roles),
-            Many(user, _claims.Permissions)));
+            Many(user, _claims.Permissions))
+        {
+            IsAdministrator = !string.IsNullOrWhiteSpace(_claims.Administrator) &&
+                              string.Equals(First(user, _claims.Administrator), "true", StringComparison.OrdinalIgnoreCase)
+        });
     }
 
     private static string? First(ClaimsPrincipal user, string type) =>
@@ -68,5 +75,31 @@ public sealed class JwtIdentityResolver : IHostIdentityResolver
             values.Add(raw);
         }
         return values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+}
+
+/// <summary>
+/// HYBRID: a request with a bearer token is judged by the token alone (an invalid token is a 401, never a fall-back
+/// to the header). Only a request with no token may use the development header, and only when that is allowed.
+/// </summary>
+public sealed class HybridIdentityResolver : IHostIdentityResolver
+{
+    private readonly JwtIdentityResolver _jwt;
+    private readonly StandaloneIdentityResolver _devHeader;
+    private readonly bool _allowDevHeader;
+
+    public HybridIdentityResolver(IOptions<HostIntegrationOptions> options)
+    {
+        _jwt = new JwtIdentityResolver(options);
+        _devHeader = new StandaloneIdentityResolver();
+        _allowDevHeader = options.Value.HybridAllowsDevHeader;
+    }
+
+    public Task<HostPrincipal?> ResolveAsync(HttpContext context, CancellationToken ct)
+    {
+        if (context.Request.Headers.Authorization.Count > 0)
+            return _jwt.ResolveAsync(context, ct);
+
+        return _allowDevHeader ? _devHeader.ResolveAsync(context, ct) : Task.FromResult<HostPrincipal?>(null);
     }
 }

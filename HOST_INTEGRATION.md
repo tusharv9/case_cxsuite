@@ -18,16 +18,19 @@ const handle = mount(containerElement, {
 handle.update(newProps); handle.unmount();
 ```
 **Passing `getAccessToken` is what switches the Remote into Host mode** on the client. Without it the Remote
-runs standalone (development only) and sends a development header instead.
+runs as its own site and shows a sign-in screen (see §5).
 
 ## 2. What the backend expects (all of it configuration, section `HostIntegration`)
 | Setting | Meaning |
 |---|---|
-| `Mode` | `Host` (production) or `Standalone` (dev: header identity). Standalone is refused outside Development unless `AllowStandaloneInProduction=true`. |
+| `Mode` | `Host` (Host tokens only), `Hybrid` (Host tokens, plus optionally the dev header — one backend for the Host and the standalone site), or `Standalone` (dev: header identity only). Standalone is refused outside Development unless `AllowStandaloneInProduction=true`. |
+| `HybridAllowsDevHeader` | Hybrid only: callers that send **no** token may use the `X-User-Id` header (demo user picker). Not authentication: outside Development it also needs `AllowStandaloneInProduction=true`. A request with a token never falls back to it. |
 | `Jwt:Authority` (or `MetadataAddress`) | Host's OIDC authority; signing keys come from its discovery document. |
+| `Jwt:PublicKeyPem` | The Host's RSA public key (PEM) for a Host that signs RS256 tokens without a discovery document — OmniConnect AuthService. `\n` escapes are accepted (env vars). |
 | `Jwt:Audience` | **Required.** Tokens for other applications are rejected. `Jwt:Issuer` optional (taken from the authority). |
 | `Jwt:SymmetricKey` | HMAC key for local testing only (≥32 bytes). |
-| `Claims:*` | Names of the claims carrying user id (`sub`), name, email, roles (`role`), permissions. Roles/permissions may be repeated claims, a JSON array, or comma-separated. |
+| `Claims:*` | Names of the claims carrying user id (`sub`), name, email, roles (`role`), permissions, and `Administrator` (a `"true"` claim; empty = unused). Roles/permissions may be repeated claims, a JSON array, or comma-separated. |
+| `AdministratorPermissions` | Granted when the Administrator claim is `"true"` (default `*`). |
 | `RolePermissions` | Host role → Case Management permissions (exact, case-insensitive match; `"*"` = all). Defaults exist for Agent / Team Lead / Supervisor / Admin as placeholders. |
 | `BaselinePermissions` | Granted to every signed-in user (default `cases.read`, `customers.read`). |
 | `Directory:*` | Optional. Host user-directory API (`BaseUrl`, `ListPath`, `GetPath` with `{id}`, `ItemsProperty`, `Fields` map, `ApiKey`), `SyncIntervalMinutes`, `DeactivateMissing`. |
@@ -65,3 +68,35 @@ and sign a token with the same key (HS256) containing `sub`, `name`, `role`, `au
 ## 4. Open questions for the Host team (answers are configuration, not code)
 JWT vs opaque tokens + JWKS/authority URL · exact claim names · the role list and who gets which permission ·
 user-directory API shape · whether the Host can supply team membership · data-scope rules (should a user only see cases of their own team?).
+
+## 5. Running both inside the Host and as its own site (Hybrid)
+One backend, one set of users, two ways in:
+- **Inside the Host**: the Host mounts the Remote with `getAccessToken`; the backend validates that token.
+- **Standalone site** (e.g. `case-cxsuite.vercel.app`): a sign-in screen. The person signs in with their **OmniConnect account**;
+  the UI calls the Host's AuthService (`POST /api/auth/login`, refresh via its httpOnly cookie) and sends the resulting token to the
+  backend — exactly what the Host would send. The access token is kept in memory only. Optionally a **demo user picker** is offered
+  where the backend allows the dev header.
+
+The UI asks `GET /api/session/options` (anonymous) → `{ mode, hostTokens, demoUsers }` to decide what to show.
+
+### Backend (Render) for OmniConnect AuthService tokens
+```
+HostIntegration__Mode=Hybrid
+HostIntegration__Jwt__PublicKeyPem=<AuthService Jwt__SigningKeyPublic>
+HostIntegration__Jwt__Issuer=omniconnect-auth-service
+HostIntegration__Jwt__Audience=omniconnect-host
+HostIntegration__Claims__Permissions=perms
+HostIntegration__Claims__Administrator=administrator
+# optional demo picker (no real authentication):
+HostIntegration__HybridAllowsDevHeader=true
+HostIntegration__AllowStandaloneInProduction=true
+```
+OmniConnect's `role` claim is a role **id**; map those ids in `RolePermissions` (or rely on `administrator`). Non-admins without a
+mapping get only `BaselinePermissions` (read-only).
+
+### Standalone frontend (Vercel)
+`VITE_AUTH_SERVICE_URL=<AuthService URL>` (no trailing slash). Without it only the demo picker can appear.
+
+### AuthService (OmniConnect repo / Render dashboard)
+Add the standalone site to its CORS list, e.g. `Cors__AllowedOrigins__1=https://case-cxsuite.vercel.app`. The refresh cookie
+already uses `SameSite=None; Secure`, which a cross-site page needs to stay signed in across reloads.

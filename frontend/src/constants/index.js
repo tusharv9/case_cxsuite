@@ -2,7 +2,11 @@
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
-// STANDALONE (development) only: the user picked in the dev user picker. Under a Host App identity
+// STANDALONE only: the OmniConnect AuthService the sign-in screen uses (e.g. https://omniconnect-auth.onrender.com).
+// Empty = no account sign-in on the standalone site (only the demo user picker, if the backend allows it).
+export const AUTH_SERVICE_URL = (import.meta.env.VITE_AUTH_SERVICE_URL || '').replace(/\/+$/, '');
+
+// STANDALONE demo only: the Host user id (externalUserId) picked in the demo user picker. Under a Host App identity
 // comes from the Host's token and this key is never read or written.
 export const LOGGED_IN_USER_ID_KEY = 'csm_logged_in_user_id';
 
